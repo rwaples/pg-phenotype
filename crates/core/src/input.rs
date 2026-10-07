@@ -69,4 +69,8 @@ impl TraitKind {
 pub struct Trait<'a> {
     pub values: &'a [f64],
     pub kind: TraitKind,
+    /// The declared number of levels of a binary, ordinal or categorical
+    /// trait (codes `0..n_levels`), when the host knows it: Python
+    /// `Trait.levels`, R factor levels.  `None` means max code + 1.
+    pub n_levels: Option<usize>,
 }

@@ -235,6 +235,7 @@ mod tests {
         Trait {
             values,
             kind: TraitKind::Binary,
+            n_levels: None,
         }
     }
 
@@ -257,6 +258,7 @@ mod tests {
         let continuous = Trait {
             values: &[1.0],
             kind: TraitKind::Continuous,
+            n_levels: None,
         };
         let err = Observed::new(continuous, &[1.0], &cip(), 1, ["s", "a"]).unwrap_err();
         assert_eq!(err.code(), "trait_kind_mismatch");

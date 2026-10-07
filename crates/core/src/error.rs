@@ -83,6 +83,42 @@ pub enum Error {
     /// Parameters each in their domain that together give a covariance
     /// that is not positive semidefinite.
     InconsistentParameters { reason: &'static str },
+    /// A method takes another number of traits.
+    TraitCount {
+        actual: usize,
+        minimum: usize,
+        maximum: usize,
+    },
+    /// A method does not take traits of this kind.
+    UnsupportedTraitKind {
+        field: &'static str,
+        kind: &'static str,
+    },
+    /// A trait value that is not a level code (binary, ordinal) or not
+    /// finite (continuous).
+    InvalidTraitCode {
+        field: &'static str,
+        kind: &'static str,
+        position: usize,
+        value: f64,
+    },
+    /// An ordinal trait with no declared levels skips a code below its largest.
+    SparseOrdinalCodes { field: &'static str, level: usize },
+    /// A declared level no row takes.
+    UnusedLevel {
+        field: &'static str,
+        level: usize,
+        n_levels: usize,
+    },
+    /// A trait missing in every row.
+    AllMissingTrait { field: &'static str },
+    /// A trait with one value in every non-missing row.
+    ConstantTrait { field: &'static str, value: f64 },
+    /// The stratum labels are not one per pedigree row.
+    StratumLength {
+        expected_length: usize,
+        actual_length: usize,
+    },
 }
 
 impl From<PgError> for Error {
@@ -106,7 +142,15 @@ impl Error {
             | Error::TraitLength { .. }
             | Error::TraitKindMismatch { .. }
             | Error::InvalidTraitValue { .. }
-            | Error::InvalidAge { .. } => Class::Validation,
+            | Error::InvalidAge { .. }
+            | Error::TraitCount { .. }
+            | Error::UnsupportedTraitKind { .. }
+            | Error::InvalidTraitCode { .. }
+            | Error::SparseOrdinalCodes { .. }
+            | Error::UnusedLevel { .. }
+            | Error::AllMissingTrait { .. }
+            | Error::ConstantTrait { .. }
+            | Error::StratumLength { .. } => Class::Validation,
             Error::ParameterOutOfRange { .. }
             | Error::InvalidCip { .. }
             | Error::InconsistentParameters { .. } => Class::Parameter,
@@ -131,6 +175,14 @@ impl Error {
             Error::ParameterOutOfRange { .. } => "parameter_out_of_range",
             Error::InvalidCip { .. } => "invalid_cip",
             Error::InconsistentParameters { .. } => "inconsistent_parameters",
+            Error::TraitCount { .. } => "trait_count",
+            Error::UnsupportedTraitKind { .. } => "unsupported_trait_kind",
+            Error::InvalidTraitCode { .. } => "invalid_trait_value",
+            Error::SparseOrdinalCodes { .. } => "sparse_ordinal_codes",
+            Error::UnusedLevel { .. } => "unused_level",
+            Error::AllMissingTrait { .. } => "all_missing_trait",
+            Error::ConstantTrait { .. } => "constant_trait",
+            Error::StratumLength { .. } => "stratum_length_mismatch",
         }
     }
 
@@ -216,6 +268,52 @@ impl Error {
                 vec![("reason", Str(reason)), ("position", int(*position))]
             }
             Error::InconsistentParameters { reason } => vec![("reason", Str(reason))],
+            Error::TraitCount {
+                actual,
+                minimum,
+                maximum,
+            } => vec![
+                ("actual", int(*actual)),
+                ("minimum", int(*minimum)),
+                ("maximum", int(*maximum)),
+            ],
+            Error::UnsupportedTraitKind { field, kind } => {
+                vec![("field", Str(field)), ("kind", Str(kind))]
+            }
+            Error::InvalidTraitCode {
+                field,
+                kind,
+                position,
+                value,
+            } => vec![
+                ("field", Str(field)),
+                ("kind", Str(kind)),
+                ("position", int(*position)),
+                ("value", Float(*value)),
+            ],
+            Error::SparseOrdinalCodes { field, level } => {
+                vec![("field", Str(field)), ("level", int(*level))]
+            }
+            Error::UnusedLevel {
+                field,
+                level,
+                n_levels,
+            } => vec![
+                ("field", Str(field)),
+                ("level", int(*level)),
+                ("n_levels", int(*n_levels)),
+            ],
+            Error::AllMissingTrait { field } => vec![("field", Str(field))],
+            Error::ConstantTrait { field, value } => {
+                vec![("field", Str(field)), ("value", Float(*value))]
+            }
+            Error::StratumLength {
+                expected_length,
+                actual_length,
+            } => vec![
+                ("expected_length", int(*expected_length)),
+                ("actual_length", int(*actual_length)),
+            ],
         }
     }
 }
@@ -255,6 +353,34 @@ impl fmt::Display for Error {
                 write!(f, "invalid CIP table at position {position}: {reason}")
             }
             Error::InconsistentParameters { reason } => write!(f, "{reason}"),
+            Error::TraitCount { actual, minimum, maximum } => {
+                write!(f, "pass {minimum} to {maximum} traits, got {actual}")
+            }
+            Error::UnsupportedTraitKind { field, kind } => {
+                write!(f, "{field} is a {kind} trait, which this method does not take")
+            }
+            Error::InvalidTraitCode { field, kind, position, value } => match *kind {
+                "continuous" => write!(f, "{field}[{position}] = {value} is not finite"),
+                "binary" => write!(f, "{field}[{position}] = {value} is not 0, 1 or missing"),
+                _ => write!(f, "{field}[{position}] = {value} is not a {kind} level code"),
+            },
+            Error::SparseOrdinalCodes { field, level } => write!(
+                f,
+                "{field} has no row at code {level} below its largest code: ordinal codes must be 0..k-1, \
+                 or declare the levels"
+            ),
+            Error::UnusedLevel { field, level, n_levels } => write!(
+                f,
+                "{field} declares {n_levels} levels but no row has level {level}"
+            ),
+            Error::AllMissingTrait { field } => write!(f, "{field} is missing in every row"),
+            Error::ConstantTrait { field, value } => {
+                write!(f, "{field} is constant ({value} in every non-missing row)")
+            }
+            Error::StratumLength { expected_length, actual_length } => write!(
+                f,
+                "stratum must have one label per pedigree row ({expected_length}), got {actual_length}"
+            ),
         }
     }
 }

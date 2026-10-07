@@ -67,6 +67,7 @@ fn main() {
     let traits = [0, 1].map(|t| Trait {
         values: &status[t],
         kind: TraitKind::Binary,
+        n_levels: None,
     });
     let t = Instant::now();
     if which == "uni" {
