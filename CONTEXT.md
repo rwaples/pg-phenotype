@@ -61,3 +61,30 @@ per group because full sibs share nearly all their relatives.
 **Terminal**:
 A row with a missing parent.  Two rows share an ancestor exactly when they
 reach a common terminal, which is how prep proves a kinship is zero.
+
+**Mating Pair**:
+A distinct mother and father, both pedigree rows, of at least one child.
+Pairs are ordered by (mother id, father id).
+_Avoid_: couple, mates, union
+
+**Mate Network**:
+A connected set of Mating Pairs through shared mates: a remating mother or
+father joins two pairs.  The sandwich SE clusters by Mate Network, and the
+bootstrap resamples whole networks.
+_Avoid_: family, component
+
+**Cell**:
+One mother trait against one father trait.  One trait gives one cell; two
+traits give four, in the order (0, 0), (0, 1), (1, 0), (1, 1).
+_Avoid_: pair of traits, combination
+
+**Mate Correlation**:
+The correlation between the mother's trait and the father's trait over a
+cell's Mating Pairs, by the estimator its trait kinds call for (Pearson,
+tetrachoric, polychoric, biserial, polyserial and their closed-form
+companions).
+_Avoid_: spousal correlation, assortment coefficient
+
+**Within-Person Cross-Trait Correlation**:
+With two traits, the correlation of a person's two traits, per sex, once per
+distinct person with an analysed Mating Pair.
