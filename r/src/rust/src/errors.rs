@@ -155,6 +155,17 @@ fn one_based(err: Error) -> Error {
             reason,
             position: position + 1,
         },
+        Error::InvalidTraitCode {
+            field,
+            kind,
+            position,
+            value,
+        } => Error::InvalidTraitCode {
+            field,
+            kind,
+            position: position + 1,
+            value,
+        },
         other => other,
     }
 }

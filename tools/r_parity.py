@@ -6,7 +6,9 @@ Floats are written as C99 hex (``float.hex``), which R's ``as.numeric`` reads
 exactly, so the R tests compare against the Python scores bit for bit; ``NA``
 is a missing value.  Both packages run the same Rust core, so any difference
 is a binding bug.  ``trait_cases.csv`` holds what ``pg_phenotype.Trait`` makes
-of a few inputs, which R's ``trait()`` must reproduce.
+of a few inputs, which R's ``trait()`` must reproduce.  ``am_*`` files hold
+assortative-mating cases from the pedsum goldens: inputs, settings, and the
+Python result flattened to one ``path, kind, value`` row per leaf.
 """
 
 from __future__ import annotations
@@ -26,6 +28,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from pg_phenotype import Trait, ValidationError, pafgrs  # noqa: E402
+from tests.assortative_golden import load  # noqa: E402
+from tests.assortative_parity import run  # noqa: E402
 from tests.pedigrees import random_pedigree  # noqa: E402
 from tests.scoring_fixtures import random_trait  # noqa: E402
 
@@ -132,6 +136,54 @@ def trait_row(name: str, r_type: str, values: str, kind: str | None) -> dict[str
     }
 
 
+AM_CASES = (
+    "cont_bin_boot",
+    "bin_ord_depth_boot",
+    "ord_cont_birthyear_boot",
+    "small_strat",
+    "perfect_2x2_boot",
+    "separated_biserial_boot",
+)
+
+
+def flatten(value: object, path: str, out: list[dict[str, str]]) -> None:
+    """One row per leaf of a native result: lists indexed from 0, dict keys joined by dots."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k != "threads":
+                flatten(v, f"{path}.{k}" if path else k, out)
+    elif isinstance(value, list | tuple):
+        for i, v in enumerate(value):
+            flatten(v, f"{path}[{i}]", out)
+    elif value is None:
+        out.append({"path": path, "kind": "null", "value": "NA"})
+    elif isinstance(value, bool):
+        out.append({"path": path, "kind": "bool", "value": "TRUE" if value else "FALSE"})
+    elif isinstance(value, int):
+        out.append({"path": path, "kind": "int", "value": str(value)})
+    elif isinstance(value, float):
+        out.append({"path": path, "kind": "float", "value": value.hex()})
+    else:
+        out.append({"path": path, "kind": "str", "value": str(value)})
+
+
+def am_fixtures(out_dir: Path) -> None:
+    rows = []
+    for name in AM_CASES:
+        g = load(name)
+        columns = {"id": g.id, "mother": g.mother, "father": g.father}
+        for t, values in enumerate(g.values):
+            columns[f"t{t}"] = values
+        if g.stratified:
+            columns["stratum"] = np.where(g.stratum_known, g.stratum_labels.astype(float), np.nan)
+        write(out_dir / f"am_{name}.csv", columns)
+        leaves: list[dict[str, str]] = []
+        flatten(run(g), "", leaves)
+        write(out_dir / f"am_expected_{name}.csv", {k: [r[k] for r in leaves] for k in ("path", "kind", "value")})
+        rows.append({"name": name, "kinds": " ".join(g.kinds), "stratified": g.stratified, **g.settings})
+    write(out_dir / "am_cases.csv", {k: [r[k] for r in rows] for k in rows[0]})
+
+
 def main(out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     traits = {}
@@ -188,6 +240,7 @@ def main(out_dir: Path) -> None:
         )
     write(out_dir / "cases.csv", {k: [r[k] for r in rows] for k in rows[0]})
 
+    am_fixtures(out_dir)
     trait_rows = [trait_row(*case) for case in TRAIT_CASES]
     write(out_dir / "trait_cases.csv", {k: [r[k] for r in trait_rows] for k in trait_rows[0]})
 

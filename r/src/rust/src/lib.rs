@@ -6,6 +6,7 @@
 //! budget (`threads.rs`).  Each method is a module, as in the core
 //! ([`pafgrs`]).
 
+mod assortative;
 mod errors;
 mod input;
 mod pafgrs;
@@ -48,6 +49,7 @@ fn thread_budget() -> Robj {
 
 extendr_module! {
     mod pgphenotype;
+    use assortative;
     use pafgrs;
     use test_hooks;
     fn pgphenotype_version;

@@ -10,12 +10,13 @@ trait(values, kind = NULL)
 \item{values}{One value per pedigree row, `NA` where unknown: a logical,
 numeric, character or factor vector.  Character values are category
 labels coded 0, 1, ... in sorted (C-locale) order; a factor is coded
-0, 1, ... in its level order.}
+0, 1, ... in its level order, unused levels kept.}
 
 \item{kind}{`"continuous"`, `"binary"`, `"ordinal"` or `"categorical"`.
 `NULL` infers it: logical values and values all in \{0, 1\} are binary,
-character and factor values categorical, and any non-integer number
-continuous.  Other integer values need an explicit `kind`.}
+an ordered factor ordinal, character values and other factors
+categorical, and any non-integer number continuous.  Other integer
+values need an explicit `kind`.}
 }
 \value{
 An object of class `pgphenotype_trait` holding `values` (doubles,
@@ -37,4 +38,5 @@ trait(c(TRUE, FALSE, NA))
 trait(c(1.7, 2.2, NA))
 trait(c("b", "a", NA, "c"))
 trait(c(0L, 2L, 1L), kind = "ordinal")
+trait(factor(c("mild", "severe", NA), levels = c("mild", "moderate", "severe"), ordered = TRUE))
 }

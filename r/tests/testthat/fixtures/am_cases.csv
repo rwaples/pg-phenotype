@@ -1,0 +1,7 @@
+name,kinds,stratified,permutations,bootstrap,seed,min_stratum_networks
+cont_bin_boot,continuous binary,False,99,200,11,10
+bin_ord_depth_boot,binary ordinal,True,199,150,5,5
+ord_cont_birthyear_boot,ordinal continuous,True,199,200,-7,8
+small_strat,binary ordinal,True,299,200,9,2
+perfect_2x2_boot,binary,False,199,200,3,10
+separated_biserial_boot,continuous binary,False,199,200,8,10

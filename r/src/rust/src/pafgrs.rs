@@ -149,6 +149,7 @@ fn trait_of<'a>(values: &'a Robj, kind: &Robj) -> HostResult<Trait<'a>> {
     Ok(Trait {
         values: input::doubles("trait", values)?,
         kind,
+        n_levels: None,
     })
 }
 
