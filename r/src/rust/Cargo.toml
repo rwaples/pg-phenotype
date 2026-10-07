@@ -1,0 +1,38 @@
+[package]
+name = "pg-phenotype-r"
+# Kept equal to [workspace.package].version in the repository root and to
+# r/DESCRIPTION; this crate is its own workspace (below) so the R source
+# tarball builds without that one.
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/rwaples/pg-phenotype"
+publish = false
+description = "extendr host binding for pg-phenotype-core"
+
+[lib]
+name = "pgphenotype"
+crate-type = ["staticlib"]
+
+[dependencies]
+# Points outside r/, so r/ installs only in place (pixi run -e r r-install);
+# tools/r_build_tarball.sh stages the core into the tarball.
+pg-phenotype-core = { path = "../../../crates/core" }
+extendr-api = "0.9"
+
+[features]
+# Test-only entry points (the panic-boundary probe).  `pixi run -e r r-install`
+# enables it through PG_PHENOTYPE_CARGO_FEATURES; tools/r_build_tarball.sh
+# refuses to run with that set, so the source tarball never carries it.
+test-hooks = []
+
+# Its own workspace root, so cargo never adopts it into an enclosing one: the
+# repository's, or any a user unpacks the source tarball under.
+[workspace]
+
+# Repeated because profiles are not inherited outside a workspace.
+[profile.release]
+opt-level = 3
+debug = 1
+codegen-units = 1

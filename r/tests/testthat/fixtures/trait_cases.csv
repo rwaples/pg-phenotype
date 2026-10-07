@@ -1,0 +1,16 @@
+case,type,values,kind,out_kind,out_values,levels,code,field_names,position,error_value
+logical,logical,TRUE FALSE NA TRUE,NA,binary,0x1.0000000000000p+0 0x0.0p+0 NA 0x1.0000000000000p+0,NA,NA,,NA,NA
+binary_double,double,1 0 NA 0,NA,binary,0x1.0000000000000p+0 0x0.0p+0 NA 0x0.0p+0,NA,NA,,NA,NA
+binary_integer,integer,0 NA 1,NA,binary,0x0.0p+0 NA 0x1.0000000000000p+0,NA,NA,,NA,NA
+binary_explicit,double,0 2,binary,binary,0x0.0p+0 0x1.0000000000000p+1,NA,NA,,NA,NA
+continuous,double,0.5 1.25 NA 3,NA,continuous,0x1.0000000000000p-1 0x1.4000000000000p+0 NA 0x1.8000000000000p+1,NA,NA,,NA,NA
+continuous_explicit,integer,1 2 3,continuous,continuous,0x1.0000000000000p+0 0x1.0000000000000p+1 0x1.8000000000000p+1,NA,NA,,NA,NA
+ambiguous,integer,0 1 2,NA,NA,,NA,ambiguous_trait_kind,field,NA,NA
+ordinal,integer,2 0 1 NA,ordinal,ordinal,0x1.0000000000000p+1 0x0.0p+0 0x1.0000000000000p+0 NA,NA,NA,,NA,NA
+categorical_fraction,double,1 2.5,categorical,NA,,NA,invalid_trait_value,field position value,1,0x1.4000000000000p+1
+strings,character,b a NA c a,NA,categorical,0x1.0000000000000p+0 0x0.0p+0 NA 0x1.0000000000000p+1 0x0.0p+0,a b c,NA,,NA,NA
+strings_codepoint_order,character,b B a _,NA,categorical,0x1.8000000000000p+1 0x0.0p+0 0x1.0000000000000p+1 0x1.0000000000000p+0,B _ a b,NA,,NA,NA
+strings_ordinal,character,lo hi lo,ordinal,ordinal,0x1.0000000000000p+0 0x0.0p+0 0x1.0000000000000p+0,hi lo,NA,,NA,NA
+strings_all_missing,character,NA NA,NA,binary,NA NA,NA,NA,,NA,NA
+empty,double,,NA,binary,,NA,NA,,NA,NA
+unknown_kind,double,0 1,nominal,NA,,NA,invalid_trait_kind,kind,NA,NA

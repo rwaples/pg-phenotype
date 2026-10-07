@@ -1,0 +1,23 @@
+Package: pgphenotype
+Title: Phenotypes in Pedigrees on a Rust Core
+Version: 0.1.0
+Authors@R: c(
+    person("Ryan", "Waples", email = "ryan.waples@gmail.com", role = c("aut", "cre", "cph")),
+    person("Authors of the bundled Rust crates", role = c("ctb", "cph"),
+           comment = "see inst/AUTHORS in the source tarball"))
+Description: Methods for phenotypes measured on the members of a pedigree,
+    computed by the Rust core shared with the 'pg-phenotype' Python package.
+    The first method is PA-FGRS family genetic risk scores from one or two
+    binary traits.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends: R (>= 4.2)
+Suggests: testthat (>= 3.0.0)
+Config/testthat/edition: 3
+SystemRequirements: Cargo (Rust's package manager), rustc (>= 1.85)
+Copyright: Ryan Waples for the package; the bundled Rust crates in
+    src/rust/vendor.tar.xz are copyright their authors, listed with their
+    licenses in inst/AUTHORS.
+URL: https://github.com/rwaples/pg-phenotype
+BugReports: https://github.com/rwaples/pg-phenotype/issues
+Config/roxygen2/version: 8.1.0
