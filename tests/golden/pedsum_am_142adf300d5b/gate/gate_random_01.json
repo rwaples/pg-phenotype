@@ -1,0 +1,177 @@
+{
+ "name": "gate_random_01",
+ "fixture": {
+  "seed": 101,
+  "kinds": [
+   "continuous"
+  ],
+  "founders": 152,
+  "generations": 1,
+  "assort": 0.5586690020055148,
+  "remate": 0.3972579961586033,
+  "missing": 0.04963021731435844,
+  "stratify_by": "birth_year",
+  "unknown_stratum": 0.05,
+  "birth_year_bin": 20,
+  "min_stratum_networks": 9,
+  "permutations": 199,
+  "bootstrap": 200,
+  "draw_seed": -248386347303,
+  "edits": [],
+  "extra": {}
+ },
+ "stratified": true,
+ "settings": {
+  "permutations": 199,
+  "bootstrap": 200,
+  "seed": -248386347303,
+  "min_stratum_networks": 9
+ },
+ "payload": {
+  "traits": [
+   {
+    "name": "t0",
+    "type": "continuous",
+    "type_source": "stated",
+    "n_values": 379,
+    "n_missing": 18
+   }
+  ],
+  "settings": {
+   "permutations": 199,
+   "bootstrap": 200,
+   "seed": -248386347303,
+   "threads": 12,
+   "ci_level": 0.95,
+   "ci_method": "bootstrap",
+   "stratify_by": "birth_year",
+   "birth_year_bin": 20,
+   "min_stratum_networks": 9
+  },
+  "inference": {
+   "se_method": "cluster-robust sandwich over Mate Networks of the stacked two-step estimating equations (thresholds, stratum means and variances, then rho), G/(G-1) small-sample factor",
+   "ci_scale": "Fisher z for correlations, log for the odds ratio",
+   "bootstrap_unit": "mate_network",
+   "bootstrap_assumption": "Mate Networks are independent. Dependence from remating is kept; dependence between networks through ancestry or siblings is not modelled.",
+   "bootstrap_method": "one_step: each draw refits the first step (thresholds, stratum moments) and every closed-form estimator exactly on the resampled Mate Networks, and takes one Newton step for rho from the observed estimate with the draw-weighted score and the full-sample Hessian",
+   "permutation_null": "father trait vectors exchangeable within blocks",
+   "permutation_blocks": "father_stratum x father_missingness_pattern",
+   "permutation_statistic": "score_at_zero: the score of the latent-correlation log-likelihood at rho = 0 with every margin refit on the permuted pairs (polychoric, tetrachoric, polyserial, biserial); pearson: Pearson r (continuous x continuous)",
+   "permutation_stopping": "besag_clifford_closed",
+   "permutation_stop_h": 20
+  },
+  "mating_pairs": {
+   "n_total": 98,
+   "n_dropped": {
+    "unknown_stratum": 10
+   },
+   "n_mate_networks": 42,
+   "largest_mate_network_share": 0.45454545454545453,
+   "n_mothers_multiple_mates": 23,
+   "n_fathers_multiple_mates": 23
+  },
+  "mate_correlation": [
+   {
+    "mother": "t0",
+    "father": "t0",
+    "n": 81,
+    "n_dropped": {
+     "mother_missing": 2,
+     "father_missing": 5,
+     "both_missing": 0,
+     "small_stratum": 0,
+     "degenerate_stratum": 0
+    },
+    "n_mate_networks": 42,
+    "largest_mate_network_share": 0.30864197530864196,
+    "crude": {
+     "pearson": {
+      "r": 0.27650724676392124,
+      "se": 0.1224767933983332,
+      "ci": [
+       0.10105712726085007,
+       0.5892384326836306
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 200,
+       "valid": 200,
+       "failed": 0,
+       "failure_reasons": {}
+      },
+      "p_perm": 0.01,
+      "p_perm_unavailable_reason": null,
+      "permutation_statistic": "pearson",
+      "permutations": {
+       "requested": 199,
+       "valid": 199,
+       "failed": 0,
+       "failure_reasons": {},
+       "seed": -248386347303,
+       "n_fixed_fathers": 0,
+       "stopped_early": false,
+       "draws_used": 199,
+       "sequential_h": 20
+      }
+     },
+     "spearman": {
+      "r": 0.31500273886464064,
+      "se": null,
+      "ci": [
+       0.11184934889380001,
+       0.61898288327257
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 200,
+       "valid": 200,
+       "failed": 0,
+       "failure_reasons": {}
+      }
+     }
+    },
+    "stratified": {
+     "pearson": {
+      "r": 0.3029029930775996,
+      "se": 0.10687063644237112,
+      "ci": [
+       0.12073229719009683,
+       0.5511726318957505
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 200,
+       "valid": 200,
+       "failed": 0,
+       "failure_reasons": {}
+      },
+      "n_strata_mothers": 2,
+      "n_strata_fathers": 2,
+      "p_perm": 0.01,
+      "p_perm_unavailable_reason": null,
+      "permutation_statistic": "pearson",
+      "permutations": {
+       "requested": 199,
+       "valid": 199,
+       "failed": 0,
+       "failure_reasons": {},
+       "seed": -248386347303,
+       "n_fixed_fathers": 0,
+       "stopped_early": false,
+       "draws_used": 199,
+       "sequential_h": 20
+      }
+     }
+    }
+   }
+  ],
+  "notes": [
+   "Mating Pairs are observed only through offspring; partnerships without a recorded child are absent.",
+   "Phenotypic correlation; tetrachoric/polychoric/polyserial assume bivariate-normal liability, the other estimators describe the observed values.",
+   "Censored age-dependent diagnoses are not corrected; a mate who has not yet been diagnosed counts as unaffected."
+  ]
+ }
+}

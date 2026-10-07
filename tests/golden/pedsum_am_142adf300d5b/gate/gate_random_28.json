@@ -1,0 +1,134 @@
+{
+ "name": "gate_random_28",
+ "fixture": {
+  "seed": 128,
+  "kinds": [
+   "ordinal"
+  ],
+  "founders": 253,
+  "generations": 1,
+  "assort": 0.258760890978324,
+  "remate": 0.0005477821465523114,
+  "missing": 0.07580015870231634,
+  "stratify_by": null,
+  "unknown_stratum": 0.0,
+  "birth_year_bin": 10,
+  "min_stratum_networks": 4,
+  "permutations": 499,
+  "bootstrap": 200,
+  "draw_seed": -835022175948,
+  "edits": [],
+  "extra": {}
+ },
+ "stratified": false,
+ "settings": {
+  "permutations": 499,
+  "bootstrap": 200,
+  "seed": -835022175948,
+  "min_stratum_networks": 4
+ },
+ "payload": {
+  "traits": [
+   {
+    "name": "t0",
+    "type": "ordinal",
+    "type_source": "stated",
+    "levels": [
+     "0",
+     "1",
+     "2",
+     "3"
+    ],
+    "n_values": 538,
+    "n_missing": 46
+   }
+  ],
+  "settings": {
+   "permutations": 499,
+   "bootstrap": 200,
+   "seed": -835022175948,
+   "threads": 12,
+   "ci_level": 0.95,
+   "ci_method": "bootstrap",
+   "stratify_by": null,
+   "birth_year_bin": null,
+   "min_stratum_networks": null
+  },
+  "inference": {
+   "se_method": "cluster-robust sandwich over Mate Networks of the stacked two-step estimating equations (thresholds, stratum means and variances, then rho), G/(G-1) small-sample factor",
+   "ci_scale": "Fisher z for correlations, log for the odds ratio",
+   "bootstrap_unit": "mate_network",
+   "bootstrap_assumption": "Mate Networks are independent. Dependence from remating is kept; dependence between networks through ancestry or siblings is not modelled.",
+   "bootstrap_method": "one_step: each draw refits the first step (thresholds, stratum moments) and every closed-form estimator exactly on the resampled Mate Networks, and takes one Newton step for rho from the observed estimate with the draw-weighted score and the full-sample Hessian",
+   "permutation_null": "father trait vectors exchangeable within blocks",
+   "permutation_blocks": "father_stratum x father_missingness_pattern",
+   "permutation_statistic": "score_at_zero: the score of the latent-correlation log-likelihood at rho = 0 with every margin refit on the permuted pairs (polychoric, tetrachoric, polyserial, biserial); pearson: Pearson r (continuous x continuous)",
+   "permutation_stopping": "besag_clifford_closed",
+   "permutation_stop_h": 20
+  },
+  "mating_pairs": {
+   "n_total": 124,
+   "n_dropped": {
+    "unknown_stratum": 0
+   },
+   "n_mate_networks": 124,
+   "largest_mate_network_share": 0.008064516129032258,
+   "n_mothers_multiple_mates": 0,
+   "n_fathers_multiple_mates": 0
+  },
+  "mate_correlation": [
+   {
+    "mother": "t0",
+    "father": "t0",
+    "n": 109,
+    "n_dropped": {
+     "mother_missing": 8,
+     "father_missing": 7,
+     "both_missing": 0,
+     "small_stratum": 0,
+     "degenerate_stratum": 0
+    },
+    "n_mate_networks": 109,
+    "largest_mate_network_share": 0.009174311926605505,
+    "crude": {
+     "polychoric": {
+      "rho": 0.06127275443697191,
+      "boundary": false,
+      "se": 0.10983649344970617,
+      "ci": [
+       -0.14154842379238922,
+       0.27434172205078616
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 200,
+       "valid": 200,
+       "failed": 0,
+       "failure_reasons": {}
+      },
+      "p_perm": 0.47619047619047616,
+      "p_perm_unavailable_reason": null,
+      "permutation_statistic": "score_at_zero",
+      "permutations": {
+       "requested": 499,
+       "valid": 42,
+       "failed": 0,
+       "failure_reasons": {},
+       "seed": -835022175948,
+       "n_fixed_fathers": 0,
+       "stopped_early": true,
+       "draws_used": 42,
+       "sequential_h": 20
+      }
+     }
+    }
+   }
+  ],
+  "notes": [
+   "Mating Pairs are observed only through offspring; partnerships without a recorded child are absent.",
+   "Phenotypic correlation; tetrachoric/polychoric/polyserial assume bivariate-normal liability, the other estimators describe the observed values.",
+   "Censored age-dependent diagnoses are not corrected; a mate who has not yet been diagnosed counts as unaffected."
+  ]
+ }
+}

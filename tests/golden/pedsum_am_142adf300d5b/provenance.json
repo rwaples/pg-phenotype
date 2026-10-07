@@ -1,0 +1,50 @@
+{
+ "pedsum_sha": "142adf300d5b0802f59af03f3f5211af910fc852",
+ "snapshot": "git archive of the pin, extracted outside the worktree, its own locked pixi env",
+ "generator": "make_pedsum_am_golden.py",
+ "generator_sha256": "82476e44b0e3bb5a2c27153e25ffc2ae9a6e95388eb896acae2d1475b391eec1",
+ "pg_phenotype_commit": "b3659630a6ae85c31f0198a27aa3bc6a0ff129fe",
+ "fixtures": [
+  "cont_bin",
+  "cont_bin_boot",
+  "cont_ord_birthyear",
+  "bin_ord_depth_boot",
+  "ord_cont_birthyear_boot",
+  "cont_only_boot",
+  "bin_only",
+  "ord_only_depth",
+  "thin_birthyear",
+  "all_thin_birthyear",
+  "dangling_and_phantoms",
+  "constant_cell_margin",
+  "degenerate_stratum",
+  "no_permutations",
+  "strong_assort",
+  "null_assort",
+  "founders_only",
+  "boundary_2x2",
+  "boundary_2x2_sandwich",
+  "ties_2x2",
+  "single_network",
+  "perfect_2x2_boot",
+  "separated_biserial_boot",
+  "near_perfect_ord_cont_depth",
+  "single_network_sandwich",
+  "small_boot_2x2",
+  "small_strat",
+  "small_strat_cont"
+ ],
+ "pixi_lock_sha256": "5d23fa43eb383fa99dcbf4912d3036d98c8eb950c5dd4f42298e3b8040d9ae39",
+ "versions": {
+  "python": "3.14.7",
+  "numpy": "2.5.2",
+  "scipy": "1.18.1",
+  "numba": "0.68.0",
+  "polars": "1.44.2"
+ },
+ "numba_threads": 12,
+ "trait_errors": {
+  "all_missing_trait": "trait 't' is missing in every row",
+  "constant_trait": "trait 't' is constant (5 in every non-missing row)"
+ }
+}

@@ -1,0 +1,451 @@
+{
+ "name": "gate_random_20",
+ "fixture": {
+  "seed": 120,
+  "kinds": [
+   "ordinal",
+   "continuous"
+  ],
+  "founders": 390,
+  "generations": 2,
+  "assort": 0.14756745591278875,
+  "remate": 0.04902433313515689,
+  "missing": 0.26521097491562035,
+  "stratify_by": "depth",
+  "unknown_stratum": 0.05,
+  "birth_year_bin": 20,
+  "min_stratum_networks": 9,
+  "permutations": 0,
+  "bootstrap": 100,
+  "draw_seed": -770055984878,
+  "edits": [],
+  "extra": {}
+ },
+ "stratified": true,
+ "settings": {
+  "permutations": 0,
+  "bootstrap": 100,
+  "seed": -770055984878,
+  "min_stratum_networks": 9
+ },
+ "payload": {
+  "traits": [
+   {
+    "name": "t0",
+    "type": "ordinal",
+    "type_source": "stated",
+    "levels": [
+     "0",
+     "1",
+     "2",
+     "3"
+    ],
+    "n_values": 1163,
+    "n_missing": 404
+   },
+   {
+    "name": "t1",
+    "type": "continuous",
+    "type_source": "stated",
+    "n_values": 1132,
+    "n_missing": 435
+   }
+  ],
+  "settings": {
+   "permutations": 0,
+   "bootstrap": 100,
+   "seed": -770055984878,
+   "threads": 12,
+   "ci_level": 0.95,
+   "ci_method": "bootstrap",
+   "stratify_by": "depth",
+   "birth_year_bin": null,
+   "min_stratum_networks": 9
+  },
+  "inference": {
+   "se_method": "cluster-robust sandwich over Mate Networks of the stacked two-step estimating equations (thresholds, stratum means and variances, then rho), G/(G-1) small-sample factor",
+   "ci_scale": "Fisher z for correlations, log for the odds ratio",
+   "bootstrap_unit": "mate_network",
+   "bootstrap_assumption": "Mate Networks are independent. Dependence from remating is kept; dependence between networks through ancestry or siblings is not modelled.",
+   "bootstrap_method": "one_step: each draw refits the first step (thresholds, stratum moments) and every closed-form estimator exactly on the resampled Mate Networks, and takes one Newton step for rho from the observed estimate with the draw-weighted score and the full-sample Hessian",
+   "permutation_null": "father trait vectors exchangeable within blocks",
+   "permutation_blocks": "father_stratum x father_missingness_pattern",
+   "permutation_statistic": "score_at_zero: the score of the latent-correlation log-likelihood at rho = 0 with every margin refit on the permuted pairs (polychoric, tetrachoric, polyserial, biserial); pearson: Pearson r (continuous x continuous)",
+   "permutation_stopping": "besag_clifford_closed",
+   "permutation_stop_h": 20
+  },
+  "mating_pairs": {
+   "n_total": 446,
+   "n_dropped": {
+    "unknown_stratum": 0
+   },
+   "n_mate_networks": 414,
+   "largest_mate_network_share": 0.026905829596412557,
+   "n_mothers_multiple_mates": 18,
+   "n_fathers_multiple_mates": 18
+  },
+  "mate_correlation": [
+   {
+    "mother": "t0",
+    "father": "t0",
+    "n": 251,
+    "n_dropped": {
+     "mother_missing": 70,
+     "father_missing": 101,
+     "both_missing": 24,
+     "small_stratum": 0,
+     "degenerate_stratum": 0
+    },
+    "n_mate_networks": 241,
+    "largest_mate_network_share": 0.027888446215139442,
+    "crude": {
+     "polychoric": {
+      "rho": -0.0022456689807848077,
+      "boundary": false,
+      "se": 0.0756500051691443,
+      "ci": [
+       -0.1655816458578497,
+       0.14243948997981185
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 100,
+       "valid": 100,
+       "failed": 0,
+       "failure_reasons": {}
+      },
+      "p_perm": null,
+      "p_perm_unavailable_reason": "not_requested",
+      "permutation_statistic": "score_at_zero",
+      "permutations": {
+       "requested": 0,
+       "valid": 0,
+       "failed": 0,
+       "failure_reasons": {},
+       "seed": -770055984878,
+       "n_fixed_fathers": 0,
+       "stopped_early": false,
+       "draws_used": 0,
+       "sequential_h": 20
+      }
+     }
+    },
+    "stratified": {
+     "polychoric": {
+      "rho": -0.005129528357865166,
+      "boundary": false,
+      "se": 0.07488151530235918,
+      "ci": [
+       -0.15445169599380898,
+       0.14533240632712835
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 100,
+       "valid": 100,
+       "failed": 0,
+       "failure_reasons": {}
+      },
+      "n_strata_mothers": 2,
+      "n_strata_fathers": 2,
+      "p_perm": null,
+      "p_perm_unavailable_reason": "not_requested",
+      "permutation_statistic": "score_at_zero",
+      "permutations": {
+       "requested": 0,
+       "valid": 0,
+       "failed": 0,
+       "failure_reasons": {},
+       "seed": -770055984878,
+       "n_fixed_fathers": 0,
+       "stopped_early": false,
+       "draws_used": 0,
+       "sequential_h": 20
+      }
+     }
+    }
+   },
+   {
+    "mother": "t0",
+    "father": "t1",
+    "n": 263,
+    "n_dropped": {
+     "mother_missing": 63,
+     "father_missing": 89,
+     "both_missing": 31,
+     "small_stratum": 0,
+     "degenerate_stratum": 0
+    },
+    "n_mate_networks": 243,
+    "largest_mate_network_share": 0.03802281368821293,
+    "crude": {
+     "polyserial": {
+      "rho": -0.06813007558473702,
+      "boundary": false,
+      "se": 0.06229442696111376,
+      "ci": [
+       -0.18951135103555117,
+       0.047999241482784644
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 100,
+       "valid": 100,
+       "failed": 0,
+       "failure_reasons": {}
+      },
+      "p_perm": null,
+      "p_perm_unavailable_reason": "not_requested",
+      "permutation_statistic": "score_at_zero",
+      "permutations": {
+       "requested": 0,
+       "valid": 0,
+       "failed": 0,
+       "failure_reasons": {},
+       "seed": -770055984878,
+       "n_fixed_fathers": 0,
+       "stopped_early": false,
+       "draws_used": 0,
+       "sequential_h": 20
+      }
+     }
+    },
+    "stratified": {
+     "polyserial": {
+      "rho": -0.07531436352735668,
+      "boundary": false,
+      "se": 0.06230520045735673,
+      "ci": [
+       -0.1998040563590096,
+       0.03389729437258897
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 100,
+       "valid": 100,
+       "failed": 0,
+       "failure_reasons": {}
+      },
+      "n_strata_mothers": 2,
+      "n_strata_fathers": 2,
+      "p_perm": null,
+      "p_perm_unavailable_reason": "not_requested",
+      "permutation_statistic": "score_at_zero",
+      "permutations": {
+       "requested": 0,
+       "valid": 0,
+       "failed": 0,
+       "failure_reasons": {},
+       "seed": -770055984878,
+       "n_fixed_fathers": 0,
+       "stopped_early": false,
+       "draws_used": 0,
+       "sequential_h": 20
+      }
+     }
+    }
+   },
+   {
+    "mother": "t1",
+    "father": "t0",
+    "n": 229,
+    "n_dropped": {
+     "mother_missing": 92,
+     "father_missing": 83,
+     "both_missing": 42,
+     "small_stratum": 0,
+     "degenerate_stratum": 0
+    },
+    "n_mate_networks": 219,
+    "largest_mate_network_share": 0.021834061135371178,
+    "crude": {
+     "polyserial": {
+      "rho": 0.08371036755938797,
+      "boundary": false,
+      "se": 0.07721840646036635,
+      "ci": [
+       -0.05238483003380355,
+       0.23286713369770612
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 100,
+       "valid": 100,
+       "failed": 0,
+       "failure_reasons": {}
+      },
+      "p_perm": null,
+      "p_perm_unavailable_reason": "not_requested",
+      "permutation_statistic": "score_at_zero",
+      "permutations": {
+       "requested": 0,
+       "valid": 0,
+       "failed": 0,
+       "failure_reasons": {},
+       "seed": -770055984878,
+       "n_fixed_fathers": 0,
+       "stopped_early": false,
+       "draws_used": 0,
+       "sequential_h": 20
+      }
+     }
+    },
+    "stratified": {
+     "polyserial": {
+      "rho": 0.07874871922027774,
+      "boundary": false,
+      "se": 0.0767920287793078,
+      "ci": [
+       -0.07002289187737862,
+       0.22834001409537039
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 100,
+       "valid": 100,
+       "failed": 0,
+       "failure_reasons": {}
+      },
+      "n_strata_mothers": 2,
+      "n_strata_fathers": 2,
+      "p_perm": null,
+      "p_perm_unavailable_reason": "not_requested",
+      "permutation_statistic": "score_at_zero",
+      "permutations": {
+       "requested": 0,
+       "valid": 0,
+       "failed": 0,
+       "failure_reasons": {},
+       "seed": -770055984878,
+       "n_fixed_fathers": 0,
+       "stopped_early": false,
+       "draws_used": 0,
+       "sequential_h": 20
+      }
+     }
+    }
+   },
+   {
+    "mother": "t1",
+    "father": "t1",
+    "n": 231,
+    "n_dropped": {
+     "mother_missing": 95,
+     "father_missing": 81,
+     "both_missing": 39,
+     "small_stratum": 0,
+     "degenerate_stratum": 0
+    },
+    "n_mate_networks": 215,
+    "largest_mate_network_share": 0.025974025974025976,
+    "crude": {
+     "pearson": {
+      "r": 0.06254329196990069,
+      "se": 0.058605599548559664,
+      "ci": [
+       -0.037109990469126705,
+       0.16059746798649396
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 100,
+       "valid": 100,
+       "failed": 0,
+       "failure_reasons": {}
+      },
+      "p_perm": null,
+      "p_perm_unavailable_reason": "not_requested",
+      "permutation_statistic": "pearson",
+      "permutations": {
+       "requested": 0,
+       "valid": 0,
+       "failed": 0,
+       "failure_reasons": {},
+       "seed": -770055984878,
+       "n_fixed_fathers": 0,
+       "stopped_early": false,
+       "draws_used": 0,
+       "sequential_h": 20
+      }
+     },
+     "spearman": {
+      "r": 0.03722147840815965,
+      "se": null,
+      "ci": [
+       -0.06807350787645076,
+       0.13673679363753977
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 100,
+       "valid": 100,
+       "failed": 0,
+       "failure_reasons": {}
+      }
+     }
+    },
+    "stratified": {
+     "pearson": {
+      "r": 0.05793745751624351,
+      "se": 0.05800663386092004,
+      "ci": [
+       -0.04050537530874193,
+       0.15695849193900296
+      ],
+      "ci_method": "bootstrap",
+      "ci_unavailable_reason": null,
+      "bootstrap": {
+       "requested": 100,
+       "valid": 100,
+       "failed": 0,
+       "failure_reasons": {}
+      },
+      "n_strata_mothers": 2,
+      "n_strata_fathers": 2,
+      "p_perm": null,
+      "p_perm_unavailable_reason": "not_requested",
+      "permutation_statistic": "pearson",
+      "permutations": {
+       "requested": 0,
+       "valid": 0,
+       "failed": 0,
+       "failure_reasons": {},
+       "seed": -770055984878,
+       "n_fixed_fathers": 0,
+       "stopped_early": false,
+       "draws_used": 0,
+       "sequential_h": 20
+      }
+     }
+    }
+   }
+  ],
+  "within_person": {
+   "mothers": {
+    "estimator": "polyserial",
+    "n": 238,
+    "rho": 0.3939942537813257,
+    "boundary": false
+   },
+   "fathers": {
+    "estimator": "polyserial",
+    "n": 229,
+    "rho": 0.32019938043070517,
+    "boundary": false
+   }
+  },
+  "notes": [
+   "Mating Pairs are observed only through offspring; partnerships without a recorded child are absent.",
+   "Phenotypic correlation; tetrachoric/polychoric/polyserial assume bivariate-normal liability, the other estimators describe the observed values.",
+   "Censored age-dependent diagnoses are not corrected; a mate who has not yet been diagnosed counts as unaffected."
+  ]
+ }
+}
