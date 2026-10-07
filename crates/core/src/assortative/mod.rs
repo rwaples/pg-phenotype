@@ -35,7 +35,7 @@ use bootstrap::Draw;
 use input::{check_strata, check_traits, Kind};
 use permutation::{NullDraw, Packed, SEQUENTIAL_H};
 use sample::{
-    drop_thin_strata, mate_networks, mating_pairs, network_summary, stratum_codes, CellPairs,
+    drop_thin_strata, mate_networks, mating_pairs, network_summary, stratum_codes, CellPairs, Kept,
 };
 
 pub use input::{Settings, Strata};
@@ -171,7 +171,11 @@ pub fn mate_correlation(
             let cell_fathers: Vec<usize> = complete.iter().map(|&p| fathers[p]).collect();
             let n_complete = complete.len() as u64;
             let cell_labels = if stratified {
-                let (keep, n_small, cell_labels) = drop_thin_strata(
+                let Kept {
+                    keep,
+                    n_small,
+                    labels: cell_labels,
+                } = drop_thin_strata(
                     &pairs,
                     &cell_mothers,
                     &cell_fathers,

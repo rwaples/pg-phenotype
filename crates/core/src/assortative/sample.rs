@@ -200,14 +200,24 @@ fn degenerate_strata(x: &[f64], code: &[usize]) -> Vec<bool> {
     m.lo.iter().zip(&m.hi).map(|(l, h)| l == h).collect()
 }
 
+/// A cell's pairs after the thin- and degenerate-stratum rules.
+pub(crate) struct Kept {
+    /// Indices of the kept pairs.
+    pub keep: Vec<usize>,
+    /// Pairs dropped as small, in the round each was dropped.
+    pub n_small: u64,
+    /// Mate Network label of each kept pair.
+    pub labels: Vec<usize>,
+}
+
 /// The pairs kept once every small or degenerate sex x stratum is dropped,
-/// rules repeated until neither drops a pair: `(keep, n_small, labels)`.
+/// rules repeated until neither drops a pair.
 pub(crate) fn drop_thin_strata(
     pairs: &CellPairs,
     mothers: &[usize],
     fathers: &[usize],
     min_networks: u64,
-) -> (Vec<usize>, u64, Vec<usize>) {
+) -> Kept {
     let mut keep: Vec<usize> = (0..pairs.len()).collect();
     let mut n_small = 0;
     loop {
@@ -215,7 +225,11 @@ pub(crate) fn drop_thin_strata(
         let f: Vec<usize> = keep.iter().map(|&i| fathers[i]).collect();
         let labels = mate_networks(&m, &f);
         if keep.is_empty() {
-            return (keep, n_small, labels);
+            return Kept {
+                keep,
+                n_small,
+                labels,
+            };
         }
         let kept = pairs.take(&keep);
         let nets_m = stratum_networks(&kept.m_stratum, &labels);
@@ -237,7 +251,11 @@ pub(crate) fn drop_thin_strata(
             }
         }
         if !any_bad {
-            return (keep, n_small, labels);
+            return Kept {
+                keep,
+                n_small,
+                labels,
+            };
         }
         keep = next;
     }

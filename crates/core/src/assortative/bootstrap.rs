@@ -349,7 +349,7 @@ fn polyserial_hessian(rho: f64, serial: &Serial<'_>) -> f64 {
     match serial.first_step(&w) {
         Ok(first) => {
             let inv_sd = inverse_sd(&first.var);
-            serial.kernel(&first, &inv_sd, &w).terms(rho, true).2
+            serial.kernel(&first, &inv_sd, &w).terms(rho, true).hess
         }
         Err(_) => f64::NAN,
     }

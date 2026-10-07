@@ -72,6 +72,25 @@ pub(crate) fn latent_scores(
     )
 }
 
+/// One form's statistic before standardising: `Σ e_m e_f` and the father
+/// side's `Σ e_f²`.
+#[derive(Clone, Copy, Debug)]
+struct Score {
+    cross: f64,
+    ss_f: f64,
+}
+
+/// One father stratum of a cell: the shift its values are summed about (a
+/// continuous trait's observed mean, else 0), its pairs, and the summed
+/// crude and stratified mother scores.
+#[derive(Clone, Copy, Debug)]
+struct StratumSums {
+    shift: f64,
+    pairs: f64,
+    e1: f64,
+    e2: f64,
+}
+
 /// One cell collapsed onto its distinct fathers, in row order.
 struct Fathers {
     row: Vec<u32>,
@@ -81,8 +100,7 @@ struct Fathers {
     /// Offsets of each run of fathers in one stratum, then the end.
     runs: Vec<usize>,
     run_stratum: Vec<usize>,
-    /// Per stratum: shift (a continuous trait's observed mean), pairs, Σ e1, Σ e2.
-    sums: Vec<[f64; 4]>,
+    sums: Vec<StratumSums>,
     n_pairs: f64,
     /// `None` for a continuous father trait.
     levels: Option<Grid<bool>>,
@@ -273,7 +291,12 @@ impl Packed {
             runs,
             run_stratum,
             sums: (0..n_strata)
-                .map(|s| [shift[s], n_s[s], s1[s], s2[s]])
+                .map(|s| StratumSums {
+                    shift: shift[s],
+                    pairs: n_s[s],
+                    e1: s1[s],
+                    e2: s2[s],
+                })
                 .collect(),
             n_pairs: c.pair_father.len() as f64,
             levels: c.pairs.f_levels.clone(),
@@ -281,9 +304,9 @@ impl Packed {
         }
     }
 
-    /// `(cross, ss_f, status)` of each form of cell `c` for one arrangement
-    /// (`values[r]`: the father trait at row `r`).
-    fn statistic(&self, c: usize, values: &[f32]) -> [(f64, f64, Option<Status>); 2] {
+    /// Each form's score of cell `c` for one arrangement (`values[r]`: the
+    /// father trait at row `r`), or why the arrangement has none.
+    fn statistic(&self, c: usize, values: &[f32]) -> [Result<Score, Status>; 2] {
         let cell = &self.cells[c];
         match &cell.levels {
             None => continuous_cell(cell, values),
@@ -298,13 +321,10 @@ impl Packed {
             .collect()
     }
 
-    fn standardised(&self, c: usize, stats: [(f64, f64, Option<Status>); 2]) -> [f64; 2] {
-        [0, 1].map(|form| {
-            let (cross, ss_f, status) = stats[form];
-            match status {
-                None => cross / (self.ss_m[c][form] * ss_f).sqrt(),
-                Some(_) => f64::NAN,
-            }
+    fn standardised(&self, c: usize, stats: [Result<Score, Status>; 2]) -> [f64; 2] {
+        [0, 1].map(|form| match stats[form] {
+            Ok(score) => score.cross / (self.ss_m[c][form] * score.ss_f).sqrt(),
+            Err(_) => f64::NAN,
         })
     }
 
@@ -356,9 +376,9 @@ impl Packed {
                             .map(|&c| {
                                 let stats = self.statistic(c, &arranged[self.cells[c].trait_index]);
                                 let values = self.standardised(c, stats);
-                                [0, 1].map(|form| match stats[form].2 {
-                                    None => NullDraw::Value(values[form]),
-                                    Some(status) => NullDraw::Failed(status),
+                                [0, 1].map(|form| match stats[form] {
+                                    Ok(_) => NullDraw::Value(values[form]),
+                                    Err(status) => NullDraw::Failed(status),
                                 })
                             })
                             .collect()
@@ -471,7 +491,7 @@ impl Stopping {
 
 /// Crude and stratified `Σ e_m e_f` with the fathers' values standardised on
 /// the permuted pairs, in one pass over the cell's fathers.
-fn continuous_cell(cell: &Fathers, values: &[f32]) -> [(f64, f64, Option<Status>); 2] {
+fn continuous_cell(cell: &Fathers, values: &[f32]) -> [Result<Score, Status>; 2] {
     let n_strata = cell.sums.len();
     let mut dev = vec![0.0; n_strata];
     let mut sq = vec![0.0; n_strata];
@@ -481,7 +501,7 @@ fn continuous_cell(cell: &Fathers, values: &[f32]) -> [(f64, f64, Option<Status>
     let mut hi = vec![f64::NEG_INFINITY; n_strata];
     for r in 0..cell.run_stratum.len() {
         let s = cell.run_stratum[r];
-        let shift = cell.sums[s][0];
+        let shift = cell.sums[s].shift;
         let (mut d_sum, mut sq_sum, mut c1, mut c2) = (0.0, 0.0, 0.0, 0.0);
         let (mut v_lo, mut v_hi) = (f64::INFINITY, f64::NEG_INFINITY);
         for j in cell.runs[r]..cell.runs[r + 1] {
@@ -505,41 +525,51 @@ fn continuous_cell(cell: &Fathers, values: &[f32]) -> [(f64, f64, Option<Status>
     let lo_min = lo.iter().copied().fold(f64::INFINITY, f64::min);
     let hi_max = hi.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     if lo_min == hi_max {
-        let constant = (0.0, 0.0, Some(Status::ConstantMargin));
-        return [constant, constant];
+        return [Err(Status::ConstantMargin); 2];
     }
     let n = cell.n_pairs;
     let mut pooled_mean = 0.0;
     let mut degenerate = false;
     for s in 0..n_strata {
-        if cell.sums[s][1] > 0.0 {
-            pooled_mean += cell.sums[s][0] * cell.sums[s][1] + dev[s];
+        let sums = cell.sums[s];
+        if sums.pairs > 0.0 {
+            pooled_mean += sums.shift * sums.pairs + dev[s];
             degenerate = degenerate || lo[s] == hi[s];
         }
     }
     pooled_mean /= n;
     let (mut ss_pooled, mut cross_pooled, mut cross_strat) = (0.0, 0.0, 0.0);
     for s in 0..n_strata {
-        let [shift, n_s, e1_sum, e2_sum] = cell.sums[s];
-        if n_s > 0.0 {
+        let StratumSums {
+            shift,
+            pairs,
+            e1,
+            e2,
+        } = cell.sums[s];
+        if pairs > 0.0 {
             let delta = shift - pooled_mean;
-            ss_pooled += sq[s] + delta * (2.0 * dev[s] + delta * n_s);
-            cross_pooled += cross1[s] + delta * e1_sum;
+            ss_pooled += sq[s] + delta * (2.0 * dev[s] + delta * pairs);
+            cross_pooled += cross1[s] + delta * e1;
             if !degenerate {
-                let mean_dev = dev[s] / n_s;
+                let mean_dev = dev[s] / pairs;
                 let ss_s = sq[s] - mean_dev * dev[s];
-                cross_strat += (cross2[s] - mean_dev * e2_sum) / (ss_s / n_s).sqrt();
+                cross_strat += (cross2[s] - mean_dev * e2) / (ss_s / pairs).sqrt();
             }
         }
     }
     let cross_crude = cross_pooled / (ss_pooled / n).sqrt();
+    let crude = Ok(Score {
+        cross: cross_crude,
+        ss_f: n,
+    });
     if degenerate {
-        return [
-            (cross_crude, n, None),
-            (0.0, 0.0, Some(Status::DegenerateStratum)),
-        ];
+        return [crude, Err(Status::DegenerateStratum)];
     }
-    [(cross_crude, n, None), (cross_strat, n, None)]
+    let strat = Score {
+        cross: cross_strat,
+        ss_f: n,
+    };
+    [crude, Ok(strat)]
 }
 
 /// Crude and stratified `Σ e_m e_f` with the fathers' thresholds refit on the
@@ -548,7 +578,7 @@ fn discrete_cell(
     cell: &Fathers,
     values: &[f32],
     levels: &Grid<bool>,
-) -> [(f64, f64, Option<Status>); 2] {
+) -> [Result<Score, Status>; 2] {
     let (n_strata, k) = (levels.rows, levels.cols);
     // Whole pair counts: integer sums equal pedsum's float sums exactly.
     let mut pair_counts = vec![0i64; n_strata * k];
@@ -593,8 +623,12 @@ fn discrete_cell(
         }
         cross_crude += level_score * e_crude.at(0, c);
     }
+    let form = |status: Option<Status>, cross, ss_f| match status {
+        None => Ok(Score { cross, ss_f }),
+        Some(status) => Err(status),
+    };
     [
-        (cross_crude, ss_crude, status_crude),
-        (cross_strat, ss_strat, status_strat),
+        form(status_crude, cross_crude, ss_crude),
+        form(status_strat, cross_strat, ss_strat),
     ]
 }

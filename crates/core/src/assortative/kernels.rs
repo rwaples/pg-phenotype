@@ -8,6 +8,7 @@
 //! uses equals the parallel form a point fit uses.
 
 use super::cephes::{c_erfc, kernel_ndtr};
+use super::fit::Terms;
 use super::result::Reason;
 use rayon::prelude::*;
 use std::f64::consts::{PI, SQRT_2};
@@ -598,13 +599,129 @@ pub(crate) struct Polyserial<'a> {
     pub w: &'a [f64],
 }
 
+/// ρ and the powers of `s = √(1−ρ²)` every pair's terms use.
+#[derive(Clone, Copy)]
+struct At {
+    rho: f64,
+    s: f64,
+    s3: f64,
+    s5: f64,
+}
+
+impl At {
+    fn new(rho: f64) -> At {
+        let s = ((1.0 - rho) * (1.0 + rho)).sqrt();
+        let s3 = s * s * s;
+        At {
+            rho,
+            s,
+            s3,
+            s5: s3 * s * s,
+        }
+    }
+}
+
+/// One threshold `t` of a pair's level: `ts = (t − ρz)/s`, and for a finite
+/// `t` the density `φ(ts)` and `d = (tρ − z)/s³`, so that `pdf · d` is the
+/// threshold's share of `∂P/∂ρ` (eq 26).  An infinite `t` has `pdf = d = 0`,
+/// so both its shares are 0.
+#[derive(Clone, Copy)]
+struct Edge {
+    t: f64,
+    ts: f64,
+    pdf: f64,
+    d: f64,
+}
+
+impl Edge {
+    #[inline(always)]
+    fn new(t: f64, z: f64, at: At) -> Edge {
+        let ts = (t - at.rho * z) / at.s;
+        if t.is_infinite() {
+            return Edge {
+                t,
+                ts,
+                pdf: 0.0,
+                d: 0.0,
+            };
+        }
+        Edge {
+            t,
+            ts,
+            pdf: (-0.5 * ts * ts).exp() / sqrt_2pi(),
+            d: (t * at.rho - z) / at.s3,
+        }
+    }
+
+    /// The threshold's share of `∂P/∂ρ`.
+    #[inline(always)]
+    fn g(&self) -> f64 {
+        self.pdf * self.d
+    }
+
+    /// The threshold's share of `∂²P/∂ρ²`.
+    #[inline(always)]
+    fn h(&self, z: f64, at: At) -> f64 {
+        if self.t.is_infinite() {
+            return 0.0;
+        }
+        let d = self.d;
+        self.pdf
+            * (-self.ts * d * d + self.t / at.s3 + (self.t * at.rho - z) * 3.0 * at.rho / at.s5)
+    }
+}
+
+/// One pair of weight `w`: its standardised `z`, its level's upper and lower
+/// thresholds, and the level's probability `P = Φ(ts_u) − Φ(ts_l)`, floored.
+struct Pair {
+    w: f64,
+    z: f64,
+    upper: Edge,
+    lower: Edge,
+    p: f64,
+}
+
+impl Pair {
+    /// `∂ log P / ∂ρ`.
+    #[inline(always)]
+    fn score(&self) -> f64 {
+        (self.upper.g() - self.lower.g()) / self.p
+    }
+}
+
 impl Polyserial<'_> {
-    /// `(nll, grad, hess)` in ρ of the conditional likelihood (Olsson,
-    /// Drasgow & Dorans 1982 eqs 19-20, 26).
-    pub fn terms(&self, rho: f64, par: bool) -> (f64, f64, f64) {
+    /// The NLL in ρ of the conditional likelihood and its first two
+    /// ρ-derivatives (Olsson, Drasgow & Dorans 1982 eqs 19-20, 26).
+    pub fn terms(&self, rho: f64, par: bool) -> Terms {
         let parts = per_block(self.x.len(), par, |range| self.sums(rho, range));
         let s = block_sum(&parts.iter().map(|p| p.to_vec()).collect::<Vec<_>>());
-        (s[0], s[1], s[2])
+        Terms {
+            nll: s[0],
+            grad: s[1],
+            hess: s[2],
+        }
+    }
+
+    /// Pair `i` at `at`, or `None` at weight 0.
+    #[inline(always)]
+    fn pair(&self, i: usize, at: At) -> Option<Pair> {
+        let w = self.w[i];
+        if w == 0.0 {
+            return None;
+        }
+        let xs = self.x_stratum[i];
+        let z = (self.x[i] - self.mean[xs]) * self.inv_sd[xs];
+        let c = self.y[i] as usize;
+        let upper = Edge::new(self.tau.at(self.y_stratum[i], c + 1), z, at);
+        let lower = Edge::new(self.tau.at(self.y_stratum[i], c), z, at);
+        let p = interval_mass(upper.ts, lower.ts).max(TINY);
+        Some(Pair {
+            w,
+            z,
+            upper,
+            lower,
+            p,
+        })
     }
 
     /// The `grad` of [`Polyserial::terms`] alone, with the same arithmetic.
@@ -614,68 +731,29 @@ impl Polyserial<'_> {
     }
 
     fn grad_sum(&self, rho: f64, range: Range<usize>) -> f64 {
-        let s = ((1.0 - rho) * (1.0 + rho)).sqrt();
-        let s3 = s * s * s;
-        let side = |t: f64, ts: f64, z: f64| -> f64 {
-            if t.is_infinite() {
-                return 0.0;
-            }
-            (-0.5 * ts * ts).exp() / sqrt_2pi() * ((t * rho - z) / s3)
-        };
+        let at = At::new(rho);
         let mut grad = 0.0;
         for i in range {
-            let w = self.w[i];
-            if w == 0.0 {
-                continue;
+            if let Some(pair) = self.pair(i, at) {
+                grad -= pair.w * pair.score();
             }
-            let xs = self.x_stratum[i];
-            let z = (self.x[i] - self.mean[xs]) * self.inv_sd[xs];
-            let c = self.y[i] as usize;
-            let t_u = self.tau.at(self.y_stratum[i], c + 1);
-            let ts_u = (t_u - rho * z) / s;
-            let t_l = self.tau.at(self.y_stratum[i], c);
-            let ts_l = (t_l - rho * z) / s;
-            let p = interval_mass(ts_u, ts_l).max(TINY);
-            grad -= w * ((side(t_u, ts_u, z) - side(t_l, ts_l, z)) / p);
         }
         grad
     }
 
     fn sums(&self, rho: f64, range: Range<usize>) -> [f64; 3] {
-        let s = ((1.0 - rho) * (1.0 + rho)).sqrt();
-        let s3 = s * s * s;
-        let s5 = s3 * s * s;
+        let at = At::new(rho);
         let (mut nll, mut grad, mut hess) = (0.0, 0.0, 0.0);
-        let side = |t: f64, ts: f64, z: f64| -> (f64, f64) {
-            if t.is_infinite() {
-                return (0.0, 0.0);
-            }
-            let pdf = (-0.5 * ts * ts).exp() / sqrt_2pi();
-            let d = (t * rho - z) / s3;
-            (
-                pdf * d,
-                pdf * (-ts * d * d + t / s3 + (t * rho - z) * 3.0 * rho / s5),
-            )
-        };
         for i in range {
-            let w = self.w[i];
-            if w == 0.0 {
+            let Some(pair) = self.pair(i, at) else {
                 continue;
-            }
-            let xs = self.x_stratum[i];
-            let z = (self.x[i] - self.mean[xs]) * self.inv_sd[xs];
-            let c = self.y[i] as usize;
-            let t_u = self.tau.at(self.y_stratum[i], c + 1);
-            let ts_u = (t_u - rho * z) / s;
-            let (g_u, h_u) = side(t_u, ts_u, z);
-            let t_l = self.tau.at(self.y_stratum[i], c);
-            let ts_l = (t_l - rho * z) / s;
-            let (g_l, h_l) = side(t_l, ts_l, z);
-            let p = interval_mass(ts_u, ts_l).max(TINY);
-            let score = (g_u - g_l) / p;
-            nll -= w * p.ln();
-            grad -= w * score;
-            hess -= w * ((h_u - h_l) / p - score * score);
+            };
+            let score = pair.score();
+            let curvature =
+                (pair.upper.h(pair.z, at) - pair.lower.h(pair.z, at)) / pair.p - score * score;
+            nll -= pair.w * pair.p.ln();
+            grad -= pair.w * score;
+            hess -= pair.w * curvature;
         }
         [nll, grad, hess]
     }

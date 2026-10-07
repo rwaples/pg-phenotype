@@ -3,7 +3,7 @@
 //! full refit of a nonconcave bootstrap draw, and the within-person form.
 
 use super::bvn;
-use super::fit::newton_rho;
+use super::fit::{newton_rho, Terms};
 use super::kernels::{
     count_table, inverse_sd, margin, margin_status, pearson, stratum_moments, thresholds,
     weighted_ranks, Grid, Kernel, Polyserial, Status, Table, TINY,
@@ -189,7 +189,7 @@ impl Tables {
     }
 
     /// NLL and its first two ρ-derivatives (Olsson 1979 eqs 3, 4, 9).
-    pub fn terms(&self, rho: f64) -> (f64, f64, f64) {
+    pub fn terms(&self, rho: f64) -> Terms {
         let (mut nll, mut grad, mut hess) = (0.0, 0.0, 0.0);
         for &combo in &self.combos {
             let cdf = self.grid(combo, |h, k| bvn::cdf(h, k, rho));
@@ -209,7 +209,11 @@ impl Tables {
                 }
             }
         }
-        (-nll, -grad, -hess)
+        Terms {
+            nll: -nll,
+            grad: -grad,
+            hess: -hess,
+        }
     }
 
     pub fn nll(&self, rho: f64) -> f64 {
@@ -356,7 +360,7 @@ pub(crate) fn polyserial(serial: Serial<'_>, w: &[f64], start: Option<f64>) -> F
     });
     Ok(newton_rho(
         |r| kernel.terms(r, true),
-        |r| kernel.terms(r, true).0,
+        |r| kernel.terms(r, true).nll,
         start,
     ))
 }

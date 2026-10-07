@@ -135,18 +135,30 @@ pub(crate) fn maximise_rho(mut nll: impl FnMut(f64) -> f64) -> Point {
     flag_boundary(&mut nll, rho, best)
 }
 
-/// ρ̂ by Newton on the analytic score from `start`; `terms(ρ)` is the NLL
-/// and its first two ρ-derivatives.  Hands over to [`maximise_rho`] when the
+/// A negative log-likelihood in ρ and its first two ρ-derivatives.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Terms {
+    pub nll: f64,
+    pub grad: f64,
+    pub hess: f64,
+}
+
+/// ρ̂ by Newton on the analytic score from `start`, `terms(ρ)` giving the
+/// NLL and its derivatives.  Hands over to [`maximise_rho`] when the
 /// Hessian is not positive, a step leaves the bound, or 12 steps do not
 /// converge.
 pub(crate) fn newton_rho(
-    mut terms: impl FnMut(f64) -> (f64, f64, f64),
+    mut terms: impl FnMut(f64) -> Terms,
     mut nll: impl FnMut(f64) -> f64,
     start: f64,
 ) -> Point {
     let mut rho = start.clamp(-START_CLIP, START_CLIP);
     for _ in 0..NEWTON_MAX_ITER {
-        let (best, grad, hess) = terms(rho);
+        let Terms {
+            nll: best,
+            grad,
+            hess,
+        } = terms(rho);
         if !(hess > 0.0) {
             return maximise_rho(nll);
         }
@@ -175,11 +187,27 @@ mod tests {
     #[test]
     fn newton_hands_over_and_flags_bounds() {
         let nll = |r: f64| -10.0 * r;
-        let fit = newton_rho(|r| (nll(r), -10.0, 0.0), nll, 0.0);
+        let fit = newton_rho(
+            |r| Terms {
+                nll: nll(r),
+                grad: -10.0,
+                hess: 0.0,
+            },
+            nll,
+            0.0,
+        );
         assert!(fit.value > LATENT_BOUND - BOUNDARY_MARGIN);
         assert_eq!(fit.boundary, Some(true));
         let q = |r: f64| (r - 0.2) * (r - 0.2);
-        let fit = newton_rho(|r| (q(r), 2.0 * (r - 0.2), 2.0), q, 0.0);
+        let fit = newton_rho(
+            |r| Terms {
+                nll: q(r),
+                grad: 2.0 * (r - 0.2),
+                hess: 2.0,
+            },
+            q,
+            0.0,
+        );
         assert!((fit.value - 0.2).abs() < 1e-12);
         assert_eq!(fit.boundary, Some(false));
     }
