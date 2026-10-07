@@ -1,0 +1,23 @@
+[package]
+name = "pg-phenotype-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "PyO3 host binding for pg-phenotype-core"
+
+[lib]
+name = "pg_phenotype_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pg-phenotype-core = { path = "../core" }
+pyo3 = { version = "0.29", features = ["abi3-py313"] }
+numpy = "0.29"
+
+[features]
+# Test-only entry points (the panic-boundary probe); published wheels never
+# enable it.
+test-hooks = []

@@ -1,0 +1,101 @@
+[build-system]
+requires = ["maturin>=1.15,<2"]
+build-backend = "maturin"
+
+[project]
+name = "pg-phenotype"
+dynamic = ["version"]
+description = "Phenotypes in the context of a pedigree, on pedigree-graph's Rust core: PA-FGRS and more"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ryan Waples" }]
+requires-python = ">=3.13"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = ["numpy>=2.2,<3"]
+
+[project.urls]
+Homepage = "https://github.com/rwaples/pg-phenotype"
+Repository = "https://github.com/rwaples/pg-phenotype"
+
+[project.optional-dependencies]
+test = [
+    # tests/oracle: the NumPy reference cores (scipy for their normal tails)
+    # and pedigree-graph's Python pair_kinship as the kinship oracle.
+    "scipy>=1.14,<2",
+    "pedigree-graph>=0.12.2,<0.13",
+    "pytest>=9,<10",
+    "pytest-xdist>=3.8,<4",
+    "ruff>=0.16,<0.17",
+    "hypothesis>=6,<7",
+    "pandas>=3.0,<4",
+    "polars>=1.43.2,<2",
+]
+typecheck = ["ty==0.0.84"]
+
+[tool.maturin]
+manifest-path = "crates/python/Cargo.toml"
+module-name = "pg_phenotype._native"
+python-source = "."
+python-packages = ["pg_phenotype"]
+features = ["pyo3/extension-module"]
+strip = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "slow: median call time of 5 s or more under `pixi run test`; unmark when it falls below",
+]
+
+[tool.ruff]
+target-version = "py313"
+required-version = ">=0.16,<0.17"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "UP", "B", "SIM", "RUF", "A", "C4", "PT", "PIE", "PERF", "TC", "PLW", "RSE", "RET", "D"]
+ignore = [
+    "E501",   # line too long: the formatter wraps
+    "SIM108", # ternary: often less readable
+    "RUF002", # ambiguous unicode in docstring: scientific notation
+    "RUF003", # ambiguous unicode in comment: scientific notation
+    "D105",   # undocumented magic method
+    "D107",   # undocumented __init__: the class docstring covers it
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D", "B011", "RUF012"]
+"tools/*.py" = ["D"]
+
+[tool.ruff.lint.flake8-type-checking]
+strict = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["pg_phenotype"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.ty.environment]
+python-version = "3.13"
+
+[tool.ty.src]
+include = ["pg_phenotype"]
+exclude = ["tests"]
+
+[tool.ty.terminal]
+error-on-warning = false

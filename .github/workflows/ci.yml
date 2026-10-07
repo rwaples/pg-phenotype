@@ -1,0 +1,153 @@
+# Continuous integration: the host-neutral core boundary, the Python and R
+# bindings, and (weekly) the whole suite against pedigree-graph main.
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust core boundary, lint, and tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Assert the core crate declares no host bindings
+        run: |
+          if grep -Eqi 'pyo3|extendr' crates/core/Cargo.toml; then
+            echo "::error file=crates/core/Cargo.toml::the host-neutral core must not depend on pyo3 or extendr"
+            exit 1
+          fi
+
+      - name: Assert the core crate forbids unsafe code
+        run: |
+          grep -qF '#![forbid(unsafe_code)]' crates/core/src/lib.rs || {
+            echo "::error file=crates/core/src/lib.rs::missing #![forbid(unsafe_code)]"
+            exit 1
+          }
+
+      - name: Set up pixi
+        uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.76.2
+          locked: true
+
+      - name: Check Rust formatting
+        run: pixi run cargo fmt --check
+
+      - name: Lint with Clippy
+        run: pixi run cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run the Rust test suite
+        run: pixi run test-rust
+
+  python:
+    name: Python lint, types, and tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pixi and install the package editable
+        uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.76.2
+          locked: true
+
+      - name: Lint with Ruff
+        run: pixi run ruff check
+
+      - name: Check Python formatting
+        run: pixi run ruff format --check
+
+      - name: Type check with ty
+        run: pixi run ty check
+
+      - name: Run the test suite
+        run: pixi run test
+
+  r:
+    name: R binding lint, offline tarball check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Install the R dependencies
+        run: Rscript -e 'install.packages("testthat")'
+
+      - name: Check the binding crate's formatting and lints
+        working-directory: r/src/rust
+        run: |
+          cargo fmt --check
+          cargo clippy --release --all-targets --all-features -- -D warnings
+
+      - name: Test the checkout build with the test hooks
+        env:
+          PG_PHENOTYPE_CARGO_FEATURES: test-hooks
+          PG_PHENOTYPE_REQUIRE_TEST_HOOKS: "1"
+        run: |
+          R CMD INSTALL --no-multiarch --preclean r
+          Rscript -e 'testthat::test_local("r", stop_on_failure = TRUE)'
+
+      - name: Build the source tarball
+        run: tools/r_build_tarball.sh dist-r
+
+      - name: Check the tarball with the network disabled
+        working-directory: dist-r
+        run: |
+          tarball="$(ls pgphenotype_*.tar.gz)"
+          sudo --preserve-env unshare --net -- sudo --preserve-env -u "$(id -un)" \
+            env _R_CHECK_CRAN_INCOMING_REMOTE_=false \
+            "$(command -v R)" CMD check --as-cran --no-manual "$tarball"
+          if grep -q '^Status:.*\(ERROR\|WARNING\)' pgphenotype.Rcheck/00check.log; then
+            echo "::error::R CMD check reported an ERROR or WARNING"
+            exit 1
+          fi
+
+  pg-main:
+    # pedigree-graph's consumer gate does not yet rebuild Rust consumers
+    # against its candidate (ADR 0001), so this job does it from our side.
+    name: Every suite against pedigree-graph main
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check out pedigree-graph main
+        uses: actions/checkout@v7
+        with:
+          repository: rwaples/pedigree-graph
+          ref: main
+          path: _pg
+
+      - name: Set up pixi
+        uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.76.2
+          locked: true
+          environments: r
+
+      - name: Run every suite against the candidate
+        env:
+          PG_PHENOTYPE_WITH_R: "1"
+        run: pixi run -e r tools/test_against_pg.sh _pg

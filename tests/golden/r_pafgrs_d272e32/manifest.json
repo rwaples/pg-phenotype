@@ -1,0 +1,33 @@
+{
+  "pafgrs_commit": "d272e32",
+  "cases": [
+    {
+      "seed": 0,
+      "ndegree": 2,
+      "h2": 0.5,
+      "file": "seed0_ndeg2_h2_0.5.npz",
+      "n_scored": 80
+    },
+    {
+      "seed": 1,
+      "ndegree": 3,
+      "h2": 0.25,
+      "file": "seed1_ndeg3_h2_0.25.npz",
+      "n_scored": 82
+    },
+    {
+      "seed": 2,
+      "ndegree": 1,
+      "h2": 0.75,
+      "file": "seed2_ndeg1_h2_0.75.npz",
+      "n_scored": 82
+    },
+    {
+      "seed": 3,
+      "ndegree": 3,
+      "h2": 0.5,
+      "file": "seed3_ndeg3_h2_0.5.npz",
+      "n_scored": 79
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/python"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# pedigree-graph-core's floor; the R binding crate states the same.
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/rwaples/pg-phenotype"
+
+[workspace.dependencies]
+# Re-pinned on purpose only (ADR 0001): pg-core is unpublished until 1.0.
+# This rev is pedigree-graph v0.12.2.
+pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "62c82fa6468aec0f579dc9286c5dbebe7d077500" }
+rayon = "1.10"
+
+[profile.release]
+opt-level = 3
+debug = 1
+codegen-units = 1

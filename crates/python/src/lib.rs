@@ -1,0 +1,309 @@
+//! `pg_phenotype._native`: the PyO3 host binding of pg-phenotype-core.
+//!
+//! Core errors cross as the structured classes of `pg_phenotype._errors`, keyed
+//! by `.code` with keyword fields from `Error::fields`; a thread-pool conflict
+//! crosses as `RuntimeError`, as `configure_threads` raises it.
+
+use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
+use pg_phenotype_core::error::{Class, FieldValue};
+use pg_phenotype_core::pafgrs::{self, BivParams, Cip};
+use pg_phenotype_core::{Error, PedigreeInput, Trait, TraitKind};
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
+use std::num::NonZeroUsize;
+
+#[cfg(feature = "test-hooks")]
+mod test_hooks;
+
+/// A proband's relative rows and their kinship to it.
+type Relatives<'py> = (Bound<'py, PyArray1<u32>>, Bound<'py, PyArray1<f32>>);
+
+/// The Cargo workspace version, which is also the Python distribution version.
+#[pyfunction]
+fn core_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// The pedigree-graph-core git revision this build links.
+#[pyfunction]
+fn pg_core_rev() -> &'static str {
+    pg_phenotype_core::PG_CORE_REV
+}
+
+fn field_object(py: Python<'_>, value: FieldValue) -> PyResult<Py<PyAny>> {
+    Ok(match value {
+        FieldValue::Int(v) => v.into_pyobject(py)?.into_any().unbind(),
+        FieldValue::Float(v) => v.into_pyobject(py)?.into_any().unbind(),
+        FieldValue::Str(v) => v.into_pyobject(py)?.into_any().unbind(),
+        FieldValue::Ints(v) => PyTuple::new(py, v)?.into_any().unbind(),
+        FieldValue::Strs(v) => PyTuple::new(py, v)?.into_any().unbind(),
+    })
+}
+
+pub(crate) fn to_pyerr(py: Python<'_>, err: Error) -> PyErr {
+    if err.code() == "thread_pool_conflict" {
+        return PyRuntimeError::new_err(err.to_string());
+    }
+    let class_name = match err.class() {
+        Class::Validation => "ValidationError",
+        Class::Parameter => "ParameterError",
+        Class::Resource => "ResourceError",
+        Class::Usage => return PyValueError::new_err(err.to_string()),
+    };
+    let raise = || -> PyResult<PyErr> {
+        let fields = PyDict::new(py);
+        for (name, value) in err.fields() {
+            fields.set_item(name, field_object(py, value)?)?;
+        }
+        let class = py.import("pg_phenotype._errors")?.getattr(class_name)?;
+        let instance = class.call((err.code(), err.to_string()), Some(&fields))?;
+        Ok(PyErr::from_value(instance))
+    };
+    raise().unwrap_or_else(|e| e)
+}
+
+pub(crate) fn checked_pool(
+    py: Python<'_>,
+    threads: usize,
+) -> PyResult<&'static pg_phenotype_core::rayon::ThreadPool> {
+    let threads = NonZeroUsize::new(threads)
+        .ok_or_else(|| PyValueError::new_err("threads must be at least 1"))?;
+    pg_phenotype_core::configure_pool(threads).map_err(|e| to_pyerr(py, e))
+}
+
+/// The relative structure of one pedigree at one degree, held in memory.
+#[pyclass(module = "pg_phenotype._native", frozen)]
+struct Prep {
+    inner: pafgrs::Prep,
+}
+
+#[pymethods]
+impl Prep {
+    #[getter]
+    fn n_rows(&self) -> usize {
+        self.inner.n_rows()
+    }
+
+    #[getter]
+    fn ndegree(&self) -> u8 {
+        self.inner.ndegree()
+    }
+
+    #[getter]
+    fn n_probands(&self) -> usize {
+        self.inner.n_probands()
+    }
+
+    #[getter]
+    fn nbytes(&self) -> usize {
+        self.inner.bytes()
+    }
+
+    /// Proband rows, ascending.
+    fn proband_rows<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
+        self.inner.probands().into_pyarray(py)
+    }
+
+    /// Proband `i`'s relative rows and their kinship to it.
+    fn relatives<'py>(&self, py: Python<'py>, i: usize) -> PyResult<Relatives<'py>> {
+        self.check_proband(i)?;
+        let (rows, kin) = self.inner.relatives(i);
+        Ok((
+            rows.to_vec().into_pyarray(py),
+            kin.to_vec().into_pyarray(py),
+        ))
+    }
+
+    /// Proband `i`'s relative-relative kinship, row-major upper triangle.
+    fn triangle<'py>(&self, py: Python<'py>, i: usize) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        self.check_proband(i)?;
+        let d = self.inner.relatives(i).0.len();
+        let values: Vec<f32> = (0..d)
+            .flat_map(|j| (j + 1..d).map(move |k| (j, k)))
+            .map(|(j, k)| self.inner.pair_kinship(i, j, k))
+            .collect();
+        Ok(values.into_pyarray(py))
+    }
+}
+
+impl Prep {
+    fn check_proband(&self, i: usize) -> PyResult<()> {
+        let n = self.inner.n_probands();
+        if i >= n {
+            return Err(PyValueError::new_err(format!(
+                "proband index {i} is not below {n}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Validate the pedigree and build its relative structure in the pool.
+#[pyfunction]
+#[pyo3(signature = (ids, mother, father, twin, sex, /, *, ndegree, probands, threads))]
+#[allow(clippy::too_many_arguments)]
+fn prepare<'py>(
+    py: Python<'py>,
+    ids: PyReadonlyArray1<'py, i64>,
+    mother: PyReadonlyArray1<'py, i64>,
+    father: PyReadonlyArray1<'py, i64>,
+    twin: Option<PyReadonlyArray1<'py, i64>>,
+    sex: Option<PyReadonlyArray1<'py, i64>>,
+    ndegree: u8,
+    probands: Option<PyReadonlyArray1<'py, i64>>,
+    threads: usize,
+) -> PyResult<Prep> {
+    let input = PedigreeInput {
+        ids: ids.as_slice()?,
+        mother: mother.as_slice()?,
+        father: father.as_slice()?,
+        twin: twin.as_ref().map(|a| a.as_slice()).transpose()?,
+        sex: sex.as_ref().map(|a| a.as_slice()).transpose()?,
+    };
+    let probands = probands.as_ref().map(|a| a.as_slice()).transpose()?;
+    let pool = checked_pool(py, threads)?;
+    let inner = py
+        .detach(|| pool.install(|| pafgrs::prepare(input, ndegree, probands)))
+        .map_err(|e| to_pyerr(py, e))?;
+    Ok(Prep { inner })
+}
+
+fn trait_kind(kind: &str) -> PyResult<TraitKind> {
+    Ok(match kind {
+        "continuous" => TraitKind::Continuous,
+        "binary" => TraitKind::Binary,
+        "ordinal" => TraitKind::Ordinal,
+        "categorical" => TraitKind::Categorical,
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "trait kind must be continuous, binary, ordinal or categorical, got {kind:?}"
+            )))
+        }
+    })
+}
+
+fn checked_cip(py: Python<'_>, ages: Vec<f64>, cip: Vec<f64>) -> PyResult<Cip> {
+    Cip::new(ages, cip).map_err(|e| to_pyerr(py, e))
+}
+
+fn f64_array<'py>(py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+    values.into_pyarray(py)
+}
+
+/// Validate a CIP table and return its prevalence and threshold.
+#[pyfunction]
+fn check_cip(py: Python<'_>, ages: Vec<f64>, cip: Vec<f64>) -> PyResult<(f64, f64)> {
+    let cip = checked_cip(py, ages, cip)?;
+    Ok((cip.prevalence(), cip.threshold()))
+}
+
+/// Univariate scores of every proband, in the pool.
+#[pyfunction]
+#[pyo3(signature = (prep, values, kind, age, cip_ages, cip_values, /, *, h2, threads))]
+#[allow(clippy::too_many_arguments)]
+fn score_univariate<'py>(
+    py: Python<'py>,
+    prep: &Prep,
+    values: PyReadonlyArray1<'py, f64>,
+    kind: &str,
+    age: PyReadonlyArray1<'py, f64>,
+    cip_ages: Vec<f64>,
+    cip_values: Vec<f64>,
+    h2: f64,
+    threads: usize,
+) -> PyResult<Bound<'py, PyDict>> {
+    let cip = checked_cip(py, cip_ages, cip_values)?;
+    let values = Trait {
+        values: values.as_slice()?,
+        kind: trait_kind(kind)?,
+    };
+    let age = age.as_slice()?;
+    let pool = checked_pool(py, threads)?;
+    let scores = py
+        .detach(|| pool.install(|| pafgrs::score_univariate(&prep.inner, values, age, &cip, h2)))
+        .map_err(|e| to_pyerr(py, e))?;
+    let out = PyDict::new(py);
+    out.set_item("id", scores.ids.into_pyarray(py))?;
+    out.set_item("est", f64_array(py, scores.est))?;
+    out.set_item("var", f64_array(py, scores.var))?;
+    out.set_item("n_relatives", scores.n_relatives.into_pyarray(py))?;
+    out.set_item("controls_without_age", scores.controls_without_age)?;
+    out.set_item("threshold", scores.threshold)?;
+    Ok(out)
+}
+
+/// Bivariate scores of every proband, in the pool.
+#[pyfunction]
+#[pyo3(signature = (prep, values1, kind1, age1, values2, kind2, age2, cip1, cip2, /, *, h2, rg, rho_within, threads))]
+#[allow(clippy::too_many_arguments)]
+fn score_bivariate<'py>(
+    py: Python<'py>,
+    prep: &Prep,
+    values1: PyReadonlyArray1<'py, f64>,
+    kind1: &str,
+    age1: PyReadonlyArray1<'py, f64>,
+    values2: PyReadonlyArray1<'py, f64>,
+    kind2: &str,
+    age2: PyReadonlyArray1<'py, f64>,
+    cip1: (Vec<f64>, Vec<f64>),
+    cip2: (Vec<f64>, Vec<f64>),
+    h2: (f64, f64),
+    rg: f64,
+    rho_within: Option<f64>,
+    threads: usize,
+) -> PyResult<Bound<'py, PyDict>> {
+    let params = BivParams::new([h2.0, h2.1], rg, rho_within).map_err(|e| to_pyerr(py, e))?;
+    let cip1 = checked_cip(py, cip1.0, cip1.1)?;
+    let cip2 = checked_cip(py, cip2.0, cip2.1)?;
+    let values = [
+        Trait {
+            values: values1.as_slice()?,
+            kind: trait_kind(kind1)?,
+        },
+        Trait {
+            values: values2.as_slice()?,
+            kind: trait_kind(kind2)?,
+        },
+    ];
+    let ages = [age1.as_slice()?, age2.as_slice()?];
+    let pool = checked_pool(py, threads)?;
+    let scores = py
+        .detach(|| {
+            pool.install(|| {
+                pafgrs::score_bivariate(&prep.inner, values, ages, [&cip1, &cip2], params)
+            })
+        })
+        .map_err(|e| to_pyerr(py, e))?;
+    let out = PyDict::new(py);
+    let [est1, est2] = scores.est;
+    let [var1, var2] = scores.var;
+    let [n_obs1, n_obs2] = scores.n_obs;
+    out.set_item("id", scores.ids.into_pyarray(py))?;
+    out.set_item("est1", f64_array(py, est1))?;
+    out.set_item("est2", f64_array(py, est2))?;
+    out.set_item("var1", f64_array(py, var1))?;
+    out.set_item("var2", f64_array(py, var2))?;
+    out.set_item("cov12", f64_array(py, scores.cov12))?;
+    out.set_item("n_relatives", scores.n_relatives.into_pyarray(py))?;
+    out.set_item("n_obs1", n_obs1.into_pyarray(py))?;
+    out.set_item("n_obs2", n_obs2.into_pyarray(py))?;
+    out.set_item("controls_without_age", scores.controls_without_age.to_vec())?;
+    out.set_item("threshold", scores.threshold.to_vec())?;
+    out.set_item("rho_within", params.rho_within)?;
+    Ok(out)
+}
+
+#[pymodule]
+fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(core_version, m)?)?;
+    m.add_function(wrap_pyfunction!(pg_core_rev, m)?)?;
+    m.add_function(wrap_pyfunction!(prepare, m)?)?;
+    m.add_function(wrap_pyfunction!(check_cip, m)?)?;
+    m.add_function(wrap_pyfunction!(score_univariate, m)?)?;
+    m.add_function(wrap_pyfunction!(score_bivariate, m)?)?;
+    m.add_class::<Prep>()?;
+    #[cfg(feature = "test-hooks")]
+    m.add_function(wrap_pyfunction!(test_hooks::_panic_for_test, m)?)?;
+    Ok(())
+}

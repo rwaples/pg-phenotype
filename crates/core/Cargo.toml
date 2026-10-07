@@ -1,0 +1,17 @@
+[package]
+name = "pg-phenotype-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Host-neutral phenotype-in-pedigree methods on pedigree-graph-core"
+
+[lib]
+name = "pg_phenotype_core"
+
+[dependencies]
+pedigree-graph-core.workspace = true
+rayon.workspace = true
+libm = "0.2"

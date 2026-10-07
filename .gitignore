@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtual envs
+env/
+venv/
+.venv/
+
+# Testing / coverage
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+coverage.xml
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Numba cache
+__pycache__/
+
+# Setuptools-scm
+_version.py
+
+# pixi env (ADR 0018 dev manifest)
+.pixi/
+
+# Rust
+target/
