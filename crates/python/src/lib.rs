@@ -13,6 +13,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 use std::num::NonZeroUsize;
 
+mod assortative;
 #[cfg(feature = "test-hooks")]
 mod test_hooks;
 
@@ -169,7 +170,7 @@ fn prepare<'py>(
     Ok(Prep { inner })
 }
 
-fn trait_kind(kind: &str) -> PyResult<TraitKind> {
+pub(crate) fn trait_kind(kind: &str) -> PyResult<TraitKind> {
     Ok(match kind {
         "continuous" => TraitKind::Continuous,
         "binary" => TraitKind::Binary,
@@ -217,6 +218,7 @@ fn score_univariate<'py>(
     let values = Trait {
         values: values.as_slice()?,
         kind: trait_kind(kind)?,
+        n_levels: None,
     };
     let age = age.as_slice()?;
     let pool = checked_pool(py, threads)?;
@@ -260,10 +262,12 @@ fn score_bivariate<'py>(
         Trait {
             values: values1.as_slice()?,
             kind: trait_kind(kind1)?,
+            n_levels: None,
         },
         Trait {
             values: values2.as_slice()?,
             kind: trait_kind(kind2)?,
+            n_levels: None,
         },
     ];
     let ages = [age1.as_slice()?, age2.as_slice()?];
@@ -302,6 +306,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(check_cip, m)?)?;
     m.add_function(wrap_pyfunction!(score_univariate, m)?)?;
     m.add_function(wrap_pyfunction!(score_bivariate, m)?)?;
+    m.add_function(wrap_pyfunction!(assortative::mate_correlation, m)?)?;
     m.add_class::<Prep>()?;
     #[cfg(feature = "test-hooks")]
     m.add_function(wrap_pyfunction!(test_hooks::_panic_for_test, m)?)?;

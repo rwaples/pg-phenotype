@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -59,5 +60,22 @@ def score_bivariate(
     h2: tuple[float, float],
     rg: float,
     rho_within: float | None,
+    threads: int,
+) -> dict[str, Any]: ...
+def mate_correlation(
+    ids: np.ndarray,
+    mother: np.ndarray,
+    father: np.ndarray,
+    twin: np.ndarray | None,
+    sex: np.ndarray | None,
+    traits: Sequence[tuple[np.ndarray, str, int | None]],
+    stratum_labels: np.ndarray | None,
+    stratum_known: np.ndarray | None,
+    /,
+    *,
+    permutations: int,
+    bootstrap: int,
+    seed: int,
+    min_stratum_networks: int,
     threads: int,
 ) -> dict[str, Any]: ...

@@ -1,6 +1,7 @@
 """Phenotypes in the context of a pedigree, on pedigree-graph's core.
 
-Each method is a submodule: :mod:`pg_phenotype.pafgrs` for PA-FGRS.  The
+Each method is a submodule: :mod:`pg_phenotype.pafgrs` for PA-FGRS,
+:mod:`pg_phenotype.assortative` for assortative mating.  The
 :class:`Trait` input, the errors, and the thread budget are shared.
 """
 
@@ -8,7 +9,7 @@ from __future__ import annotations
 
 from importlib.metadata import version as _dist_version
 
-from pg_phenotype import _native, pafgrs
+from pg_phenotype import _native, assortative, pafgrs
 from pg_phenotype._errors import ParameterError, PgPhenotypeError, ResourceError, ValidationError
 from pg_phenotype._threads import configure_threads, thread_budget
 from pg_phenotype._trait import Trait
@@ -20,6 +21,7 @@ __all__ = [
     "Trait",
     "ValidationError",
     "__version__",
+    "assortative",
     "configure_threads",
     "pafgrs",
     "pg_core_rev",
