@@ -25,6 +25,7 @@ mod result;
 mod rng;
 mod sample;
 mod sandwich;
+mod value;
 
 #[cfg(test)]
 mod primitives_parity;

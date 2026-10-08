@@ -1003,3 +1003,36 @@ def test_parameter_out_of_range(small, name, value, stratified):
     with pytest.raises(ParameterError) as exc:
         mate_correlation(ped, Trait(x, kind="continuous"), stratum=stratum, **{name: value})
     assert exc.value.code == "parameter_out_of_range"
+
+
+def test_dataclass_fields_are_the_core_tree_keys():
+    """The dataclasses name every key of the core's result tree (to_value), and no other."""
+    import dataclasses
+
+    from pg_phenotype import _native
+    from pg_phenotype import assortative as am
+
+    ped, x, bb, strata = b.frame(3, 120)
+    labels = np.where(np.isnan(strata), 0, strata).astype(np.int64)
+    raw = _native.mate_correlation(
+        ped["id"], ped["mother"], ped["father"], None, None,
+        [(np.ascontiguousarray(x), "continuous", None), (np.ascontiguousarray(bb), "binary", None)],
+        labels, ~np.isnan(strata),
+        permutations=19, bootstrap=19, seed=0, min_stratum_networks=2, threads=1,
+    )  # fmt: skip
+
+    def names(cls):
+        return {f.name for f in dataclasses.fields(cls)}
+
+    assert set(raw["sample"]) == names(am.Sample)
+    cell = raw["cells"][0]
+    assert set(cell) == names(am.Cell)
+    assert set(cell["n_dropped"]) == names(am.Dropped)
+    defined = cell["crude"][0]
+    assert defined["reason"] is None
+    assert set(defined) == names(am.EstimatorResult)
+    stratified = cell["stratified"]
+    assert set(stratified) == names(am.EstimatorResult) | (names(am.Stratified) - {"result"})
+    assert set(defined["permutation"]) == names(am.Permutation)
+    assert set(defined["bootstrap"]) == names(am.Draws)
+    assert set(raw["within_person"]["mothers"]) == names(am.WithinPerson)

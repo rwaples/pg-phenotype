@@ -28,6 +28,7 @@ mod lineage;
 pub(crate) mod normal;
 pub mod pafgrs;
 pub mod threads;
+pub mod value;
 
 pub use error::Error;
 pub use input::{PedigreeInput, Trait, TraitKind};

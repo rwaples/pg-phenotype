@@ -1,255 +1,35 @@
-//! `assortative_mate_correlation()`: the Mate Correlation as nested lists
-//! with the keys of the Python binding's dicts, `NULL` where Python has
-//! `None`.
+//! `assortative_mate_correlation()`: the Mate Correlation as nested lists,
+//! the core's `to_value` tree that the Python binding converts too.
 
 use crate::errors::{finish, int_values, HostError, HostResult};
 use crate::input::{self, Pedigree};
 use crate::threads;
 use extendr_api::prelude::*;
-use pg_phenotype_core::assortative::{
-    self, Cell, Draws, Estimate, EstimatorResult, MateCorrelation, Permutation, Point, Reason,
-    Settings, Strata, WithinPerson,
-};
+use pg_phenotype_core::assortative::{self, Settings, Strata};
+use pg_phenotype_core::value::Value;
 use pg_phenotype_core::Trait;
 
-fn named(pairs: Vec<(&str, Robj)>) -> Robj {
-    let (names, values): (Vec<&str>, Vec<Robj>) = pairs.into_iter().unzip();
-    List::from_names_and_values(names, values)
-        .expect("names and values of one length")
-        .into_robj()
-}
-
-fn null() -> Robj {
-    ().into_robj()
-}
-
-fn opt<T: Into<Robj>>(value: Option<T>) -> Robj {
-    value.map_or_else(null, Into::into)
-}
-
-fn count(n: u64) -> Robj {
-    (n as i32).into_robj()
-}
-
-fn reason_or(key: &'static str, value: Result<Robj, Reason>) -> [(String, Robj); 2] {
-    let reason_key = format!("{key}_unavailable_reason");
+/// A core result tree as nested R lists and vectors, `NULL` where Python
+/// has `None`.
+fn to_robj(value: &Value) -> Robj {
     match value {
-        Ok(v) => [(key.to_string(), v), (reason_key, null())],
-        Err(r) => [(key.to_string(), null()), (reason_key, r.name().into())],
-    }
-}
-
-fn draws(d: &Draws) -> Robj {
-    let reasons: Vec<(&str, Robj)> = d
-        .failure_reasons
-        .iter()
-        .map(|(r, n)| (r.name(), count(*n)))
-        .collect();
-    named(vec![
-        ("requested", count(d.requested)),
-        ("valid", count(d.valid)),
-        ("failed", count(d.failed)),
-        ("failure_reasons", named(reasons)),
-    ])
-}
-
-fn owned(pairs: Vec<(String, Robj)>) -> Robj {
-    named(pairs.iter().map(|(k, v)| (k.as_str(), v.clone())).collect())
-}
-
-fn permutation(p: &Permutation) -> Robj {
-    let mut out = vec![("statistic".to_string(), p.statistic.name().into())];
-    out.extend(reason_or("p", p.p.map(Into::into)));
-    out.extend([
-        ("draws".to_string(), draws(&p.draws)),
-        ("seed".to_string(), int_values(vec![p.seed])),
-        ("n_fixed_fathers".to_string(), count(p.n_fixed_fathers)),
-        ("stopped_early".to_string(), p.stopped_early.into()),
-        ("draws_used".to_string(), count(p.draws_used)),
-        ("sequential_h".to_string(), count(p.sequential_h)),
-    ]);
-    owned(out)
-}
-
-fn point(p: &Point) -> [(String, Robj); 2] {
-    [
-        ("value".to_string(), p.value.into()),
-        ("boundary".to_string(), opt(p.boundary)),
-    ]
-}
-
-fn estimate(e: &Estimate) -> Vec<(String, Robj)> {
-    let mut out = point(&e.point).to_vec();
-    out.extend(reason_or("se", e.se.map(Into::into)));
-    out.extend(reason_or("ci", e.ci.map(|c| c.bounds.to_vec().into())));
-    out.extend([
-        (
-            "ci_method".to_string(),
-            opt(e.ci.ok().map(|c| c.method.name())),
-        ),
-        (
-            "bootstrap".to_string(),
-            e.bootstrap.as_ref().map_or_else(null, draws),
-        ),
-        (
-            "permutation".to_string(),
-            e.permutation.as_ref().map_or_else(null, permutation),
-        ),
-    ]);
-    out
-}
-
-fn estimator_result(r: &EstimatorResult, extra: Vec<(String, Robj)>) -> Robj {
-    let mut out = vec![
-        ("estimator".to_string(), r.estimator.name().into()),
-        ("primary".to_string(), r.primary.into()),
-    ];
-    match &r.outcome {
-        Ok(e) => {
-            out.push(("reason".to_string(), null()));
-            out.extend(estimate(e));
+        Value::Null => ().into_robj(),
+        Value::Bool(v) => (*v).into(),
+        Value::Count(n) => (*n as i32).into(),
+        Value::Int(v) => int_values(vec![*v]),
+        Value::Float(v) => (*v).into(),
+        Value::Str(v) => (*v).into(),
+        Value::Floats(v) => Doubles::from_values(v.iter().copied()).into_robj(),
+        Value::Counts(v) => Integers::from_values(v.iter().map(|&n| n as i32)).into_robj(),
+        Value::List(items) => List::from_values(items.iter().map(to_robj)).into_robj(),
+        Value::Map(entries) => {
+            let (names, values): (Vec<&str>, Vec<Robj>) =
+                entries.iter().map(|(k, v)| (*k, to_robj(v))).unzip();
+            List::from_names_and_values(names, values)
+                .expect("names and values of one length")
+                .into_robj()
         }
-        Err(reason) => out.push(("reason".to_string(), reason.name().into())),
     }
-    out.extend(extra);
-    owned(out)
-}
-
-fn cell(c: &Cell) -> Robj {
-    let d = &c.n_dropped;
-    let crude: Vec<Robj> = c
-        .crude
-        .iter()
-        .map(|r| estimator_result(r, Vec::new()))
-        .collect();
-    let stratified = c.stratified.as_ref().map_or_else(null, |s| {
-        estimator_result(
-            &s.result,
-            vec![
-                ("n_strata_mothers".to_string(), count(s.n_strata_mothers)),
-                ("n_strata_fathers".to_string(), count(s.n_strata_fathers)),
-            ],
-        )
-    });
-    let table = c.table.map_or_else(null, |t| {
-        List::from_values(t.map(|row| Integers::from_values(row.map(|v| v as i32)).into_robj()))
-            .into_robj()
-    });
-    named(vec![
-        ("mother_trait", count(c.mother_trait as u64)),
-        ("father_trait", count(c.father_trait as u64)),
-        ("n", count(c.n)),
-        (
-            "n_dropped",
-            named(vec![
-                ("mother_missing", count(d.mother_missing)),
-                ("father_missing", count(d.father_missing)),
-                ("both_missing", count(d.both_missing)),
-                ("small_stratum", count(d.small_stratum)),
-                ("degenerate_stratum", count(d.degenerate_stratum)),
-            ]),
-        ),
-        ("n_mate_networks", count(c.n_mate_networks)),
-        (
-            "largest_mate_network_share",
-            opt(c.largest_mate_network_share),
-        ),
-        ("table", table),
-        ("crude", List::from_values(crude).into_robj()),
-        ("stratified", stratified),
-    ])
-}
-
-fn within(w: &WithinPerson) -> Robj {
-    let mut out = vec![
-        ("estimator".to_string(), w.estimator.name().into()),
-        ("n".to_string(), count(w.n)),
-    ];
-    match &w.outcome {
-        Ok(p) => {
-            out.extend(point(p));
-            out.push(("reason".to_string(), null()));
-        }
-        Err(r) => out.extend([
-            ("value".to_string(), null()),
-            ("boundary".to_string(), null()),
-            ("reason".to_string(), r.name().into()),
-        ]),
-    }
-    owned(out)
-}
-
-fn to_list(r: &MateCorrelation) -> Robj {
-    let s = &r.sample;
-    let e = &r.settings;
-    let m = &r.method;
-    named(vec![
-        (
-            "sample",
-            named(vec![
-                ("n_total", count(s.n_total)),
-                (
-                    "n_dropped_unknown_stratum",
-                    count(s.n_dropped_unknown_stratum),
-                ),
-                ("n_mate_networks", count(s.n_mate_networks)),
-                (
-                    "largest_mate_network_share",
-                    opt(s.largest_mate_network_share),
-                ),
-                (
-                    "n_mothers_multiple_mates",
-                    count(s.n_mothers_multiple_mates),
-                ),
-                (
-                    "n_fathers_multiple_mates",
-                    count(s.n_fathers_multiple_mates),
-                ),
-            ]),
-        ),
-        (
-            "cells",
-            List::from_values(r.cells.iter().map(cell)).into_robj(),
-        ),
-        (
-            "within_person",
-            r.within_person.as_ref().map_or_else(null, |w| {
-                named(vec![
-                    ("mothers", within(&w.mothers)),
-                    ("fathers", within(&w.fathers)),
-                ])
-            }),
-        ),
-        (
-            "settings",
-            named(vec![
-                ("permutations", count(e.permutations)),
-                ("bootstrap", count(e.bootstrap)),
-                ("seed", int_values(vec![e.seed])),
-                ("threads", count(e.threads as u64)),
-                ("ci_level", e.ci_level.into()),
-                (
-                    "min_stratum_networks",
-                    opt(e.min_stratum_networks.map(|n| n as i32)),
-                ),
-            ]),
-        ),
-        (
-            "method",
-            named(vec![
-                ("se_method", m.se_method.into()),
-                ("ci_scale", m.ci_scale.into()),
-                ("bootstrap_unit", m.bootstrap_unit.into()),
-                ("bootstrap_assumption", m.bootstrap_assumption.into()),
-                ("bootstrap_method", m.bootstrap_method.into()),
-                ("permutation_null", m.permutation_null.into()),
-                ("permutation_blocks", m.permutation_blocks.into()),
-                ("permutation_statistic", m.permutation_statistic.into()),
-                ("permutation_stopping", m.permutation_stopping.into()),
-                ("permutation_stop_h", count(m.permutation_stop_h)),
-            ]),
-        ),
-    ])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -302,7 +82,7 @@ fn mate_correlation_impl(
             settings,
         )
     })?;
-    Ok(to_list(&result))
+    Ok(to_robj(&result.to_value()))
 }
 
 /// The Mate Correlation of one or two traits, in the pool.
