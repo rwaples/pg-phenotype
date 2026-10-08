@@ -135,7 +135,7 @@ dependencies = [
 
 [[package]]
 name = "pg-phenotype-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libm",
  "pedigree-graph-core",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "pg-phenotype-r"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "extendr-api",
  "pg-phenotype-core",
