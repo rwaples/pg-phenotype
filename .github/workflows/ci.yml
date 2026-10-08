@@ -76,8 +76,39 @@ jobs:
       - name: Type check with ty
         run: pixi run ty check
 
+      # Every test, slow ones included: they run in seconds on six workers,
+      # and otherwise only the weekly pg-main job, off the pin, ever ran them.
       - name: Run the test suite
-        run: pixi run test
+        run: pixi run test-all
+
+  python-313:
+    # pixi pins Python 3.14; this is the oldest Python the wheel (abi3-py313)
+    # and requires-python promise.
+    name: Python tests on Python 3.13
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install the package with its test extras and test hooks
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install "maturin>=1.15.0,<2"
+          pip install -e ".[test]"
+          maturin develop --release --features test-hooks
+
+      - name: Run the test suite
+        env:
+          PG_PHENOTYPE_REQUIRE_TEST_HOOKS: "1"
+        run: |
+          . .venv/bin/activate
+          pytest -n 6 --dist worksteal
 
   r:
     name: R binding lint, offline tarball check

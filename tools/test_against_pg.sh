@@ -56,6 +56,9 @@ cargo test --release
 cargo tree -p pg-phenotype-core -i pedigree-graph-core --depth 0 | grep -qF "$PG/crates/core" \
   || { echo "error: the patch did not take: pedigree-graph-core is not $PG" >&2; exit 1; }
 
+# The pixi tasks (build-dev, test-all, r-test) are spelled out rather than
+# called: a nested `pixi run` re-runs activation, and the patched CARGO_HOME
+# above must reach the builds.  Keep these lines equal to those tasks.
 echo "== Python suite"
 maturin develop --release --features test-hooks
 PG_PHENOTYPE_REQUIRE_TEST_HOOKS=1 pytest -n 6 --dist worksteal

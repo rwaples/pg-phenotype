@@ -53,7 +53,7 @@ strip = true
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
-    "slow: median call time of 5 s or more under `pixi run test`; unmark when it falls below",
+    "slow: median call time of 5 s or more under `pixi run test-all`; unmark when it falls below",
 ]
 
 [tool.ruff]

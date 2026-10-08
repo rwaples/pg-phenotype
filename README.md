@@ -112,7 +112,8 @@ Design decisions are in `docs/adr/`; vocabulary in `CONTEXT.md`.
 ## Development
 
 ```bash
-pixi run test        # rebuilds the extension with test hooks, then pytest
+pixi run test        # rebuilds the extension with test hooks, then pytest (no slow tests)
+pixi run test-all    # the same with the slow tests, as CI runs it
 pixi run test-rust
 pixi run -e r r-test
 pixi run test-against-pg ../pedigree-graph   # every suite against a pg checkout
