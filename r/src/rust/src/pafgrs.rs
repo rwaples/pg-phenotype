@@ -1,11 +1,11 @@
 //! PA-FGRS: `pafgrs_prepare()`, `pafgrs_cip()` and the score functions.
 
 use crate::errors::{finish, HostError, HostResult};
-use crate::input::{self, IdType};
+use crate::input::{self, IdType, Pedigree};
 use crate::threads;
 use extendr_api::prelude::*;
-use pg_phenotype_core::pafgrs::{self, BivParams, Cip, Prep, MAX_NDEGREE};
-use pg_phenotype_core::{Error, PedigreeInput, Trait, TraitKind};
+use pg_phenotype_core::pafgrs::{self, BivParams, Cip, Prep};
+use pg_phenotype_core::Trait;
 
 /// What a `pgphenotype_pafgrs_prep` external pointer owns.
 struct Handle {
@@ -27,59 +27,22 @@ fn handle(prep: &Robj) -> HostResult<&Handle> {
 }
 
 fn prepare_impl(columns: [Robj; 5], ndegree: &Robj, probands: Robj) -> HostResult<Robj> {
-    let [id, mother, father, twin, sex] = columns;
-    let ids = input::coerce_required("id", input::present("id", &id)?)?;
-    let mother = input::coerce("mother", input::present("mother", &mother)?)?;
-    let father = input::coerce("father", input::present("father", &father)?)?;
-    let optional = |field, column: &Robj| {
-        (!column.is_null())
-            .then(|| input::coerce(field, column))
-            .transpose()
-    };
-    let twin = optional("twin", &twin)?;
-    let sex = optional("sex", &sex)?;
-    let n = ids.values.len();
-    // Counts and positions go back to R as integers.
-    if n > i32::MAX as usize {
-        return Err(HostError::resource(
-            "too_many_rows",
-            format!("a pedigree of {n} rows has more than R's integer maximum"),
-            vec![
-                ("n_rows", (n as f64).into()),
-                ("maximum", f64::from(i32::MAX).into()),
-            ],
-        ));
-    }
+    let pedigree = Pedigree::coerce(columns)?;
     let ndegree = input::whole("ndegree", input::number("ndegree", ndegree)?)?;
-    if !(1..=i64::from(MAX_NDEGREE)).contains(&ndegree) {
-        return Err(Error::DegreeOutOfRange {
-            value: ndegree,
-            minimum: 1,
-            maximum: i64::from(MAX_NDEGREE),
-        }
-        .into());
-    }
     let probands = (!probands.is_null())
         .then(|| input::coerce_required("probands", &probands))
         .transpose()?;
-    let columns = PedigreeInput {
-        ids: &ids.values,
-        mother: &mother.values,
-        father: &father.values,
-        twin: twin.as_ref().map(|c| c.values.as_slice()),
-        sex: sex.as_ref().map(|c| c.values.as_slice()),
-    };
     let pool = threads::pool()?;
     let prep = pool.install(|| {
         pafgrs::prepare(
-            columns,
-            ndegree as u8,
+            pedigree.input(),
+            ndegree,
             probands.as_ref().map(|c| c.values.as_slice()),
         )
     })?;
     let mut out: Robj = ExternalPtr::new(Handle {
         prep,
-        id_type: ids.storage,
+        id_type: pedigree.ids.storage,
     })
     .into();
     out.set_class(["pgphenotype_pafgrs_prep"])
@@ -135,20 +98,9 @@ fn pafgrs_check_cip(ages: Robj, cip: Robj) -> Robj {
 
 /// The `values` and `kind` of an R `trait()`; the R side checked both.
 fn trait_of<'a>(values: &'a Robj, kind: &Robj) -> HostResult<Trait<'a>> {
-    let kind = match kind.as_str() {
-        Some("continuous") => TraitKind::Continuous,
-        Some("binary") => TraitKind::Binary,
-        Some("ordinal") => TraitKind::Ordinal,
-        Some("categorical") => TraitKind::Categorical,
-        _ => {
-            return Err(HostError::usage(
-                "a trait must come from trait()".to_string(),
-            ))
-        }
-    };
     Ok(Trait {
         values: input::doubles("trait", values)?,
-        kind,
+        kind: input::trait_kind(kind.as_str().unwrap_or_default())?,
         n_levels: None,
     })
 }

@@ -102,6 +102,11 @@ def test_errors_carry_codes_and_fields():
         pafgrs.prepare(ped, ndegree=6)
     assert err.value.code == "degree_out_of_range"
     assert dict(err.value.fields) == {"value": 6, "minimum": 1, "maximum": 5}
+    # Beyond a u8 too: the core checks the host's integer as is.
+    for ndegree in (256, -1):
+        with pytest.raises(pg_phenotype.ValidationError) as err:
+            pafgrs.prepare(ped, ndegree=ndegree)
+        assert err.value.fields["value"] == ndegree
     with pytest.raises(pg_phenotype.ValidationError) as err:
         pafgrs.prepare(ped, probands=[ped["id"][0], -5])
     assert err.value.code == "unknown_proband"

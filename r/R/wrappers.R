@@ -16,6 +16,7 @@
 }
 .native_configure_threads <- function(n) .Call(wrap__configure_threads, n)
 .native_thread_budget <- function() .Call(wrap__thread_budget)
+.native_trait_kinds <- function() .Call(wrap__trait_kinds)
 .native_assortative_mate_correlation <- function(id, mother, father, twin, sex, values, kinds, n_levels, stratum,
                                                  permutations, bootstrap, seed, min_stratum_networks) {
   .Call(wrap__assortative_mate_correlation, id, mother, father, twin, sex, values, kinds, n_levels, stratum,

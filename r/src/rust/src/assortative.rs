@@ -3,14 +3,14 @@
 //! `None`.
 
 use crate::errors::{finish, int_values, HostError, HostResult};
-use crate::input;
+use crate::input::{self, Pedigree};
 use crate::threads;
 use extendr_api::prelude::*;
 use pg_phenotype_core::assortative::{
     self, Cell, Draws, Estimate, EstimatorResult, MateCorrelation, Permutation, Point, Reason,
     Settings, Strata, WithinPerson,
 };
-use pg_phenotype_core::{PedigreeInput, Trait, TraitKind};
+use pg_phenotype_core::Trait;
 
 fn named(pairs: Vec<(&str, Robj)>) -> Robj {
     let (names, values): (Vec<&str>, Vec<Robj>) = pairs.into_iter().unzip();
@@ -252,88 +252,6 @@ fn to_list(r: &MateCorrelation) -> Robj {
     ])
 }
 
-/// Stratum labels and known flags from one R value per row, `NA` unknown.
-fn strata(stratum: &Robj) -> HostResult<(Vec<i64>, Vec<bool>)> {
-    let invalid = |position: usize| {
-        HostError::validation(
-            "invalid_integer_value",
-            format!(
-                "'stratum' value at position {} is not a lossless integer",
-                position + 1
-            ),
-            vec![
-                ("field", "stratum".into()),
-                ("position", ((position + 1) as f64).into()),
-            ],
-        )
-    };
-    match stratum.rtype() {
-        Rtype::Integers if !stratum.inherits("factor") => Ok(stratum
-            .as_integer_slice()
-            .unwrap_or_default()
-            .iter()
-            .map(|&v| {
-                if v == i32::MIN {
-                    (0, false)
-                } else {
-                    (i64::from(v), true)
-                }
-            })
-            .unzip()),
-        Rtype::Doubles if stratum.inherits("integer64") => Ok(stratum
-            .as_real_slice()
-            .unwrap_or_default()
-            .iter()
-            .map(|v| match v.to_bits() as i64 {
-                i64::MIN => (0, false),
-                v => (v, true),
-            })
-            .unzip()),
-        Rtype::Doubles => {
-            let mut out = (Vec::new(), Vec::new());
-            for (p, &v) in stratum
-                .as_real_slice()
-                .unwrap_or_default()
-                .iter()
-                .enumerate()
-            {
-                if v.is_nan() {
-                    out.0.push(0);
-                    out.1.push(false);
-                } else if v.is_finite() && v == v.trunc() && v.abs() < 2f64.powi(63) {
-                    out.0.push(v as i64);
-                    out.1.push(true);
-                } else {
-                    return Err(invalid(p));
-                }
-            }
-            Ok(out)
-        }
-        Rtype::Logicals => {
-            let slice = stratum.as_logical_slice().unwrap_or_default();
-            match slice.iter().position(|v| !v.is_na()) {
-                Some(p) => Err(invalid(p)),
-                None => Ok((vec![0; slice.len()], vec![false; slice.len()])),
-            }
-        }
-        _ => Err(invalid(0)),
-    }
-}
-
-fn kind_of(kind: &str) -> HostResult<TraitKind> {
-    Ok(match kind {
-        "continuous" => TraitKind::Continuous,
-        "binary" => TraitKind::Binary,
-        "ordinal" => TraitKind::Ordinal,
-        "categorical" => TraitKind::Categorical,
-        _ => {
-            return Err(HostError::usage(
-                "a trait must come from trait()".to_string(),
-            ))
-        }
-    })
-}
-
 #[allow(clippy::too_many_arguments)]
 fn mate_correlation_impl(
     columns: [Robj; 5],
@@ -343,19 +261,10 @@ fn mate_correlation_impl(
     stratum: &Robj,
     counts: [&Robj; 4],
 ) -> HostResult<Robj> {
-    let [id, mother, father, twin, sex] = columns;
-    let ids = input::coerce_required("id", input::present("id", &id)?)?;
-    let mother = input::coerce("mother", input::present("mother", &mother)?)?;
-    let father = input::coerce("father", input::present("father", &father)?)?;
-    let optional = |field, column: &Robj| {
-        (!column.is_null())
-            .then(|| input::coerce(field, column))
-            .transpose()
-    };
-    let twin = optional("twin", &twin)?;
-    let sex = optional("sex", &sex)?;
+    let pedigree = Pedigree::coerce(columns)?;
     let [permutations, bootstrap, seed, min_stratum_networks] = counts;
-    let whole = |name: &str, x: &Robj| input::number(name, x).and_then(|v| input::whole(name, v));
+    let whole =
+        |name: &'static str, x: &Robj| input::number(name, x).and_then(|v| input::whole(name, v));
     let n_levels = input::doubles("n_levels", n_levels)?;
     let kinds = kinds
         .as_str_vector()
@@ -368,19 +277,14 @@ fn mate_correlation_impl(
         .map(|((v, k), &n)| {
             Ok(Trait {
                 values: input::doubles("trait", v)?,
-                kind: kind_of(k)?,
+                kind: input::trait_kind(k)?,
                 n_levels: (!n.is_nan()).then_some(n as usize),
             })
         })
         .collect::<HostResult<Vec<_>>>()?;
-    let strata = (!stratum.is_null()).then(|| strata(stratum)).transpose()?;
-    let pedigree = PedigreeInput {
-        ids: &ids.values,
-        mother: &mother.values,
-        father: &father.values,
-        twin: twin.as_ref().map(|c| c.values.as_slice()),
-        sex: sex.as_ref().map(|c| c.values.as_slice()),
-    };
+    let strata = (!stratum.is_null())
+        .then(|| input::strata(stratum))
+        .transpose()?;
     let settings = Settings {
         permutations: whole("permutations", permutations)?,
         bootstrap: whole("bootstrap", bootstrap)?,
@@ -390,7 +294,7 @@ fn mate_correlation_impl(
     let pool = threads::pool()?;
     let result = pool.install(|| {
         assortative::mate_correlation(
-            pedigree,
+            pedigree.input(),
             &traits,
             strata
                 .as_ref()

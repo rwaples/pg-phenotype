@@ -34,7 +34,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let (dir, ndegree, threads, which) = (
         &args[1],
-        args[2].parse::<u8>().expect("ndegree"),
+        args[2].parse::<i64>().expect("ndegree"),
         args[3].parse::<usize>().expect("threads"),
         args[4].as_str(),
     );

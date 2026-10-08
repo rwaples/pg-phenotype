@@ -107,4 +107,12 @@ test_that("input errors carry the core's codes", {
   expect_pgp_error(assortative_mate_correlation(ped, x, stratum = rep(1, 12), min_stratum_networks = 0),
                    "parameter", "parameter_out_of_range")
   expect_pgp_error(assortative_mate_correlation(ped, x, seed = 0.5), "usage")
+  # Outside int64 is a parameter error, as in Python; inside, a whole double is a seed.
+  err <- expect_pgp_error(assortative_mate_correlation(ped, x, seed = 2^63), "parameter", "parameter_out_of_range")
+  expect_identical(err$fields$name, "seed")
+  expect_s3_class(assortative_mate_correlation(ped, x, seed = 2^60, permutations = 9), "pgphenotype_mate_correlation")
+  # A stratum label is coerced as an id is, and its error says which value.
+  err <- expect_pgp_error(assortative_mate_correlation(ped, x, stratum = c(1.5, rep(1, 11))),
+                          "validation", "invalid_integer_value")
+  expect_identical(err$fields, list(field = "stratum", position = 1, value = 1.5))
 })

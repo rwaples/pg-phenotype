@@ -50,6 +50,7 @@ fn thread_budget() -> Robj {
 extendr_module! {
     mod pgphenotype;
     use assortative;
+    use input;
     use pafgrs;
     use test_hooks;
     fn pgphenotype_version;

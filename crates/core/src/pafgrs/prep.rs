@@ -233,21 +233,25 @@ pub fn kinship_threshold(ndegree: u8) -> f64 {
 ///
 /// # Errors
 ///
-/// [`Error::DegreeOutOfRange`] for `ndegree` outside `1..=5`; any
-/// pedigree-graph-core validation error; [`Error::UnknownProband`] and
-/// [`Error::DuplicateProband`] for the proband list.
+/// [`Error::DegreeOutOfRange`] for `ndegree` outside `1..=5` (a host passes
+/// its integer as is); any pedigree-graph-core validation error;
+/// [`Error::UnknownProband`] and [`Error::DuplicateProband`] for the proband
+/// list.
 pub fn prepare(
     input: PedigreeInput<'_>,
-    ndegree: u8,
+    ndegree: i64,
     probands: Option<&[i64]>,
 ) -> Result<Prep, Error> {
-    if !(1..=MAX_NDEGREE).contains(&ndegree) {
-        return Err(Error::DegreeOutOfRange {
-            value: i64::from(ndegree),
-            minimum: 1,
-            maximum: i64::from(MAX_NDEGREE),
-        });
-    }
+    let ndegree = match u8::try_from(ndegree) {
+        Ok(nd) if (1..=MAX_NDEGREE).contains(&nd) => nd,
+        _ => {
+            return Err(Error::DegreeOutOfRange {
+                value: ndegree,
+                minimum: 1,
+                maximum: i64::from(MAX_NDEGREE),
+            })
+        }
+    };
     let built = input.validate()?;
     let probands = proband_rows(&built.ids, probands)?;
     let candidates = candidates(&built, &probands, ndegree)?;
@@ -764,7 +768,7 @@ mod tests {
     #[test]
     fn ndegree_is_checked_before_the_pedigree() {
         let (ids, mother, father) = family();
-        for nd in [0u8, 6] {
+        for nd in [0, 6, 256, -1, i64::MIN] {
             let err = prepare(input(&ids, &mother, &father), nd, None).unwrap_err();
             assert_eq!(err.code(), "degree_out_of_range");
         }

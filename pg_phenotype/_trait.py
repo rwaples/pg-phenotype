@@ -7,11 +7,13 @@ from typing import Any, Literal
 
 import numpy as np
 
+from pg_phenotype import _native
 from pg_phenotype._errors import ValidationError
 from pg_phenotype._input import floats
 
 TraitKind = Literal["continuous", "binary", "ordinal", "categorical"]
-KINDS: tuple[str, ...] = ("continuous", "binary", "ordinal", "categorical")
+#: The kinds the core reads, in its order (``TraitKind::ALL``).
+KINDS: tuple[str, ...] = tuple(_native.trait_kinds())
 
 
 def _raw(values: object) -> np.ndarray:

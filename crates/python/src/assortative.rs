@@ -1,13 +1,13 @@
 //! `mate_correlation`: the Mate Correlation result as nested dicts of plain
 //! values, which `pg_phenotype.assortative` turns into frozen dataclasses.
 
-use crate::{checked_pool, to_pyerr, trait_kind};
+use crate::{checked_pool, to_pyerr, trait_kind, PedigreeArgs};
 use numpy::PyReadonlyArray1;
 use pg_phenotype_core::assortative::{
     self, Cell, Draws, Estimate, EstimatorResult, MateCorrelation, Permutation, Point, Reason,
     Settings, Strata, WithinPerson,
 };
-use pg_phenotype_core::{PedigreeInput, Trait};
+use pg_phenotype_core::Trait;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -220,13 +220,8 @@ pub(crate) fn mate_correlation<'py>(
     min_stratum_networks: i64,
     threads: usize,
 ) -> PyResult<Dict<'py>> {
-    let input = PedigreeInput {
-        ids: ids.as_slice()?,
-        mother: mother.as_slice()?,
-        father: father.as_slice()?,
-        twin: twin.as_ref().map(|a| a.as_slice()).transpose()?,
-        sex: sex.as_ref().map(|a| a.as_slice()).transpose()?,
-    };
+    let pedigree = PedigreeArgs::new(ids, mother, father, twin, sex);
+    let input = pedigree.input()?;
     let traits = traits
         .iter()
         .map(|(values, kind, n_levels)| {
@@ -242,7 +237,12 @@ pub(crate) fn mate_correlation<'py>(
             labels: labels.as_slice()?,
             known: known.as_slice()?,
         }),
-        _ => None,
+        (None, None) => None,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "stratum_labels and stratum_known are passed together",
+            ))
+        }
     };
     let settings = Settings {
         permutations,

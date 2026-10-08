@@ -1,4 +1,5 @@
-.pgp_trait_kinds <- c("continuous", "binary", "ordinal", "categorical")
+# The kinds the core reads, in its order (`TraitKind::ALL`).
+.pgp_trait_kinds <- function() .native_trait_kinds()
 
 #' One phenotype column
 #'
@@ -36,10 +37,10 @@ trait <- function(values, kind = NULL) {
     if (!is.character(kind) || length(kind) != 1L || is.na(kind)) {
       .pgp_usage("`kind` must be NULL or a single string", call)
     }
-    if (!kind %in% .pgp_trait_kinds) {
+    if (!kind %in% .pgp_trait_kinds()) {
       .pgp_signal(
         "validation", "invalid_trait_kind",
-        sprintf("kind must be one of %s, got \"%s\"", paste(.pgp_trait_kinds, collapse = ", "), kind),
+        sprintf("kind must be one of %s, got \"%s\"", paste(.pgp_trait_kinds(), collapse = ", "), kind),
         list(kind = kind), call
       )
     }

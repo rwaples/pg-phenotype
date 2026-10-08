@@ -140,6 +140,43 @@ impl Prep {
     }
 }
 
+/// The pedigree columns as `pg_phenotype._input.pedigree_arrays` passes them.
+pub(crate) struct PedigreeArgs<'py> {
+    ids: PyReadonlyArray1<'py, i64>,
+    mother: PyReadonlyArray1<'py, i64>,
+    father: PyReadonlyArray1<'py, i64>,
+    twin: Option<PyReadonlyArray1<'py, i64>>,
+    sex: Option<PyReadonlyArray1<'py, i64>>,
+}
+
+impl<'py> PedigreeArgs<'py> {
+    pub(crate) fn new(
+        ids: PyReadonlyArray1<'py, i64>,
+        mother: PyReadonlyArray1<'py, i64>,
+        father: PyReadonlyArray1<'py, i64>,
+        twin: Option<PyReadonlyArray1<'py, i64>>,
+        sex: Option<PyReadonlyArray1<'py, i64>>,
+    ) -> PedigreeArgs<'py> {
+        PedigreeArgs {
+            ids,
+            mother,
+            father,
+            twin,
+            sex,
+        }
+    }
+
+    pub(crate) fn input(&self) -> PyResult<PedigreeInput<'_>> {
+        Ok(PedigreeInput {
+            ids: self.ids.as_slice()?,
+            mother: self.mother.as_slice()?,
+            father: self.father.as_slice()?,
+            twin: self.twin.as_ref().map(|a| a.as_slice()).transpose()?,
+            sex: self.sex.as_ref().map(|a| a.as_slice()).transpose()?,
+        })
+    }
+}
+
 /// Validate the pedigree and build its relative structure in the pool.
 #[pyfunction]
 #[pyo3(signature = (ids, mother, father, twin, sex, /, *, ndegree, probands, threads))]
@@ -151,17 +188,12 @@ fn prepare<'py>(
     father: PyReadonlyArray1<'py, i64>,
     twin: Option<PyReadonlyArray1<'py, i64>>,
     sex: Option<PyReadonlyArray1<'py, i64>>,
-    ndegree: u8,
+    ndegree: i64,
     probands: Option<PyReadonlyArray1<'py, i64>>,
     threads: usize,
 ) -> PyResult<Prep> {
-    let input = PedigreeInput {
-        ids: ids.as_slice()?,
-        mother: mother.as_slice()?,
-        father: father.as_slice()?,
-        twin: twin.as_ref().map(|a| a.as_slice()).transpose()?,
-        sex: sex.as_ref().map(|a| a.as_slice()).transpose()?,
-    };
+    let pedigree = PedigreeArgs::new(ids, mother, father, twin, sex);
+    let input = pedigree.input()?;
     let probands = probands.as_ref().map(|a| a.as_slice()).transpose()?;
     let pool = checked_pool(py, threads)?;
     let inner = py
@@ -171,17 +203,18 @@ fn prepare<'py>(
 }
 
 pub(crate) fn trait_kind(kind: &str) -> PyResult<TraitKind> {
-    Ok(match kind {
-        "continuous" => TraitKind::Continuous,
-        "binary" => TraitKind::Binary,
-        "ordinal" => TraitKind::Ordinal,
-        "categorical" => TraitKind::Categorical,
-        _ => {
-            return Err(PyValueError::new_err(format!(
-                "trait kind must be continuous, binary, ordinal or categorical, got {kind:?}"
-            )))
-        }
+    TraitKind::from_name(kind).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "trait kind must be one of {}, got {kind:?}",
+            trait_kinds().join(", ")
+        ))
     })
+}
+
+/// The trait kind names, in the order hosts list them.
+#[pyfunction]
+fn trait_kinds() -> Vec<&'static str> {
+    TraitKind::ALL.map(TraitKind::name).to_vec()
 }
 
 fn checked_cip(py: Python<'_>, ages: Vec<f64>, cip: Vec<f64>) -> PyResult<Cip> {
@@ -302,6 +335,7 @@ fn score_bivariate<'py>(
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(core_version, m)?)?;
     m.add_function(wrap_pyfunction!(pg_core_rev, m)?)?;
+    m.add_function(wrap_pyfunction!(trait_kinds, m)?)?;
     m.add_function(wrap_pyfunction!(prepare, m)?)?;
     m.add_function(wrap_pyfunction!(check_cip, m)?)?;
     m.add_function(wrap_pyfunction!(score_univariate, m)?)?;

@@ -7,6 +7,7 @@
 
 use crate::errors::{HostError, HostResult};
 use extendr_api::prelude::*;
+use pg_phenotype_core::{Error, PedigreeInput, TraitKind};
 
 /// The R storage an id column arrived in, so ids go back out in it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +31,8 @@ impl IdType {
 /// One coerced column: its values, `-1` where missing, and its storage.
 pub struct Coerced {
     pub values: Vec<i64>,
-    pub first_missing: Option<usize>,
+    /// The positions of `NA`, ascending.
+    pub missing: Vec<usize>,
     pub storage: IdType,
 }
 
@@ -72,9 +74,9 @@ pub fn coerce(field: &'static str, column: &Robj) -> HostResult<Coerced> {
     if column.inherits("factor") {
         return Err(invalid(field, 0, "factor".into()));
     }
-    let mut first_missing = None;
+    let mut missing_at = Vec::new();
     let mut missing = |position: usize| {
-        first_missing.get_or_insert(position);
+        missing_at.push(position);
         -1
     };
     let (values, storage) = match column.rtype() {
@@ -126,6 +128,9 @@ pub fn coerce(field: &'static str, column: &Robj) -> HostResult<Coerced> {
             if let Some(position) = slice.iter().position(|v| !v.is_na()) {
                 return Err(invalid(field, position, slice[position].to_bool().into()));
             }
+            (0..n).for_each(|p| {
+                missing(p);
+            });
             (vec![-1; n], IdType::Integer)
         }
         _ if n == 0 => (Vec::new(), IdType::Integer),
@@ -133,7 +138,7 @@ pub fn coerce(field: &'static str, column: &Robj) -> HostResult<Coerced> {
     };
     Ok(Coerced {
         values,
-        first_missing,
+        missing: missing_at,
         storage,
     })
 }
@@ -141,7 +146,7 @@ pub fn coerce(field: &'static str, column: &Robj) -> HostResult<Coerced> {
 /// Coerce a column that has no missing form (`id`, `probands`).
 pub fn coerce_required(field: &'static str, column: &Robj) -> HostResult<Coerced> {
     let coerced = coerce(field, column)?;
-    if let Some(position) = coerced.first_missing {
+    if let Some(&position) = coerced.missing.first() {
         let na = Strings::from_values([Rstr::na()]).into_robj();
         return Err(invalid(field, position, na));
     }
@@ -177,12 +182,107 @@ pub fn number(name: &str, x: &Robj) -> HostResult<f64> {
     }
 }
 
-/// A whole number from R, which passes every number as a double.
-pub fn whole(name: &str, x: f64) -> HostResult<i64> {
-    if x.is_finite() && x == x.trunc() && x.abs() < 2f64.powi(53) {
-        return Ok(x as i64);
+/// A whole number from R, which passes every number as a double: a usage
+/// error when it is not whole, and, as in Python, `parameter_out_of_range`
+/// outside int64.
+pub fn whole(name: &'static str, x: f64) -> HostResult<i64> {
+    if !(x.is_finite() && x == x.trunc()) {
+        return Err(HostError::usage(format!(
+            "`{name}` must be a whole number, got {x}"
+        )));
     }
-    Err(HostError::usage(format!(
-        "`{name}` must be a whole number, got {x}"
-    )))
+    if !(-TWO_POW_63..TWO_POW_63).contains(&x) {
+        return Err(Error::ParameterOutOfRange {
+            name,
+            value: x,
+            domain: "[-2^63, 2^63)",
+        }
+        .into());
+    }
+    Ok(x as i64)
+}
+
+/// The pedigree columns, coerced; `twin` and `sex` are optional.
+pub struct Pedigree {
+    pub ids: Coerced,
+    mother: Coerced,
+    father: Coerced,
+    twin: Option<Coerced>,
+    sex: Option<Coerced>,
+}
+
+impl Pedigree {
+    /// Coerce `[id, mother, father, twin, sex]`, `NULL` where the data had
+    /// no such column.
+    pub fn coerce(columns: [Robj; 5]) -> HostResult<Pedigree> {
+        let [id, mother, father, twin, sex] = columns;
+        let optional = |field, column: &Robj| {
+            (!column.is_null())
+                .then(|| coerce(field, column))
+                .transpose()
+        };
+        let ids = coerce_required("id", present("id", &id)?)?;
+        let n = ids.values.len();
+        // Counts and positions go back to R as integers.
+        if n > i32::MAX as usize {
+            return Err(HostError::resource(
+                "too_many_rows",
+                format!("a pedigree of {n} rows has more than R's integer maximum"),
+                vec![
+                    ("n_rows", (n as f64).into()),
+                    ("maximum", f64::from(i32::MAX).into()),
+                ],
+            ));
+        }
+        Ok(Pedigree {
+            ids,
+            mother: coerce("mother", present("mother", &mother)?)?,
+            father: coerce("father", present("father", &father)?)?,
+            twin: optional("twin", &twin)?,
+            sex: optional("sex", &sex)?,
+        })
+    }
+
+    pub fn input(&self) -> PedigreeInput<'_> {
+        PedigreeInput {
+            ids: &self.ids.values,
+            mother: &self.mother.values,
+            father: &self.father.values,
+            twin: self.twin.as_ref().map(|c| c.values.as_slice()),
+            sex: self.sex.as_ref().map(|c| c.values.as_slice()),
+        }
+    }
+}
+
+/// Stratum labels and known flags from one R value per row, `NA` unknown;
+/// a label is coerced as an id is.
+pub fn strata(stratum: &Robj) -> HostResult<(Vec<i64>, Vec<bool>)> {
+    let Coerced {
+        mut values,
+        missing,
+        ..
+    } = coerce("stratum", stratum)?;
+    let mut known = vec![true; values.len()];
+    for p in missing {
+        known[p] = false;
+        values[p] = 0;
+    }
+    Ok((values, known))
+}
+
+/// The kind of an R `trait()`, which checked it.
+pub fn trait_kind(kind: &str) -> HostResult<TraitKind> {
+    TraitKind::from_name(kind)
+        .ok_or_else(|| HostError::usage("a trait must come from trait()".to_string()))
+}
+
+/// The trait kind names, in the order hosts list them.
+#[extendr]
+fn trait_kinds() -> Vec<&'static str> {
+    TraitKind::ALL.map(TraitKind::name).to_vec()
+}
+
+extendr_module! {
+    mod input;
+    fn trait_kinds;
 }

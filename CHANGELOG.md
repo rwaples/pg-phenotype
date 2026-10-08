@@ -21,6 +21,14 @@
   `kind` field, as assortative mating's does.  Rust: `InvalidTraitValue` is
   merged into `InvalidTraitCode`, and error `kind`/`expected`/`actual` fields
   are `TraitKind`s.
+- Python `pafgrs.prepare(ndegree=256)` (or any int outside 1..5) raises
+  `degree_out_of_range`, not `OverflowError`.  Rust: `prepare` takes
+  `ndegree: i64` and does the one range check.
+- R: a count or seed outside int64 is a `parameter_out_of_range` error, as
+  in Python; whole numbers up to 2^63 are accepted (the limit was 2^53).  A
+  bad stratum label's error carries its `value`, and
+  `assortative_mate_correlation()` has `pafgrs_prepare()`'s
+  `too_many_rows` check.
 
 ## v0.1.1
 

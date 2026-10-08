@@ -53,6 +53,19 @@ pub enum TraitKind {
 }
 
 impl TraitKind {
+    /// Every kind, in the order hosts list them.
+    pub const ALL: [TraitKind; 4] = [
+        TraitKind::Continuous,
+        TraitKind::Binary,
+        TraitKind::Ordinal,
+        TraitKind::Categorical,
+    ];
+
+    /// The kind a host names, `None` for an unknown name.
+    pub fn from_name(name: &str) -> Option<TraitKind> {
+        TraitKind::ALL.into_iter().find(|k| k.name() == name)
+    }
+
     /// The name hosts use.
     pub fn name(self) -> &'static str {
         match self {

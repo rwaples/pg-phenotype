@@ -19,7 +19,7 @@ fn column(dir: &str, name: &str) -> Vec<i64> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dir = &args[1];
-    let ndegree: u8 = args[2].parse().expect("ndegree");
+    let ndegree: i64 = args[2].parse().expect("ndegree");
     let threads: usize = args[3].parse().expect("threads");
     let all = args.get(4).is_some_and(|a| a == "all");
     let cols: Vec<Vec<i64>> = ["id", "mother", "father", "twin", "sex", "pheno_id"]
