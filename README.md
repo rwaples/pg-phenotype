@@ -117,3 +117,5 @@ pixi run test-rust
 pixi run -e r r-test
 pixi run test-against-pg ../pedigree-graph   # every suite against a pg checkout
 ```
+
+To release a version, follow [How to release pg-phenotype](docs/releasing.md).

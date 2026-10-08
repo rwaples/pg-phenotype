@@ -1,0 +1,311 @@
+# Release pipeline: maturin wheels and the sdist to PyPI, and the R source
+# tarball to a GitHub release, gated on the Cargo workspace version.  Every
+# wheel runs the whole test suite on its own platform before anything is
+# published.  A manual run (workflow_dispatch) builds and tests everything and
+# publishes nothing.  docs/releasing.md has the procedure.
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "publish-${{ github.ref }}"
+  cancel-in-progress: false
+
+jobs:
+  check-version:
+    name: Check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.workspace.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Read the workspace version and check the tag and the R package
+        id: workspace
+        run: |
+          version="$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version = "\(.*\)"$/\1/p}' Cargo.toml)"
+          if [ -z "$version" ]; then
+            echo "::error file=Cargo.toml::could not read version from the [workspace.package] table"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$version" != "${GITHUB_REF_NAME#v}" ]; then
+            echo "::error file=Cargo.toml::tag ${GITHUB_REF_NAME} implies version ${GITHUB_REF_NAME#v}, but [workspace.package].version is ${version}"
+            exit 1
+          fi
+          description="$(sed -n 's/^Version:[[:space:]]*//p' r/DESCRIPTION)"
+          binding="$(sed -n '/^\[package\]/,/^\[/{s/^version = "\(.*\)"$/\1/p}' r/src/rust/Cargo.toml)"
+          for pair in "r/DESCRIPTION:${description}" "r/src/rust/Cargo.toml:${binding}"; do
+            if [ "${pair#*:}" != "$version" ]; then
+              echo "::error file=${pair%%:*}::carries version '${pair#*:}', but [workspace.package].version is ${version}"
+              exit 1
+            fi
+          done
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Workspace version ${version} agrees with the R package (ref ${GITHUB_REF_NAME})"
+
+  wheels:
+    name: Build and test ${{ matrix.artifact }}
+    needs: check-version
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: auto
+            artifact: dist-wheel-linux-x86_64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            manylinux: auto
+            artifact: dist-wheel-linux-aarch64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: dist-wheel-macos-x86_64
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            artifact: dist-wheel-macos-arm64
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: dist-wheel-windows-x86_64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          sccache: "true"
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Test the installed wheel
+        shell: bash
+        run: |
+          wheel="$(ls dist/*.whl)"
+          python -m pip install "${wheel}[test]"
+          # The checkout's pg_phenotype/ has no compiled _native; remove it so
+          # the tests import the installed wheel.
+          rm -rf pg_phenotype
+          python -m pytest -n auto -p no:cacheprovider -q
+
+      - name: Upload the wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+
+  sdist:
+    name: Build and test the sdist
+    needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build the sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Test an install from the sdist
+        run: |
+          sdist="$(ls dist/*.tar.gz)"
+          python -m pip install "${sdist}[test]"
+          rm -rf pg_phenotype
+          python -m pytest -n auto -p no:cacheprovider -q
+
+      - name: Upload the sdist
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-sdist
+          path: dist/*
+          if-no-files-found: error
+
+  verify:
+    name: Verify the built distributions
+    needs: [check-version, wheels, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: |
+            3.13
+            3.14
+
+      - name: Download every distribution
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Assert every distribution carries the release version
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          shopt -s nullglob
+          status=0
+          for wheel in dist/*.whl; do
+            case "$(basename "$wheel")" in
+              *-"$VERSION"-*) ;;
+              *) echo "::error::${wheel} does not carry version ${VERSION}"; status=1 ;;
+            esac
+          done
+          for sdist in dist/*.tar.gz; do
+            case "$(basename "$sdist")" in
+              *-"$VERSION".tar.gz) ;;
+              *) echo "::error::${sdist} does not carry version ${VERSION}"; status=1 ;;
+            esac
+          done
+          exit "$status"
+
+      - name: Assert every wheel is an abi3 wheel
+        run: |
+          shopt -s nullglob
+          status=0
+          for wheel in dist/*.whl; do
+            case "$(basename "$wheel")" in
+              *cp313-abi3*) ;;
+              *) echo "::error::${wheel} is not a cp313-abi3 wheel"; status=1 ;;
+            esac
+          done
+          exit "$status"
+
+      - name: Assert every matrix leg produced a distribution
+        run: |
+          wheels="$(ls dist/*.whl 2>/dev/null | wc -l)"
+          sdists="$(ls dist/*.tar.gz 2>/dev/null | wc -l)"
+          if [ "$wheels" -ne 5 ] || [ "$sdists" -ne 1 ]; then
+            echo "::error::expected 5 wheels and 1 sdist, found ${wheels} wheels and ${sdists} sdists"
+            exit 1
+          fi
+          echo "Found ${wheels} wheels and ${sdists} sdist"
+
+      - name: Smoke install the linux x86_64 wheel on 3.13 and 3.14
+        run: |
+          shopt -s nullglob; wheels=(dist/*cp313-abi3-manylinux*_x86_64.whl)
+          [ "${#wheels[@]}" -eq 1 ] || { echo "::error::expected exactly one linux x86_64 wheel, found ${#wheels[@]}"; exit 1; }
+          wheel="$PWD/${wheels[0]}"
+          for py in 3.13 3.14; do
+            "python${py}" -m venv "$RUNNER_TEMP/venv-${py}"
+            "$RUNNER_TEMP/venv-${py}/bin/pip" install "${wheel}"
+            (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/venv-${py}/bin/python" -c "import pg_phenotype, pg_phenotype._native")
+          done
+
+  r-tarball:
+    name: Build and check the R source tarball
+    needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Install the R dependencies
+        run: Rscript -e 'install.packages("testthat")'
+
+      - name: Build the tarball
+        run: tools/r_build_tarball.sh dist-r
+
+      - name: Check the tarball with the network disabled
+        working-directory: dist-r
+        run: |
+          # The tarball compiles offline.  A network namespace drops every
+          # interface; the check itself runs as the runner user.  Both sudos
+          # keep the environment, or R_LIBS_USER (where setup-r installed
+          # testthat) is lost.
+          sudo --preserve-env unshare --net -- sudo --preserve-env -u "$(id -un)" \
+            env _R_CHECK_CRAN_INCOMING_REMOTE_=false \
+            "$(command -v R)" CMD check --as-cran --no-manual \
+            "pgphenotype_${{ needs.check-version.outputs.version }}.tar.gz"
+          if grep -q '^Status:.*\(ERROR\|WARNING\)' pgphenotype.Rcheck/00check.log; then
+            echo "::error::R CMD check reported an ERROR or WARNING"
+            exit 1
+          fi
+
+      - name: Upload the tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: r-tarball
+          path: dist-r/pgphenotype_*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: [verify, r-tarball]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pg-phenotype
+    permissions:
+      id-token: write
+    steps:
+      - name: Download every distribution
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create the GitHub release with the R tarball
+    needs: [check-version, r-tarball, publish]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Download the R tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: r-tarball
+          path: dist-r/
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          # The release notes are this version's CHANGELOG section.
+          awk -v heading="## v${VERSION}" '
+            index($0, heading) == 1 { keep = 1; next }
+            keep && /^## / { exit }
+            keep { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "::error file=CHANGELOG.md::no '## v${VERSION}' section"; exit 1; }
+          gh release create "$GITHUB_REF_NAME" "dist-r/pgphenotype_${VERSION}.tar.gz" \
+            --verify-tag --title "pg-phenotype ${VERSION}" --notes-file notes.md
