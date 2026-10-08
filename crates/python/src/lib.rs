@@ -7,7 +7,7 @@
 use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
 use pg_phenotype_core::error::{Class, FieldValue};
 use pg_phenotype_core::pafgrs::{self, BivParams, Cip};
-use pg_phenotype_core::{Error, PedigreeInput, Trait, TraitKind};
+use pg_phenotype_core::{threads, Error, PedigreeInput, Trait, TraitKind};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
@@ -62,6 +62,43 @@ pub(crate) fn to_pyerr(py: Python<'_>, err: Error) -> PyErr {
         Ok(PyErr::from_value(instance))
     };
     raise().unwrap_or_else(|e| e)
+}
+
+fn budget_error(err: threads::BudgetError) -> PyErr {
+    use threads::{BudgetError, ENV_VAR, MAX_THREADS};
+    match err {
+        BudgetError::OutOfRange { requested } => PyValueError::new_err(format!(
+            "configure_threads(n) requires an int from 1 to {MAX_THREADS}, got {requested}"
+        )),
+        BudgetError::Conflict {
+            committed,
+            requested,
+        } => PyRuntimeError::new_err(format!(
+            "the committed thread budget is {committed} and cannot be changed to {requested}; \
+             call configure_threads() before the first thread_budget() call"
+        )),
+        BudgetError::InvalidEnv { raw } => PyValueError::new_err(format!(
+            "{ENV_VAR} must be a decimal integer from 1 to {MAX_THREADS}, got {raw:?}"
+        )),
+    }
+}
+
+/// Record the package thread budget (`pg_phenotype.configure_threads`).
+#[pyfunction]
+fn configure_threads(n: usize) -> PyResult<()> {
+    threads::configure(n).map_err(budget_error)
+}
+
+/// The committed package thread budget, committing it on first call.
+#[pyfunction]
+fn thread_budget() -> PyResult<usize> {
+    threads::budget().map_err(budget_error)
+}
+
+/// Clear the budget; for tests only (the pool keeps its size).
+#[pyfunction]
+fn _reset_thread_budget() {
+    threads::reset();
 }
 
 pub(crate) fn checked_pool(
@@ -336,6 +373,9 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(core_version, m)?)?;
     m.add_function(wrap_pyfunction!(pg_core_rev, m)?)?;
     m.add_function(wrap_pyfunction!(trait_kinds, m)?)?;
+    m.add_function(wrap_pyfunction!(configure_threads, m)?)?;
+    m.add_function(wrap_pyfunction!(thread_budget, m)?)?;
+    m.add_function(wrap_pyfunction!(_reset_thread_budget, m)?)?;
     m.add_function(wrap_pyfunction!(prepare, m)?)?;
     m.add_function(wrap_pyfunction!(check_cip, m)?)?;
     m.add_function(wrap_pyfunction!(score_univariate, m)?)?;

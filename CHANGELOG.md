@@ -29,6 +29,9 @@
   bad stratum label's error carries its `value`, and
   `assortative_mate_correlation()` has `pafgrs_prepare()`'s
   `too_many_rows` check.
+- The thread budget's rules live once, in the Rust core, for both hosts.
+  Python now caps a budget at 2^31 - 1, as R does, and its
+  `PG_PHENOTYPE_THREADS` error names that range.
 
 ## v0.1.1
 

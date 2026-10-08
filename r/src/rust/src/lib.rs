@@ -34,7 +34,7 @@ fn configure_threads(n: f64) -> Robj {
     if !(n.is_finite() && n == n.trunc() && n >= 0.0 && n <= usize::MAX as f64) {
         return HostError::usage(format!(
             "configure_threads(n) requires a whole number from 1 to {}, got {n}",
-            threads::MAX_THREADS
+            pg_phenotype_core::threads::MAX_THREADS
         ))
         .into_robj();
     }
