@@ -100,6 +100,10 @@ positions 1-based.
   within 4.5e-15, and latent ones within 3.2e-10, inside Brent's 1e-7
   tolerance.  One case differs on float noise in pedsum.  The
   [gate report](docs/gates/assortative-mating/README.md) has the details.
+- On pedsum's benchmark pedigrees at 10^4 to 10^6 pairs and up to 12
+  threads, pg-phenotype's median wall time and peak memory are at most
+  0.994 and 0.981 of pedsum's
+  ([benchmark report](docs/gates/assortative-mating/benchmark.md)).
 - The SciPy and C-library functions pedsum calls are ported bit for bit
   ([ADR 0005](docs/adr/0005-assortative-mating-reproduces-pedsums-numerics.md)).
 

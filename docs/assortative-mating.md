@@ -7,7 +7,8 @@ observation per **Mating Pair**.  This page describes what it computes and
 what it returns.  The reasons behind the design are in
 [the assortative-mating design notes](assortative-mating-design.md), and the
 comparison with pedsum #13, the implementation this one is ported from, is
-in [the gate report](gates/assortative-mating/README.md).
+in [the gate report](gates/assortative-mating/README.md) and
+[the benchmark report](gates/assortative-mating/benchmark.md).
 
 ## Call
 

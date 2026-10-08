@@ -16,6 +16,11 @@ cell, so both did the same work.  Records are appended as JSON lines::
 
     pixi run python tools/bench_am.py bench --snapshot $S --data <dir> --pairs-per-config 10 \\
         --config b --size 100000 --threads 6 --permutations 999 --bootstrap 1000 --out <jsonl>
+
+``summary`` prints a jsonl's median paired ratios, pg-phenotype over pedsum,
+as a Markdown table with the gate verdict (median ratio <= 1.05)::
+
+    pixi run python tools/bench_am.py summary <jsonl>
 """
 
 from __future__ import annotations
@@ -193,6 +198,34 @@ def bench(args: argparse.Namespace) -> None:
         print(json.dumps(record), flush=True)
 
 
+def summary(args: argparse.Namespace) -> None:
+    import statistics
+
+    groups: dict[tuple, list[dict]] = {}
+    for line in args.jsonl.read_text().splitlines():
+        r = json.loads(line)
+        groups.setdefault((r["config"], r["size"], r["threads"]), []).append(r)
+    print(
+        "| config | Mating Pairs | threads | ABAB pairs | wall s pedsum / pg | wall ratio [min, max] | peak MiB pedsum / pg | memory ratio [min, max] | max load |"
+    )
+    print("|---|---|---|---|---|---|---|---|---|")
+    worst = {"wall": 0.0, "memory_peak": 0.0}
+    for (config, size, threads), rows in sorted(groups.items(), key=lambda kv: (kv[0][1], kv[0][0], kv[0][2])):
+        cells = [config, f"10^{len(str(size)) - 1}", str(threads), str(len(rows))]
+        for key, scale, fmt in (("wall", 1.0, "{:.2f}"), ("memory_peak", 2**20, "{:.0f}")):
+            ratios = [r[f"pg_{key}"] / r[f"pedsum_{key}"] for r in rows]
+            median = statistics.median(ratios)
+            worst[key] = max(worst[key], median)
+            sides = [
+                fmt.format(statistics.median(r[f"{side}_{key}"] for r in rows) / scale) for side in ("pedsum", "pg")
+            ]
+            cells += [" / ".join(sides), f"{median:.3f} [{min(ratios):.3f}, {max(ratios):.3f}]"]
+        cells.append(f"{max(r['load1'] for r in rows):.1f}")
+        print("| " + " | ".join(cells) + " |")
+    verdict = "PASS" if max(worst.values()) <= 1.05 else "FAIL"
+    print(f"\nWorst median ratio: wall {worst['wall']:.3f}, memory {worst['memory_peak']:.3f}.  Gate 1.05: {verdict}.")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -213,8 +246,9 @@ def main() -> None:
             r.add_argument("--threads", type=int, default=1)
             r.add_argument("--pairs-per-config", type=int, default=10)
             r.add_argument("--out", type=Path, required=True)
+    sub.add_parser("summary").add_argument("jsonl", type=Path)
     args = p.parse_args()
-    {"gen": gen, "run-pedsum": run_pedsum, "run-pg": run_pg, "bench": bench}[args.cmd](args)
+    {"gen": gen, "run-pedsum": run_pedsum, "run-pg": run_pg, "bench": bench, "summary": summary}[args.cmd](args)
 
 
 if __name__ == "__main__":
