@@ -383,7 +383,7 @@ pub(crate) fn weighted_ranks(order: &[usize], v: &[f64], w: &[f64]) -> Vec<f64> 
     let v_sorted: Vec<f64> = order.iter().map(|&i| v[i]).collect();
     let w_sorted: Vec<f64> = order.iter().map(|&i| w[i]).collect();
     let mut rank_sorted = vec![0.0; v.len()];
-    sorted_ranks_into(&mut rank_sorted, &v_sorted, &w_sorted);
+    sorted_ranks_into(&mut rank_sorted, &v_sorted, |t| w_sorted[t]);
     let mut rank = vec![0.0; v.len()];
     for (t, &i) in order.iter().enumerate() {
         rank[i] = rank_sorted[t];
@@ -391,8 +391,13 @@ pub(crate) fn weighted_ranks(order: &[usize], v: &[f64], w: &[f64]) -> Vec<f64> 
     rank
 }
 
-/// [`weighted_ranks`] of values already in sorted order, in that order.
-pub(crate) fn sorted_ranks_into(rank: &mut [f64], v_sorted: &[f64], w_sorted: &[f64]) {
+/// [`weighted_ranks`] of values already in sorted order, in that order;
+/// `w_sorted(t)` is the weight of the `t`-th sorted value.
+pub(crate) fn sorted_ranks_into(
+    rank: &mut [f64],
+    v_sorted: &[f64],
+    w_sorted: impl Fn(usize) -> f64,
+) {
     let n = v_sorted.len();
     rank.fill(0.0);
     let mut cum = 0.0;
@@ -402,14 +407,14 @@ pub(crate) fn sorted_ranks_into(rank: &mut [f64], v_sorted: &[f64], w_sorted: &[
         let mut j = i;
         let mut group = 0.0;
         while j < n && v_sorted[j] == value {
-            group += w_sorted[j];
+            group += w_sorted(j);
             j += 1;
         }
         if group > 0.0 {
             let avg = cum + (group + 1.0) / 2.0;
-            for t in i..j {
-                if w_sorted[t] > 0.0 {
-                    rank[t] = avg;
+            for (t, r) in rank[i..j].iter_mut().enumerate() {
+                if w_sorted(i + t) > 0.0 {
+                    *r = avg;
                 }
             }
             cum += group;

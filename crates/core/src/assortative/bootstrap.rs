@@ -35,6 +35,7 @@ pub(crate) enum Draw {
 struct Scratch {
     mult: Vec<u32>,
     w: Vec<f64>,
+    spare: Vec<f64>,
 }
 
 /// The cell's draws: one column per fitted estimator, crude first, the
@@ -103,7 +104,8 @@ pub(crate) fn draws(
 
 /// Run `per_draw` over draws `0..n_draws` on the pool, each with a worker's
 /// scratch filled with that draw's network multiplicities and, when
-/// `weights`, its pair weights; transpose to columns.
+/// `weights`, its pair weights, plus a spare buffer the draw may reuse;
+/// transpose to columns.
 fn run(
     labels: &[usize],
     g: usize,
@@ -111,7 +113,7 @@ fn run(
     seed: i64,
     n_columns: usize,
     weights: bool,
-    per_draw: impl Fn(&[f64], &[u32]) -> Vec<Draw> + Sync,
+    per_draw: impl Fn(&[f64], &[u32], &mut Vec<f64>) -> Vec<Draw> + Sync,
 ) -> Vec<Vec<Draw>> {
     let rows: Vec<Vec<Draw>> = (0..n_draws)
         .into_par_iter()
@@ -119,6 +121,7 @@ fn run(
             || Scratch {
                 mult: vec![0; g],
                 w: vec![0.0; if weights { labels.len() } else { 0 }],
+                spare: Vec::new(),
             },
             |s, d| {
                 if weights {
@@ -126,7 +129,7 @@ fn run(
                 } else {
                     network_multiplicities(&mut s.mult, seed, d);
                 }
-                per_draw(&s.w, &s.mult)
+                per_draw(&s.w, &s.mult, &mut s.spare)
             },
         )
         .collect();
@@ -164,54 +167,64 @@ fn continuous(
     let f_pos: Vec<usize> = order_m.iter().map(|&i| inv_f[i]).collect();
     let (n_m, n_f) = pairs.n_strata();
     let n_columns = 2 + usize::from(stratified);
-    run(labels, g, n_draws, seed, n_columns, true, |w, mult| {
-        let mut out = vec![kernel_draw(pearson(&pairs.m, &pairs.f, w, false))];
-        let ws: Vec<f64> = labels_f.iter().map(|&l| mult[l] as f64).collect();
-        let mut rank_f = vec![0.0; ws.len()];
-        sorted_ranks_into(&mut rank_f, &f_sorted, &ws);
-        let ws: Vec<f64> = labels_m.iter().map(|&l| mult[l] as f64).collect();
-        out.push(kernel_draw(spearman_sorted(
-            &m_sorted, &ws, &rank_f, &f_pos,
-        )));
-        if stratified {
-            out.push(kernel_draw(stratified_pearson(pairs, n_m, n_f, w)));
-        }
-        out
-    })
+    run(
+        labels,
+        g,
+        n_draws,
+        seed,
+        n_columns,
+        true,
+        |w, mult, rank_f| {
+            let mut out = vec![kernel_draw(pearson(&pairs.m, &pairs.f, w, false))];
+            rank_f.resize(f_sorted.len(), 0.0);
+            sorted_ranks_into(rank_f, &f_sorted, |t| mult[labels_f[t]] as f64);
+            out.push(kernel_draw(spearman_sorted(
+                &m_sorted,
+                |q| mult[labels_m[q]] as f64,
+                rank_f,
+                &f_pos,
+            )));
+            if stratified {
+                out.push(kernel_draw(stratified_pearson(pairs, n_m, n_f, w)));
+            }
+            out
+        },
+    )
 }
 
 /// Weighted Pearson of the ranks, walked in `m`'s sorted order and centred
 /// at `(T + 1) / 2`.
 fn spearman_sorted(
     m_sorted: &[f64],
-    w_sorted: &[f64],
+    w_sorted: impl Fn(usize) -> f64,
     rank_f: &[f64],
     f_pos: &[usize],
 ) -> Result<f64, Status> {
-    let t = w_sorted.iter().fold(0.0, |a, &v| a + v);
+    let n = m_sorted.len();
+    let t = (0..n).fold(0.0, |a, q| a + w_sorted(q));
     if t == 0.0 {
         return Err(Status::NoPairs);
     }
     let centre = (t + 1.0) / 2.0;
     let (mut sxy, mut sxx, mut syy, mut cum) = (0.0, 0.0, 0.0, 0.0);
-    let n = m_sorted.len();
     let mut i = 0;
     while i < n {
         let value = m_sorted[i];
         let mut j = i;
         let mut group = 0.0;
         while j < n && m_sorted[j] == value {
-            group += w_sorted[j];
+            group += w_sorted(j);
             j += 1;
         }
         if group > 0.0 {
             let dx = cum + (group + 1.0) / 2.0 - centre;
             for q in i..j {
-                if w_sorted[q] > 0.0 {
+                let wq = w_sorted(q);
+                if wq > 0.0 {
                     let dy = rank_f[f_pos[q]] - centre;
-                    sxy += w_sorted[q] * dx * dy;
-                    sxx += w_sorted[q] * dx * dx;
-                    syy += w_sorted[q] * dy * dy;
+                    sxy += wq * dx * dy;
+                    sxx += wq * dx * dx;
+                    syy += wq * dy * dy;
                 }
             }
             cum += group;
@@ -393,7 +406,7 @@ fn serial(
             *repeated_levels.at_mut(r, c) = shown;
         }
     }
-    run(labels, g, n_draws, seed, n_fitted, true, |w, _| {
+    run(labels, g, n_draws, seed, n_fitted, true, |w, _, _| {
         let moments = stratum_moments(s.x, s.x_stratum, w, n_xs, false);
         let y_margin = margin(s.y, s.y_stratum, w, n_ys, k, false);
         let mut out = vec![Draw::Value(f64::NAN)];
@@ -563,7 +576,7 @@ fn tables(
             )
         })
         .collect();
-    run(labels, g, n_draws, seed, n_columns, false, |_, mult| {
+    run(labels, g, n_draws, seed, n_columns, false, |_, mult, _| {
         let table = draw_table(&cell_of, labels, mult, shape);
         let pooled = table.pooled();
         let mut out = vec![polychoric_step(
