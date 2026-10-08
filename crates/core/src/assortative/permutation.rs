@@ -91,12 +91,19 @@ struct StratumSums {
     e2: f64,
 }
 
+/// One distinct father of a cell: his row, his pairs in the cell, and the
+/// summed crude and stratified scores of his mates.
+#[derive(Clone, Copy, Debug)]
+struct Father {
+    row: u32,
+    count: i32,
+    e1: f32,
+    e2: f32,
+}
+
 /// One cell collapsed onto its distinct fathers, in row order.
 struct Fathers {
-    row: Vec<u32>,
-    count: Vec<i32>,
-    e1: Vec<f32>,
-    e2: Vec<f32>,
+    fathers: Vec<Father>,
     /// Offsets of each run of fathers in one stratum, then the end.
     runs: Vec<usize>,
     run_stratum: Vec<usize>,
@@ -118,8 +125,10 @@ fn bincount(index: &[usize], weights: impl Iterator<Item = f64>, n: usize) -> Ve
 /// The cells of a run packed for the draws: fathers renumbered block by block.
 pub(crate) struct Packed {
     block_start: Vec<usize>,
-    /// Trait `t` of the father at row `r`, at `rows[t][r]`.
-    rows: Vec<Vec<f32>>,
+    /// Trait `t` of the father at row `r`, at `rows[r * n_traits + t]`: a
+    /// draw gathers every trait of a donor row from one cache line.
+    rows: Vec<f32>,
+    n_traits: usize,
     cells: Vec<Fathers>,
     ss_m: Vec<[f64; 2]>,
 }
@@ -206,7 +215,7 @@ impl Packed {
         for (r, &i) in order.iter().enumerate() {
             rank[i] = r;
         }
-        let rows: Vec<Vec<f32>> = trait_values
+        let columns: Vec<Vec<f32>> = trait_values
             .iter()
             .enumerate()
             .map(|(t, values)| {
@@ -222,15 +231,20 @@ impl Packed {
             .collect();
         let packed_cells = cells
             .iter()
-            .map(|c| Packed::fathers(c, &rank, &rows[c.trait_index]))
+            .map(|c| Packed::fathers(c, &rank, &columns[c.trait_index]))
             .collect();
         let ss_m = cells
             .iter()
             .map(|c| c.e_m.clone().map(|e| e.iter().fold(0.0, |a, &v| a + v * v)))
             .collect();
+        let n_traits = columns.len();
+        let rows = (0..n_fathers)
+            .flat_map(|r| columns.iter().map(move |column| column[r]))
+            .collect();
         Packed {
             block_start,
             rows,
+            n_traits,
             cells: packed_cells,
             ss_m,
         }
@@ -284,10 +298,17 @@ impl Packed {
         let s1 = bincount(&stratum, e1.iter().map(|&v| f64::from(v)), n_strata);
         let s2 = bincount(&stratum, e2.iter().map(|&v| f64::from(v)), n_strata);
         Fathers {
-            row: father_row.iter().map(|&r| r as u32).collect(),
-            count,
-            e1,
-            e2,
+            fathers: father_row
+                .iter()
+                .zip(&count)
+                .zip(e1.iter().zip(&e2))
+                .map(|((&r, &count), (&e1, &e2))| Father {
+                    row: r as u32,
+                    count,
+                    e1,
+                    e2,
+                })
+                .collect(),
             runs,
             run_stratum,
             sums: (0..n_strata)
@@ -316,8 +337,18 @@ impl Packed {
 
     /// The standardised statistic of the unpermuted fathers per cell and form.
     pub fn observed(&self) -> Vec<[f64; 2]> {
+        let columns: Vec<Vec<f32>> = (0..self.n_traits)
+            .map(|t| {
+                self.rows
+                    .iter()
+                    .skip(t)
+                    .step_by(self.n_traits)
+                    .copied()
+                    .collect()
+            })
+            .collect();
         (0..self.cells.len())
-            .map(|c| self.standardised(c, self.statistic(c, &self.rows[self.cells[c].trait_index])))
+            .map(|c| self.standardised(c, self.statistic(c, &columns[self.cells[c].trait_index])))
             .collect()
     }
 
@@ -326,6 +357,35 @@ impl Packed {
             Ok(score) => score.cross / (self.ss_m[c][form] * score.ss_f).sqrt(),
             Err(_) => f64::NAN,
         })
+    }
+
+    /// `arranged[t][r] = rows[order[r]][t]` for each trait `t` in `needed`
+    /// (sorted): one pass over `order`, every trait of a donor read together.
+    fn gather(&self, order: &[u32], needed: &[usize], arranged: &mut [Vec<f32>]) {
+        let n_traits = self.n_traits;
+        match *needed {
+            [t] => {
+                for (dst, &o) in arranged[t].iter_mut().zip(order) {
+                    *dst = self.rows[o as usize * n_traits + t];
+                }
+            }
+            [t0, t1] => {
+                let (lo, hi) = arranged.split_at_mut(t1);
+                let (a0, a1) = (&mut lo[t0], &mut hi[0]);
+                for ((d0, d1), &o) in a0.iter_mut().zip(a1.iter_mut()).zip(order) {
+                    let donor = o as usize * n_traits;
+                    *d0 = self.rows[donor + t0];
+                    *d1 = self.rows[donor + t1];
+                }
+            }
+            _ => {
+                for (r, &o) in order.iter().enumerate() {
+                    for &t in needed {
+                        arranged[t][r] = self.rows[o as usize * n_traits + t];
+                    }
+                }
+            }
+        }
     }
 
     /// The null draws of every cell and form, run in batches until every
@@ -342,6 +402,8 @@ impl Packed {
         let mut out: Vec<[Vec<NullDraw>; 2]> =
             (0..n_cells).map(|_| [Vec::new(), Vec::new()]).collect();
         let mut active: Vec<usize> = stopping.active();
+        let n_traits = self.n_traits;
+        let n_rows = self.rows.len().checked_div(n_traits).unwrap_or(0);
         let mut first = 0u64;
         while first < permutations && !active.is_empty() {
             let end = (2 * first)
@@ -354,23 +416,13 @@ impl Packed {
                 t.dedup();
                 t
             };
-            let n_rows = self.rows.first().map_or(0, Vec::len);
             let batch: Vec<Vec<[NullDraw; 2]>> = (first..end)
                 .into_par_iter()
                 .map_init(
-                    || {
-                        (
-                            vec![0u32; n_rows],
-                            vec![vec![0f32; n_rows]; self.rows.len()],
-                        )
-                    },
+                    || (vec![0u32; n_rows], vec![vec![0f32; n_rows]; n_traits]),
                     |(order, arranged), d| {
                         shuffle_index(order, &self.block_start, seed, d);
-                        for &t in &needed {
-                            for (r, &o) in order.iter().enumerate() {
-                                arranged[t][r] = self.rows[t][o as usize];
-                            }
-                        }
+                        self.gather(order, &needed, arranged);
                         active
                             .iter()
                             .map(|&c| {
@@ -504,16 +556,21 @@ fn continuous_cell(cell: &Fathers, values: &[f32]) -> [Result<Score, Status>; 2]
         let shift = cell.sums[s].shift;
         let (mut d_sum, mut sq_sum, mut c1, mut c2) = (0.0, 0.0, 0.0, 0.0);
         let (mut v_lo, mut v_hi) = (f64::INFINITY, f64::NEG_INFINITY);
-        for j in cell.runs[r]..cell.runs[r + 1] {
-            let v = f64::from(values[cell.row[j] as usize]);
+        for f in &cell.fathers[cell.runs[r]..cell.runs[r + 1]] {
+            let v = f64::from(values[f.row as usize]);
             let d = v - shift;
-            let count = f64::from(cell.count[j]);
+            let count = f64::from(f.count);
             d_sum += count * d;
             sq_sum += count * d * d;
-            c1 += f64::from(cell.e1[j]) * d;
-            c2 += f64::from(cell.e2[j]) * d;
-            v_lo = v_lo.min(v);
-            v_hi = v_hi.max(v);
+            c1 += f64::from(f.e1) * d;
+            c2 += f64::from(f.e2) * d;
+            // Values are never NaN here, so plain comparisons equal min and max.
+            if v < v_lo {
+                v_lo = v;
+            }
+            if v > v_hi {
+                v_hi = v;
+            }
         }
         dev[s] += d_sum;
         sq[s] += sq_sum;
@@ -581,19 +638,28 @@ fn discrete_cell(
 ) -> [Result<Score, Status>; 2] {
     let (n_strata, k) = (levels.rows, levels.cols);
     // Whole pair counts: integer sums equal pedsum's float sums exactly.
-    let mut pair_counts = vec![0i64; n_strata * k];
-    let mut score1 = Grid::filled(n_strata, k, 0.0);
-    let mut score2 = Grid::filled(n_strata, k, 0.0);
+    // Per stratum and level: pair count, crude and stratified mother scores.
+    let mut sums = vec![(0i64, 0.0f64, 0.0f64); n_strata * k];
     for r in 0..cell.run_stratum.len() {
-        let s = cell.run_stratum[r];
-        let (fathers, row) = (cell.runs[r]..cell.runs[r + 1], &cell.row);
-        for j in fathers {
-            let at = s * k + values[row[j] as usize] as usize;
-            pair_counts[at] += i64::from(cell.count[j]);
-            score1.data[at] += f64::from(cell.e1[j]);
-            score2.data[at] += f64::from(cell.e2[j]);
+        let at_stratum = &mut sums[cell.run_stratum[r] * k..][..k];
+        for f in &cell.fathers[cell.runs[r]..cell.runs[r + 1]] {
+            let at = &mut at_stratum[values[f.row as usize] as usize];
+            at.0 += i64::from(f.count);
+            at.1 += f64::from(f.e1);
+            at.2 += f64::from(f.e2);
         }
     }
+    let pair_counts: Vec<i64> = sums.iter().map(|t| t.0).collect();
+    let score1 = Grid {
+        rows: n_strata,
+        cols: k,
+        data: sums.iter().map(|t| t.1).collect(),
+    };
+    let score2 = Grid {
+        rows: n_strata,
+        cols: k,
+        data: sums.iter().map(|t| t.2).collect(),
+    };
     let counts = Grid {
         rows: n_strata,
         cols: k,
