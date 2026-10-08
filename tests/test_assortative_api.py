@@ -158,6 +158,31 @@ def test_all_fixed_fathers_have_no_informative_permutations():
     assert record.permutation.n_fixed_fathers == 2
 
 
+@pytest.mark.parametrize("code", [1e12, 1e300])
+def test_a_huge_ordinal_code_is_sparse_not_an_allocation(code):
+    """An undeclared ordinal code far above the number of rows fails the level check before any allocation."""
+    pairs = b.one_to_one(4)
+    ped = b.pedigree(pairs)
+    values = np.zeros(len(ped["id"]))
+    values[1] = code
+    with pytest.raises(ValidationError) as err:
+        mate_correlation(ped, Trait(values, kind="ordinal"), permutations=0, bootstrap=0, seed=0)
+    assert err.value.code == "sparse_ordinal_codes"
+    assert err.value.fields["level"] == 1
+
+
+@pytest.mark.parametrize("label", [2.0**63, np.inf, -1e300])
+def test_stratum_labels_outside_int64_are_rejected(label):
+    pairs = b.one_to_one(4)
+    ped = b.pedigree(pairs)
+    stratum = np.zeros(len(ped["id"]))
+    stratum[2] = label
+    trait = Trait(np.arange(len(ped["id"]), dtype=float), kind="continuous")
+    with pytest.raises(ValidationError) as err:
+        mate_correlation(ped, trait, stratum=stratum, permutations=0, bootstrap=0, seed=0)
+    assert (err.value.code, err.value.fields["position"]) == ("invalid_integer_value", 2)
+
+
 def test_unknown_stratum_pairs_are_dropped():
     """pedsum test_unknown_stratum_pairs_are_dropped: a pair with a mate of unknown birth year leaves every cell."""
     rng = np.random.default_rng(2)

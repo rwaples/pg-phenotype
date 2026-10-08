@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- An ordinal trait with no declared levels and a code far above the number of
+  rows (say `1e12`) raised `sparse_ordinal_codes` only after allocating one
+  flag per possible level, which could abort the process; the check now
+  needs at most one flag per present value.
+- Python rejects pedigree ids and stratum labels outside `[-2^63, 2^63)` with
+  `invalid_integer_value`, as R does, where it cast them to wrong int64
+  values.  A non-numeric object entry raises `invalid_integer_value` too,
+  not a bare `ValueError`.
+- Rust: `BivParams`'s fields are private, so every value has passed
+  `BivParams::new`; read them through `h2()`, `rg()` and `rho_within()`.
+
 ## v0.1.1
 
 Assortative mating's permutation test runs faster on one thread, and

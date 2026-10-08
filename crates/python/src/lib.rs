@@ -294,7 +294,7 @@ fn score_bivariate<'py>(
     out.set_item("n_obs2", n_obs2.into_pyarray(py))?;
     out.set_item("controls_without_age", scores.controls_without_age.to_vec())?;
     out.set_item("threshold", scores.threshold.to_vec())?;
-    out.set_item("rho_within", params.rho_within)?;
+    out.set_item("rho_within", params.rho_within())?;
     Ok(out)
 }
 

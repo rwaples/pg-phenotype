@@ -9,14 +9,20 @@ use crate::error::Error;
 use crate::input::Trait;
 use rayon::prelude::*;
 
+/// Slack on the positive-semidefinite check of [`BivParams::new`], so a
+/// `rho_within` computed at the boundary in floating point is not rejected
+/// for its last-bit rounding (ADR 0002).
+const PSD_SLACK: f64 = 1e-12;
+
 /// The genetic and within-person parameters of a bivariate score.
+///
+/// The fields are private so every value has passed [`BivParams::new`]'s
+/// checks (ADR 0002).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BivParams {
-    pub h2: [f64; 2],
-    /// Genetic correlation.
-    pub rg: f64,
-    /// A person's cross-trait liability correlation.
-    pub rho_within: f64,
+    h2: [f64; 2],
+    rg: f64,
+    rho_within: f64,
 }
 
 impl BivParams {
@@ -49,13 +55,28 @@ impl BivParams {
             });
         }
         let residual = rho_within - cov_g;
-        if residual * residual > (1.0 - h2[0]) * (1.0 - h2[1]) + 1e-12 {
+        if residual * residual > (1.0 - h2[0]) * (1.0 - h2[1]) + PSD_SLACK {
             return Err(Error::InconsistentParameters {
                 reason: "rho_within - rg*sqrt(h2_1*h2_2) exceeds sqrt((1 - h2_1)(1 - h2_2)): \
                          the non-genetic cross-trait covariance is not positive semidefinite",
             });
         }
         Ok(BivParams { h2, rg, rho_within })
+    }
+
+    /// The two heritabilities.
+    pub fn h2(&self) -> [f64; 2] {
+        self.h2
+    }
+
+    /// Genetic correlation.
+    pub fn rg(&self) -> f64 {
+        self.rg
+    }
+
+    /// A person's cross-trait liability correlation.
+    pub fn rho_within(&self) -> f64 {
+        self.rho_within
     }
 
     /// The genetic covariance `rg sqrt(h2_1 h2_2)`.
@@ -93,8 +114,8 @@ struct One {
 ///
 /// # Errors
 ///
-/// The parameter errors of [`BivParams::new`] (call it first), then each
-/// trait's kind, length, value, and age errors.
+/// Each trait's kind, length, value, and age errors; the parameters were
+/// checked when `params` was built.
 pub fn score_bivariate(
     prep: &Prep,
     values: [Trait<'_>; 2],

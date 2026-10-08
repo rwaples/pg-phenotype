@@ -17,7 +17,7 @@ caller (fitACE_pafgrs keeps its estimators).
 | `w` | Case: 1.  Control: `clip(CIP(age) / K, 0, 1)`.  Missing status: 0.  Control without an age: 0, counted in `controls_without_age`. A case needs no age: thresholds are lifetime-only. |
 | `h2` | `(0, 1]` per trait. |
 | `rg` | `[-1, 1]`. |
-| `rho_within` | Optional; defaults to `rg * sqrt(h2_1 * h2_2)`.  `abs(rho_within) <= 1` and `(rho_within - rg sqrt(h2_1 h2_2))^2 <= (1 - h2_1)(1 - h2_2)`, so the non-genetic cross-trait covariance is positive semidefinite. |
+| `rho_within` | Optional; defaults to `rg * sqrt(h2_1 * h2_2)`.  `abs(rho_within) <= 1` and `(rho_within - rg sqrt(h2_1 h2_2))^2 <= (1 - h2_1)(1 - h2_2)`, so the non-genetic cross-trait covariance is positive semidefinite; the check allows `1e-12` of floating-point slack on the right-hand side. |
 
 A parameter outside its domain raises `parameter_out_of_range` (or
 `inconsistent_parameters`) before any work.  A PA-FGRS trait is a binary

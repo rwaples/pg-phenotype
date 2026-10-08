@@ -405,14 +405,10 @@ fn walk_chunks(
             if c >= n_chunks {
                 return Ok(());
             }
-            if walker
-                .as_ref()
-                .is_none_or(|w| w.memo().entries() > MEMO_CAP)
-            {
-                walker = Some(Walker::new(kped, &signatures)?);
-            }
-            let Some(w) = walker.as_mut() else {
-                return Ok(());
+            // A walker is reused across chunks until its memo outgrows the cap.
+            let w = match walker.take() {
+                Some(w) if w.memo().entries() <= MEMO_CAP => walker.insert(w),
+                _ => walker.insert(Walker::new(kped, &signatures)?),
             };
             let mut builder = ChunkBuilder::new(w, rec, &mut pos, walk);
             let result = groups[bounds[c]..bounds[c + 1]]
@@ -429,10 +425,13 @@ fn walk_chunks(
             }
         }
     })?;
-    Ok(slots
+    // Every worker returned Ok, so every chunk index was claimed and filled.
+    let chunks: Vec<Chunk> = slots
         .into_iter()
         .filter_map(|slot| slot.into_inner().unwrap_or_else(|e| e.into_inner()))
-        .collect())
+        .collect();
+    debug_assert_eq!(chunks.len(), n_chunks, "a chunk slot was left empty");
+    Ok(chunks)
 }
 
 /// One chunk as it grows, with the worker state it borrows.

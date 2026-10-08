@@ -80,6 +80,24 @@ def test_frames_and_nullable_columns_are_accepted(case):
     np.testing.assert_array_equal(got.est, base.est)
 
 
+@pytest.mark.parametrize(
+    ("ids", "position"),
+    [
+        (np.array([1, 2, 2**63 + 5], dtype=np.uint64), 2),
+        (np.array([1.0, 1e20, 3.0]), 1),
+        (np.array([1.0, 2.0, np.inf]), 2),
+        (np.array([1, "a", 3], dtype=object), 1),
+    ],
+)
+def test_ids_outside_int64_are_rejected(ids, position):
+    ped = {"id": ids, "mother": [-1, -1, -1], "father": [-1, -1, -1]}
+    with pytest.raises(pg_phenotype.ValidationError) as err:
+        pafgrs.prepare(ped, ndegree=1)
+    assert err.value.code == "invalid_integer_value"
+    assert err.value.fields["field"] == "id"
+    assert err.value.fields["position"] == position
+
+
 def test_missingness_rules():
     ped = {"id": [1, 2, 3, 4, 5, 6], "mother": [-1, -1, 1, 1, 1, 1], "father": [-1, -1, 2, 2, 2, 2]}
     cip = pafgrs.Cip([0.0, 50.0], [0.0, 0.1])

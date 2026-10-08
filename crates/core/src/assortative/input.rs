@@ -150,10 +150,12 @@ fn check_trait<'a>(t: Trait<'a>, field: &'static str, n_rows: usize) -> Result<C
     let mut first: Option<f64> = None;
     let mut constant = true;
     let mut max_code = 0.0_f64;
+    let mut n_present = 0usize;
     for (position, &value) in t.values.iter().enumerate() {
         if value.is_nan() {
             continue;
         }
+        n_present += 1;
         let valid = match t.kind {
             TraitKind::Continuous => value.is_finite(),
             _ => value >= 0.0 && value < ceiling && value.fract() == 0.0,
@@ -187,14 +189,21 @@ fn check_trait<'a>(t: Trait<'a>, field: &'static str, n_rows: usize) -> Result<C
         }
         TraitKind::Binary => Kind::Binary,
         _ => Kind::Ordinal {
-            k: declared.unwrap_or(max_code as usize + 1),
+            // Saturating: a huge code fails the level check below before `k`
+            // is used.
+            k: declared.unwrap_or((max_code as usize).saturating_add(1)),
         },
     };
     // A binary trait declared with more than two levels leaves one unused.
     let k = declared.or(kind.levels()).unwrap_or(0);
-    let mut used = vec![false; k];
+    // `n_present` values take at most `n_present` levels, so the first unused
+    // level is at most `n_present`: the bitmap never needs more slots than
+    // that, whatever the codes or the declared count.
+    let mut used = vec![false; k.min(n_present + 1)];
     for &value in t.values.iter().filter(|v| !v.is_nan()) {
-        used[value as usize] = true;
+        if let Some(slot) = used.get_mut(value as usize) {
+            *slot = true;
+        }
     }
     if let Some(level) = used.iter().position(|&u| !u) {
         return Err(match declared {
@@ -320,6 +329,34 @@ mod tests {
         );
         let ok = check_traits(&[t(&[0.0, 2.0, NA, 1.0], TraitKind::Ordinal, Some(3))], 4).unwrap();
         assert_eq!(ok[0].kind, Kind::Ordinal { k: 3 });
+    }
+
+    #[test]
+    fn huge_codes_and_level_counts_are_rejected_without_allocating() {
+        // Undeclared levels: the bitmap would have been sized by the code.
+        let err = check_traits(&[t(&[0.0, 1e12], TraitKind::Ordinal, None)], 2).unwrap_err();
+        assert_eq!(
+            err,
+            Error::SparseOrdinalCodes {
+                field: "traits[0]",
+                level: 1
+            }
+        );
+        assert_eq!(
+            code(&[t(&[0.0, 1e300], TraitKind::Ordinal, None)], 2),
+            "sparse_ordinal_codes"
+        );
+        // A huge declared count reports the first unused level.
+        let err =
+            check_traits(&[t(&[0.0, 1.0], TraitKind::Ordinal, Some(usize::MAX))], 2).unwrap_err();
+        assert_eq!(
+            err,
+            Error::UnusedLevel {
+                field: "traits[0]",
+                level: 2,
+                n_levels: usize::MAX
+            }
+        );
     }
 
     #[test]

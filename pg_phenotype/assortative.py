@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from pg_phenotype import _native
-from pg_phenotype._errors import ParameterError, ValidationError
-from pg_phenotype._input import floats, pedigree_arrays
+from pg_phenotype._errors import ParameterError
+from pg_phenotype._input import as_int64, floats, pedigree_arrays
 from pg_phenotype._memory import release_free_memory
 from pg_phenotype._threads import thread_budget
 from pg_phenotype._trait import Trait
@@ -259,18 +259,10 @@ def _strata(stratum: object) -> tuple[np.ndarray, np.ndarray]:
     """Integer labels and a known mask from one value per row, NA/None/NaN unknown."""
     values = floats(stratum, "stratum")
     known = ~np.isnan(values)
-    whole = np.where(known, values, 0.0)
-    bad = np.flatnonzero(whole != np.trunc(whole))
-    if bad.size:
-        position = int(bad[0])
-        raise ValidationError(
-            "invalid_integer_value",
-            f"stratum[{position}] = {values[position]} is not an integer label",
-            field="stratum",
-            position=position,
-            value=float(values[position]),
-        )
-    return np.ascontiguousarray(whole.astype(np.int64)), np.ascontiguousarray(known)
+    labels = as_int64(values, known, "stratum", what="an integer label")
+    # Unknown rows carry label 0, which the core ignores under `known`.
+    labels[~known] = 0
+    return np.ascontiguousarray(labels), np.ascontiguousarray(known)
 
 
 def _count(name: str, value: object) -> int:

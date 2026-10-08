@@ -246,7 +246,7 @@ fn score_bivariate_impl(
         controls_without_age = s.controls_without_age.map(|c| c as i32).to_vec(),
         threshold = s.threshold.to_vec(),
         prevalence = vec![cip[0].prevalence(), cip[1].prevalence()],
-        rho_within = params.rho_within
+        rho_within = params.rho_within()
     )
     .into_robj())
 }
