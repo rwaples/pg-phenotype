@@ -8,6 +8,12 @@ bootstrap memory growing about 34 MiB per worker.  A fix about halved that
 growth, and a recheck of every configuration the fix touches passes up to
 12 threads.
 
+Every run here requested 1000 bootstrap draws.  At 10^6 pairs the bootstrap
+dominates the time, and it hid a slower single-threaded permutation pass.
+pedsum's CLI benchmark at its cutover, which runs without the bootstrap,
+found it.  0.1.1 fixes that and a memory gap the CLI showed; see
+[pg-phenotype 0.1.1 in pedsum's CLI](#pg-phenotype-011-in-pedsums-cli).
+
 ## How it was run
 
 `tools/bench_am.py` times the compute stage only: pedsum's
@@ -142,9 +148,64 @@ Worst median ratio: wall 0.994, memory 0.981.  Gate 1.05: PASS.
 At `b` 10^6 with 6 threads, pg-phenotype now peaks at 876 MiB, down from
 953.  The memory ratio fell from 1.012 to 0.931.
 
+## pg-phenotype 0.1.1 in pedsum's CLI
+
+pedsum's `benchmarks/bench_assortative_mating.py` times the whole
+`assortative-mating` command, pedsum #13 (`142adf3`, numba cache warm) against
+pedsum on pg-phenotype, with the same pairing, scopes and `draws_used` check
+as above.  It runs pedsum's default inference: 999 permutations and no
+bootstrap.  With 0.1.0 three configurations failed
+([cli-2026-10-08-v0.1.0.jsonl](cli-2026-10-08-v0.1.0.jsonl), and a recheck
+of the three in
+[cli-2026-10-08-v0.1.0-recheck.jsonl](cli-2026-10-08-v0.1.0-recheck.jsonl)):
+
+- `b`, 10^6 pairs, 1 thread: wall 1.090.  In the recheck the computation
+  took 26.3 s in pedsum and 29.2 s in pg-phenotype (medians of 10).  With
+  permutations off pg-phenotype was faster, a median ratio of 0.879 over 4
+  pairs ([cli-2026-10-08-v0.1.0-no-permutations.jsonl](cli-2026-10-08-v0.1.0-no-permutations.jsonl)),
+  so the permutation pass was the slow part.
+- `a`, 10^6 pairs, 1 thread: wall 1.076.
+- `b`, 10^5 pairs, 6 threads: peak 1.051.
+
+Two changes fixed them.  The permutation pass stores each father's traits
+interleaved, so a draw gathers every trait of a donor in one pass, and walks
+each cell's fathers as one array of records.  At `b` 10^6 with 1 thread
+that cut the whole computation's user cycles by 25% (`perf stat`, two runs
+of each build, 1.06e11 to 8.0e10), and the results are unchanged, bit for
+bit.  The memory gap came from glibc: pedsum frees much of its parsing
+memory on the main thread, numba reused it there, and pg-phenotype's pool
+threads allocate in arenas of their own.  `mate_correlation` now returns
+free heap pages to the system (`malloc_trim`, glibc only) before it
+computes.  Every configuration then passes
+([cli-2026-10-08-v0.1.1.jsonl](cli-2026-10-08-v0.1.1.jsonl); 10 pairs,
+started at load 1.3):
+
+| config | Mating Pairs | P/B | threads | wall s pedsum / pg | wall ratio [min, max] | peak MiB pedsum / pg | peak ratio [min, max] | max load |
+|---|---|---|---|---|---|---|---|---|
+| a | 10^4 | 999/0 | 1 | 1.31 / 0.91 | 0.684 [0.638, 0.736] | 135 / 101 | 0.755 [0.749, 0.758] | 2.4 |
+| a | 10^4 | 999/0 | 6 | 1.33 / 0.97 | 0.682 [0.509, 1.000] | 135 / 102 | 0.754 [0.751, 0.759] | 4.9 |
+| b | 10^4 | 999/0 | 1 | 1.64 / 1.08 | 0.703 [0.624, 0.728] | 142 / 105 | 0.738 [0.734, 0.741] | 2.6 |
+| b | 10^4 | 999/0 | 6 | 1.45 / 0.98 | 0.692 [0.632, 0.762] | 143 / 106 | 0.739 [0.734, 0.745] | 3.2 |
+| a | 10^5 | 999/0 | 1 | 2.70 / 1.94 | 0.708 [0.664, 0.793] | 227 / 200 | 0.874 [0.852, 0.891] | 2.3 |
+| a | 10^5 | 999/0 | 6 | 2.15 / 1.41 | 0.657 [0.591, 0.760] | 228 / 204 | 0.889 [0.854, 0.918] | 4.3 |
+| a | 10^5 | 999/1000 | 6 | 2.99 / 1.83 | 0.622 [0.509, 0.735] | 223 / 203 | 0.909 [0.899, 0.942] | 6.8 |
+| b | 10^5 | 999/0 | 1 | 4.69 / 3.17 | 0.681 [0.630, 0.716] | 241 / 230 | 0.941 [0.931, 0.977] | 4.4 |
+| b | 10^5 | 999/0 | 6 | 3.73 / 2.36 | 0.611 [0.516, 0.802] | 238 / 233 | 0.979 [0.965, 1.018] | 5.3 |
+| b | 10^5 | 999/1000 | 6 | 15.25 / 11.40 | 0.752 [0.590, 0.866] | 245 / 224 | 0.916 [0.886, 0.941] | 11.9 |
+| a | 10^6 | 999/0 | 1 | 17.14 / 15.38 | 0.896 [0.704, 1.052] | 995 / 990 | 0.996 [0.949, 1.056] | 4.2 |
+| a | 10^6 | 999/0 | 6 | 10.82 / 10.34 | 0.969 [0.863, 1.206] | 985 / 978 | 0.990 [0.934, 1.063] | 7.0 |
+| b | 10^6 | 999/0 | 1 | 34.57 / 28.07 | 0.841 [0.732, 0.879] | 1055 / 1042 | 0.991 [0.924, 1.016] | 4.2 |
+| b | 10^6 | 999/0 | 6 | 18.55 / 15.88 | 0.855 [0.750, 0.916] | 1049 / 1014 | 0.988 [0.917, 1.041] | 6.8 |
+
+Worst median ratio: wall 0.969, peak 0.996.  Gate 1.05: PASS.  Other
+sessions' jobs raised the load during the run; each pair runs both sides
+back to back, so the load falls on both.  The first run with an empty numba
+cache took pedsum 25 to 35 s at 10^4 pairs and pg-phenotype about 1 s.
+
 ## Not covered
 
-- Cold start, when numba compiles pedsum's kernels, is not gated.
+- Cold start, when numba compiles pedsum's kernels, is not gated (the CLI
+  runs above report it).
 - More than 12 threads.  From 6 to 12 threads pg-phenotype's peak grew
   about 21 MiB per thread at 10^6 pairs, and pedsum's about 13.  If both
   stay linear, the memory ratio passes 1.05 near 22 threads.  That is an
