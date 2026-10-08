@@ -90,7 +90,12 @@ test_that("trait values and ages are validated against the pedigree", {
   for (case in cases) {
     err <- expect_pgp_error(pafgrs_score_univariate(pafgrs_prepare(ped), case[[1]], case[[2]], table, h2 = 0.5),
                             "validation", case[[3]])
-    expect_identical(err$fields, list(field = case[[4]], position = 1, value = case[[5]]))
+    want <- if (case[[4]] == "trait") {
+      list(field = case[[4]], kind = "binary", position = 1, value = case[[5]])
+    } else {
+      list(field = case[[4]], position = 1, value = case[[5]])
+    }
+    expect_identical(err$fields, want)
   }
   err <- expect_pgp_error(
     pafgrs_score_bivariate(pafgrs_prepare(ped), list(trait(1), trait(3, kind = "binary")), list(10, 10),

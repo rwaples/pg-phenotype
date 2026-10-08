@@ -90,6 +90,21 @@ impl Relatives<'_> {
         self.tri
             .get(self.tri_base + tri_index(self.rows.len(), j, k))
     }
+
+    /// The kinship among the relatives at `positions` (ascending), dense and
+    /// symmetric with a zero diagonal, into `phi`.
+    pub(crate) fn dense_kinship(&self, positions: &[usize], phi: &mut Vec<f64>) {
+        let n = positions.len();
+        phi.clear();
+        phi.resize(n * n, 0.0);
+        for (x, &jx) in positions.iter().enumerate() {
+            for (y, &jy) in positions.iter().enumerate().skip(x + 1) {
+                let k = f64::from(self.pair(jx, jy));
+                phi[x * n + y] = k;
+                phi[y * n + x] = k;
+            }
+        }
+    }
 }
 
 impl Chunk {
@@ -132,10 +147,47 @@ impl Prep {
 
     /// Proband rows in ascending (input) order.
     pub fn probands(&self) -> Vec<u32> {
+        self.proband_rows().collect()
+    }
+
+    fn proband_rows(&self) -> impl Iterator<Item = u32> + '_ {
         self.locate
             .iter()
             .map(|&(c, m)| self.chunks[c as usize].rows[m as usize])
-            .collect()
+    }
+
+    /// Proband ids in ascending row order.
+    pub(crate) fn proband_ids(&self) -> Vec<i64> {
+        self.proband_rows().map(|r| self.ids[r as usize]).collect()
+    }
+
+    /// `score` of every proband's relatives in ascending row order, each
+    /// pool worker with its own scratch `S`.
+    pub(crate) fn score_each<S, R>(
+        &self,
+        score: impl Fn(&mut S, Relatives<'_>) -> R + Sync,
+    ) -> Vec<R>
+    where
+        S: Default,
+        R: Clone + Default + Send,
+    {
+        let per_chunk: Vec<Vec<(u32, R)>> = self
+            .chunks
+            .par_iter()
+            .map_init(S::default, |s, chunk| {
+                chunk
+                    .out
+                    .iter()
+                    .enumerate()
+                    .map(|(m, &out)| (out, score(s, chunk.relatives(m))))
+                    .collect()
+            })
+            .collect();
+        let mut scores = vec![R::default(); self.n_probands()];
+        for (out, r) in per_chunk.into_iter().flatten() {
+            scores[out as usize] = r;
+        }
+        scores
     }
 
     pub(crate) fn proband(&self, i: usize) -> Relatives<'_> {

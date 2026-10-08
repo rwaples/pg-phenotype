@@ -4,8 +4,73 @@
 //! its code and fields so a host can raise the same class pedigree-graph
 //! raises.  Everything pg-phenotype checks itself is a variant here.
 
+use crate::input::TraitKind;
 use pedigree_graph_core::error::{Error as PgError, ErrorClass, FieldValue as PgField};
 use std::fmt;
+
+/// Which part of a CIP table's contract it breaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CipProblem {
+    Empty,
+    LengthMismatch,
+    AgeNotFinite,
+    AgesNotIncreasing,
+    CipOutOfRange,
+    CipDecreases,
+    PrevalenceNotPositive,
+}
+
+impl CipProblem {
+    /// The stable `reason` a host branches on.
+    pub fn name(self) -> &'static str {
+        match self {
+            CipProblem::Empty => "empty",
+            CipProblem::LengthMismatch => "length_mismatch",
+            CipProblem::AgeNotFinite => "age_not_finite",
+            CipProblem::AgesNotIncreasing => "ages_not_increasing",
+            CipProblem::CipOutOfRange => "cip_out_of_range",
+            CipProblem::CipDecreases => "cip_decreases",
+            CipProblem::PrevalenceNotPositive => "prevalence_not_positive",
+        }
+    }
+
+    fn describe(self) -> &'static str {
+        match self {
+            CipProblem::Empty => "the table is empty",
+            CipProblem::LengthMismatch => "ages and cip differ in length",
+            CipProblem::AgeNotFinite => "an age is not finite",
+            CipProblem::AgesNotIncreasing => "ages are not strictly increasing",
+            CipProblem::CipOutOfRange => "a cip value is outside [0, 1)",
+            CipProblem::CipDecreases => "cip decreases",
+            CipProblem::PrevalenceNotPositive => "the last cip value (K) is not positive",
+        }
+    }
+}
+
+/// Which joint constraint parameters each in their domain break together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Inconsistency {
+    /// `rho_within - rg sqrt(h2_1 h2_2)` exceeds `sqrt((1 - h2_1)(1 - h2_2))`.
+    NonGeneticCovarianceNotPsd,
+}
+
+impl Inconsistency {
+    /// The stable `reason` a host branches on.
+    pub fn name(self) -> &'static str {
+        match self {
+            Inconsistency::NonGeneticCovarianceNotPsd => "non_genetic_covariance_not_psd",
+        }
+    }
+
+    fn describe(self) -> &'static str {
+        match self {
+            Inconsistency::NonGeneticCovarianceNotPsd => {
+                "rho_within - rg*sqrt(h2_1*h2_2) exceeds sqrt((1 - h2_1)(1 - h2_2)): \
+                 the non-genetic cross-trait covariance is not positive semidefinite"
+            }
+        }
+    }
+}
 
 /// The host exception family a variant maps onto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,14 +119,8 @@ pub enum Error {
     /// A method needs a trait of another kind.
     TraitKindMismatch {
         field: &'static str,
-        expected: &'static str,
-        actual: &'static str,
-    },
-    /// A binary trait value is not 0, 1 or missing.
-    InvalidTraitValue {
-        field: &'static str,
-        position: usize,
-        value: f64,
+        expected: TraitKind,
+        actual: TraitKind,
     },
     /// A present age is negative or not finite.
     InvalidAge {
@@ -76,13 +135,10 @@ pub enum Error {
         domain: &'static str,
     },
     /// The CIP table breaks its contract.
-    InvalidCip {
-        reason: &'static str,
-        position: usize,
-    },
+    InvalidCip { reason: CipProblem, position: usize },
     /// Parameters each in their domain that together give a covariance
     /// that is not positive semidefinite.
-    InconsistentParameters { reason: &'static str },
+    InconsistentParameters { reason: Inconsistency },
     /// A method takes another number of traits.
     TraitCount {
         actual: usize,
@@ -92,13 +148,13 @@ pub enum Error {
     /// A method does not take traits of this kind.
     UnsupportedTraitKind {
         field: &'static str,
-        kind: &'static str,
+        kind: TraitKind,
     },
-    /// A trait value that is not a level code (binary, ordinal) or not
-    /// finite (continuous).
+    /// A trait value that is not a level code (binary: 0, 1; ordinal) or
+    /// not finite (continuous).
     InvalidTraitCode {
         field: &'static str,
-        kind: &'static str,
+        kind: TraitKind,
         position: usize,
         value: f64,
     },
@@ -130,59 +186,50 @@ impl From<PgError> for Error {
 impl Error {
     /// The host exception family.
     pub fn class(&self) -> Class {
-        match self {
-            Error::Pedigree(err) => match err.class() {
-                ErrorClass::Validation | ErrorClass::Metadata => Class::Validation,
-                ErrorClass::Resource => Class::Resource,
-                ErrorClass::Usage => Class::Usage,
-            },
-            Error::DegreeOutOfRange { .. }
-            | Error::UnknownProband { .. }
-            | Error::DuplicateProband { .. }
-            | Error::TraitLength { .. }
-            | Error::TraitKindMismatch { .. }
-            | Error::InvalidTraitValue { .. }
-            | Error::InvalidAge { .. }
-            | Error::TraitCount { .. }
-            | Error::UnsupportedTraitKind { .. }
-            | Error::InvalidTraitCode { .. }
-            | Error::SparseOrdinalCodes { .. }
-            | Error::UnusedLevel { .. }
-            | Error::AllMissingTrait { .. }
-            | Error::ConstantTrait { .. }
-            | Error::StratumLength { .. } => Class::Validation,
-            Error::ParameterOutOfRange { .. }
-            | Error::InvalidCip { .. }
-            | Error::InconsistentParameters { .. } => Class::Parameter,
-        }
+        self.spec().0
     }
 
     /// The stable code a host branches on.
     pub fn code(&self) -> &'static str {
+        self.spec().1
+    }
+
+    /// Each variant's class and code, in one table so the two cannot drift.
+    fn spec(&self) -> (Class, &'static str) {
+        use Class::{Parameter, Validation};
         match self {
-            // pedigree-graph-core leaves its pool errors uncoded (they map to
-            // a plain RuntimeError there); name them so hosts can branch.
-            Error::Pedigree(PgError::ThreadPoolConflict { .. }) => "thread_pool_conflict",
-            Error::Pedigree(PgError::ThreadPoolUnavailable { .. }) => "thread_pool_unavailable",
-            Error::Pedigree(err) => err.code(),
-            Error::DegreeOutOfRange { .. } => "degree_out_of_range",
-            Error::UnknownProband { .. } => "unknown_proband",
-            Error::DuplicateProband { .. } => "duplicate_proband",
-            Error::TraitLength { .. } => "trait_length_mismatch",
-            Error::TraitKindMismatch { .. } => "trait_kind_mismatch",
-            Error::InvalidTraitValue { .. } => "invalid_trait_value",
-            Error::InvalidAge { .. } => "invalid_age",
-            Error::ParameterOutOfRange { .. } => "parameter_out_of_range",
-            Error::InvalidCip { .. } => "invalid_cip",
-            Error::InconsistentParameters { .. } => "inconsistent_parameters",
-            Error::TraitCount { .. } => "trait_count",
-            Error::UnsupportedTraitKind { .. } => "unsupported_trait_kind",
-            Error::InvalidTraitCode { .. } => "invalid_trait_value",
-            Error::SparseOrdinalCodes { .. } => "sparse_ordinal_codes",
-            Error::UnusedLevel { .. } => "unused_level",
-            Error::AllMissingTrait { .. } => "all_missing_trait",
-            Error::ConstantTrait { .. } => "constant_trait",
-            Error::StratumLength { .. } => "stratum_length_mismatch",
+            Error::Pedigree(err) => {
+                let class = match err.class() {
+                    ErrorClass::Validation | ErrorClass::Metadata => Class::Validation,
+                    ErrorClass::Resource => Class::Resource,
+                    ErrorClass::Usage => Class::Usage,
+                };
+                // pedigree-graph-core leaves its pool errors uncoded (they map
+                // to a plain RuntimeError there); name them so hosts can branch.
+                let code = match err {
+                    PgError::ThreadPoolConflict { .. } => "thread_pool_conflict",
+                    PgError::ThreadPoolUnavailable { .. } => "thread_pool_unavailable",
+                    _ => err.code(),
+                };
+                (class, code)
+            }
+            Error::DegreeOutOfRange { .. } => (Validation, "degree_out_of_range"),
+            Error::UnknownProband { .. } => (Validation, "unknown_proband"),
+            Error::DuplicateProband { .. } => (Validation, "duplicate_proband"),
+            Error::TraitLength { .. } => (Validation, "trait_length_mismatch"),
+            Error::TraitKindMismatch { .. } => (Validation, "trait_kind_mismatch"),
+            Error::InvalidAge { .. } => (Validation, "invalid_age"),
+            Error::ParameterOutOfRange { .. } => (Parameter, "parameter_out_of_range"),
+            Error::InvalidCip { .. } => (Parameter, "invalid_cip"),
+            Error::InconsistentParameters { .. } => (Parameter, "inconsistent_parameters"),
+            Error::TraitCount { .. } => (Validation, "trait_count"),
+            Error::UnsupportedTraitKind { .. } => (Validation, "unsupported_trait_kind"),
+            Error::InvalidTraitCode { .. } => (Validation, "invalid_trait_value"),
+            Error::SparseOrdinalCodes { .. } => (Validation, "sparse_ordinal_codes"),
+            Error::UnusedLevel { .. } => (Validation, "unused_level"),
+            Error::AllMissingTrait { .. } => (Validation, "all_missing_trait"),
+            Error::ConstantTrait { .. } => (Validation, "constant_trait"),
+            Error::StratumLength { .. } => (Validation, "stratum_length_mismatch"),
         }
     }
 
@@ -238,15 +285,10 @@ impl Error {
                 actual,
             } => vec![
                 ("field", Str(field)),
-                ("expected", Str(expected)),
-                ("actual", Str(actual)),
+                ("expected", Str(expected.name())),
+                ("actual", Str(actual.name())),
             ],
-            Error::InvalidTraitValue {
-                field,
-                position,
-                value,
-            }
-            | Error::InvalidAge {
+            Error::InvalidAge {
                 field,
                 position,
                 value,
@@ -265,9 +307,9 @@ impl Error {
                 ("domain", Str(domain)),
             ],
             Error::InvalidCip { reason, position } => {
-                vec![("reason", Str(reason)), ("position", int(*position))]
+                vec![("reason", Str(reason.name())), ("position", int(*position))]
             }
-            Error::InconsistentParameters { reason } => vec![("reason", Str(reason))],
+            Error::InconsistentParameters { reason } => vec![("reason", Str(reason.name()))],
             Error::TraitCount {
                 actual,
                 minimum,
@@ -278,7 +320,7 @@ impl Error {
                 ("maximum", int(*maximum)),
             ],
             Error::UnsupportedTraitKind { field, kind } => {
-                vec![("field", Str(field)), ("kind", Str(kind))]
+                vec![("field", Str(field)), ("kind", Str(kind.name()))]
             }
             Error::InvalidTraitCode {
                 field,
@@ -287,7 +329,7 @@ impl Error {
                 value,
             } => vec![
                 ("field", Str(field)),
-                ("kind", Str(kind)),
+                ("kind", Str(kind.name())),
                 ("position", int(*position)),
                 ("value", Float(*value)),
             ],
@@ -338,10 +380,7 @@ impl fmt::Display for Error {
                 "{field} must have one entry per pedigree row ({expected_length}), got {actual_length}"
             ),
             Error::TraitKindMismatch { field, expected, actual } => {
-                write!(f, "{field} must be a {expected} trait, got {actual}")
-            }
-            Error::InvalidTraitValue { field, position, value } => {
-                write!(f, "{field}[{position}] = {value} is not 0, 1 or missing")
+                write!(f, "{field} must be a {} trait, got {}", expected.name(), actual.name())
             }
             Error::InvalidAge { field, position, value } => {
                 write!(f, "{field}[{position}] = {value} is not a finite age >= 0")
@@ -350,19 +389,25 @@ impl fmt::Display for Error {
                 write!(f, "{name} = {value} is outside {domain}")
             }
             Error::InvalidCip { reason, position } => {
-                write!(f, "invalid CIP table at position {position}: {reason}")
+                write!(f, "invalid CIP table at position {position}: {}", reason.describe())
             }
-            Error::InconsistentParameters { reason } => write!(f, "{reason}"),
+            Error::InconsistentParameters { reason } => write!(f, "{}", reason.describe()),
             Error::TraitCount { actual, minimum, maximum } => {
                 write!(f, "pass {minimum} to {maximum} traits, got {actual}")
             }
             Error::UnsupportedTraitKind { field, kind } => {
-                write!(f, "{field} is a {kind} trait, which this method does not take")
+                write!(f, "{field} is a {} trait, which this method does not take", kind.name())
             }
-            Error::InvalidTraitCode { field, kind, position, value } => match *kind {
-                "continuous" => write!(f, "{field}[{position}] = {value} is not finite"),
-                "binary" => write!(f, "{field}[{position}] = {value} is not 0, 1 or missing"),
-                _ => write!(f, "{field}[{position}] = {value} is not a {kind} level code"),
+            Error::InvalidTraitCode { field, kind, position, value } => match kind {
+                TraitKind::Continuous => write!(f, "{field}[{position}] = {value} is not finite"),
+                TraitKind::Binary => {
+                    write!(f, "{field}[{position}] = {value} is not 0, 1 or missing")
+                }
+                _ => write!(
+                    f,
+                    "{field}[{position}] = {value} is not a {} level code",
+                    kind.name()
+                ),
             },
             Error::SparseOrdinalCodes { field, level } => write!(
                 f,

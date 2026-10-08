@@ -5,9 +5,8 @@ use super::order;
 use super::pa::{self, Obs};
 use super::prep::{Prep, Relatives};
 use super::uni::check_h2;
-use crate::error::Error;
+use crate::error::{Error, Inconsistency};
 use crate::input::Trait;
-use rayon::prelude::*;
 
 /// Slack on the positive-semidefinite check of [`BivParams::new`], so a
 /// `rho_within` computed at the boundary in floating point is not rejected
@@ -57,8 +56,7 @@ impl BivParams {
         let residual = rho_within - cov_g;
         if residual * residual > (1.0 - h2[0]) * (1.0 - h2[1]) + PSD_SLACK {
             return Err(Error::InconsistentParameters {
-                reason: "rho_within - rg*sqrt(h2_1*h2_2) exceeds sqrt((1 - h2_1)(1 - h2_2)): \
-                         the non-genetic cross-trait covariance is not positive semidefinite",
+                reason: Inconsistency::NonGeneticCovarianceNotPsd,
             });
         }
         Ok(BivParams { h2, rg, rho_within })
@@ -101,7 +99,7 @@ pub struct BivScores {
 }
 
 /// The result of one proband.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct One {
     est: [f64; 2],
     var: [f64; 2],
@@ -139,44 +137,18 @@ pub fn score_bivariate(
             ["trait2", "age2"],
         )?,
     ];
-    let n = prep.n_probands();
-    let per_chunk: Vec<Vec<(u32, One)>> = prep
-        .chunks
-        .par_iter()
-        .map_init(Scratch::default, |s, chunk| {
-            chunk
-                .out
-                .iter()
-                .enumerate()
-                .map(|(m, &out)| (out, s.score(chunk.relatives(m), &obs, &params)))
-                .collect()
-        })
-        .collect();
-    let mut scores = BivScores {
-        ids: prep
-            .probands()
-            .iter()
-            .map(|&r| prep.ids()[r as usize])
-            .collect(),
-        est: [vec![0.0; n], vec![0.0; n]],
-        var: [vec![0.0; n], vec![0.0; n]],
-        cov12: vec![0.0; n],
-        n_relatives: vec![0; n],
-        n_obs: [vec![0; n], vec![0; n]],
+    let one = prep.score_each(|s: &mut Scratch, rel| s.score(rel, &obs, &params));
+    let per_trait = |f: fn(&One) -> [f64; 2], t: usize| one.iter().map(|o| f(o)[t]).collect();
+    Ok(BivScores {
+        ids: prep.proband_ids(),
+        est: [per_trait(|o| o.est, 0), per_trait(|o| o.est, 1)],
+        var: [per_trait(|o| o.var, 0), per_trait(|o| o.var, 1)],
+        cov12: one.iter().map(|o| o.cov12).collect(),
+        n_relatives: one.iter().map(|o| o.n_relatives).collect(),
+        n_obs: [0, 1].map(|t| one.iter().map(|o| o.n_obs[t]).collect()),
         controls_without_age: [obs[0].controls_without_age, obs[1].controls_without_age],
         threshold: [obs[0].threshold, obs[1].threshold],
-    };
-    for (out, one) in per_chunk.into_iter().flatten() {
-        let i = out as usize;
-        for t in 0..2 {
-            scores.est[t][i] = one.est[t];
-            scores.var[t][i] = one.var[t];
-            scores.n_obs[t][i] = one.n_obs[t];
-        }
-        scores.cov12[i] = one.cov12;
-        scores.n_relatives[i] = one.n_relatives;
-    }
-    Ok(scores)
+    })
 }
 
 /// Per-worker buffers, reused across probands.
@@ -188,7 +160,7 @@ struct Scratch {
     phi: Vec<f64>,
     /// Per person, whether each trait is observed.
     seen: Vec<[bool; 2]>,
-    keys: Vec<order::BivKey>,
+    keys: Vec<order::Key>,
     obs: Vec<Obs>,
     cov: Vec<f64>,
     mu: Vec<f64>,
@@ -222,15 +194,7 @@ impl Scratch {
                 n_obs,
             };
         }
-        self.phi.clear();
-        self.phi.resize(n * n, 0.0);
-        for (x, &jx) in self.people.iter().enumerate() {
-            for (y, &jy) in self.people.iter().enumerate().skip(x + 1) {
-                let k = f64::from(rel.pair(jx, jy));
-                self.phi[x * n + y] = k;
-                self.phi[y * n + x] = k;
-            }
-        }
+        rel.dense_kinship(&self.people, &mut self.phi);
         let abs_cov = cov_g.abs();
         let abs_rho = params.rho_within.abs();
         self.keys.clear();
@@ -257,7 +221,7 @@ impl Scratch {
                     + 1.0
                     + rho_term
                     + 2.0 * (params.h2[t] * sums[t] + abs_cov * sums[1 - t]);
-                self.keys.push(order::BivKey {
+                self.keys.push(order::Key {
                     w: obs[t].w[row as usize],
                     to_proband,
                     row_sum,
@@ -267,7 +231,7 @@ impl Scratch {
                 });
             }
         }
-        order::sort_bivariate(&mut self.keys);
+        order::sort(&mut self.keys);
 
         let m = self.keys.len();
         let size = m + 2;
@@ -293,12 +257,7 @@ impl Scratch {
                     2.0 * self.phi[key.index * n + other.index] * g[t][u]
                 };
             }
-            let (lower, upper) = obs[t].bounds(key.row as usize);
-            self.obs.push(Obs {
-                lower,
-                upper,
-                w: key.w,
-            });
+            self.obs.push(obs[t].obs(key.row as usize));
         }
         pa::condition(&mut self.cov, &mut self.mu, 2, &self.obs, &mut self.col);
         One {

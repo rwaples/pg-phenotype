@@ -1,16 +1,21 @@
 //! Standard normal tails, quantile, and truncated-normal moments.
 //!
-//! `cdf` and `sf` follow Cephes `ndtr` (the form SciPy uses): `erf` near the
-//! centre, `erfc` in the tails.  `quantile` is Wichura's AS241, the
-//! algorithm and coefficients of R's `qnorm`, so a threshold here is the
-//! one PAFGRS computes.  The truncated moments port fitACE's PA-FGRS
-//! kernels line for line, guards included.
+//! `cdf` and `sf` take Cephes `ndtr`'s branches (`erf` near the centre,
+//! `erfc` in the tails) on libm's `erf` and `erfc`, so they agree with
+//! SciPy's `ndtr` to a few ulp, not bit for bit; assortative mating, which
+//! must match SciPy's bits, has its own Cephes port (`assortative::cephes`).
+//! `quantile` is Wichura's AS241, the algorithm and coefficients of R's
+//! `qnorm`, so a threshold here is the one PAFGRS computes; assortative
+//! mating evaluates the same coefficients with pedsum's rounding
+//! ([`as241`] with [`As241Rounding::Pedsum`]).  The truncated moments port
+//! fitACE's PA-FGRS kernels line for line, guards included.
 
 use std::f64::consts::FRAC_1_SQRT_2;
 
 const FRAC_1_SQRT_2PI: f64 = 0.398_942_280_401_432_7;
 
-/// Density of N(0, 1).
+/// Density of N(0, 1), as fitACE writes it; assortative mating's
+/// `bvn::phi` divides by `sqrt(2 pi)` instead, as pedsum does.
 #[inline]
 pub(crate) fn pdf(x: f64) -> f64 {
     FRAC_1_SQRT_2PI * (-0.5 * x * x).exp()
@@ -96,14 +101,23 @@ const FAR_TAIL: [f64; 15] = [
     0.59983220655588793769,
 ];
 
-/// `num(r) / den(r)` for the eight numerator and seven denominator
+/// `(num(r), den(r))` for the eight numerator and seven denominator
 /// coefficients of `c`, Horner order as `qnorm.c` writes it, `den` ending
 /// in `+ 1`.
 #[inline]
-fn rational(c: &[f64; 15], r: f64) -> f64 {
+fn rational(c: &[f64; 15], r: f64) -> (f64, f64) {
     let num = c[1..8].iter().fold(c[0], |acc, &k| acc * r + k);
     let den = c[9..15].iter().fold(c[8], |acc, &k| acc * r + k) * r + 1.0;
-    num / den
+    (num, den)
+}
+
+/// Where the two AS241 ports this crate reproduces round differently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum As241Rounding {
+    /// R's `qnorm`: `q * (num / den)`, upper tail `0.5 - p + 0.5`.
+    R,
+    /// pedsum's kernel `ndtri`: `q * num / den`, upper tail `1 - p`.
+    Pedsum,
 }
 
 /// The `p` quantile of N(0, 1) for `0 < p < 1` (AS241, as R's `qnorm`).
@@ -111,6 +125,11 @@ fn rational(c: &[f64; 15], r: f64) -> f64 {
 /// CIP table can produce has `min(p, 1 - p) > exp(-27^2)`, so R's
 /// asymptotic branch beyond is not needed.
 pub(crate) fn quantile(p: f64) -> f64 {
+    as241(p, As241Rounding::R)
+}
+
+/// AS241 with `rounding`'s arithmetic; see [`quantile`].
+pub(crate) fn as241(p: f64, rounding: As241Rounding) -> f64 {
     if p.is_nan() {
         return p;
     }
@@ -122,15 +141,24 @@ pub(crate) fn quantile(p: f64) -> f64 {
     }
     let q = p - 0.5;
     if q.abs() <= 0.425 {
-        return q * rational(&CENTRAL, 0.180625 - q * q);
+        let (num, den) = rational(&CENTRAL, 0.180625 - q * q);
+        return match rounding {
+            As241Rounding::R => q * (num / den),
+            As241Rounding::Pedsum => q * num / den,
+        };
     }
-    let tail = if q > 0.0 { 0.5 - p + 0.5 } else { p };
+    let tail = match (q > 0.0, rounding) {
+        (false, _) => p,
+        (true, As241Rounding::R) => 0.5 - p + 0.5,
+        (true, As241Rounding::Pedsum) => 1.0 - p,
+    };
     let r = (-tail.ln()).sqrt();
-    let val = if r <= 5.0 {
+    let (num, den) = if r <= 5.0 {
         rational(&NEAR_TAIL, r - 1.6)
     } else {
         rational(&FAR_TAIL, r - 5.0)
     };
+    let val = num / den;
     if q < 0.0 {
         -val
     } else {

@@ -137,7 +137,7 @@ fn check_trait<'a>(t: Trait<'a>, field: &'static str, n_rows: usize) -> Result<C
         TraitKind::Categorical => {
             return Err(Error::UnsupportedTraitKind {
                 field,
-                kind: t.kind.name(),
+                kind: t.kind,
             })
         }
         TraitKind::Continuous => None,
@@ -163,7 +163,7 @@ fn check_trait<'a>(t: Trait<'a>, field: &'static str, n_rows: usize) -> Result<C
         if !valid {
             return Err(Error::InvalidTraitCode {
                 field,
-                kind: t.kind.name(),
+                kind: t.kind,
                 position,
                 value,
             });

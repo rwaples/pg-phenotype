@@ -1,7 +1,8 @@
 //! The cumulative incidence proportion (CIP) table and what it gives a
 //! trait: a lifetime threshold and each observation's weight `w` (ADR 0002).
 
-use crate::error::Error;
+use super::pa::Obs;
+use crate::error::{CipProblem, Error};
 use crate::input::{Trait, TraitKind};
 use crate::normal;
 
@@ -21,27 +22,27 @@ impl Cip {
     pub fn new(ages: Vec<f64>, cip: Vec<f64>) -> Result<Cip, Error> {
         let bad = |reason, position| Err(Error::InvalidCip { reason, position });
         if ages.is_empty() {
-            return bad("the table is empty", 0);
+            return bad(CipProblem::Empty, 0);
         }
         if ages.len() != cip.len() {
-            return bad("ages and cip differ in length", ages.len().min(cip.len()));
+            return bad(CipProblem::LengthMismatch, ages.len().min(cip.len()));
         }
         for (i, (&age, &c)) in ages.iter().zip(&cip).enumerate() {
             if !age.is_finite() {
-                return bad("an age is not finite", i);
+                return bad(CipProblem::AgeNotFinite, i);
             }
             if i > 0 && age <= ages[i - 1] {
-                return bad("ages are not strictly increasing", i);
+                return bad(CipProblem::AgesNotIncreasing, i);
             }
             if !(0.0..1.0).contains(&c) {
-                return bad("a cip value is outside [0, 1)", i);
+                return bad(CipProblem::CipOutOfRange, i);
             }
             if i > 0 && c < cip[i - 1] {
-                return bad("cip decreases", i);
+                return bad(CipProblem::CipDecreases, i);
             }
         }
         if cip[cip.len() - 1] <= 0.0 {
-            return bad("the last cip value (K) is not positive", cip.len() - 1);
+            return bad(CipProblem::PrevalenceNotPositive, cip.len() - 1);
         }
         Ok(Cip { ages, cip })
     }
@@ -92,7 +93,7 @@ impl Observed {
     /// # Errors
     ///
     /// [`Error::TraitKindMismatch`] for a trait that is not binary, then
-    /// [`Error::TraitLength`], [`Error::InvalidTraitValue`], and
+    /// [`Error::TraitLength`], [`Error::InvalidTraitCode`], and
     /// [`Error::InvalidAge`], with `fields` naming the trait and age.
     ///
     /// `age` is the age at onset for a case and at last observation for a
@@ -108,8 +109,8 @@ impl Observed {
         if values.kind != TraitKind::Binary {
             return Err(Error::TraitKindMismatch {
                 field: status_field,
-                expected: TraitKind::Binary.name(),
-                actual: values.kind.name(),
+                expected: TraitKind::Binary,
+                actual: values.kind,
             });
         }
         for (field, len) in [(status_field, values.values.len()), (age_field, age.len())] {
@@ -145,8 +146,9 @@ impl Observed {
                     w[row] = cip.w(age);
                 }
             } else {
-                return Err(Error::InvalidTraitValue {
+                return Err(Error::InvalidTraitCode {
                     field: status_field,
+                    kind: TraitKind::Binary,
                     position: row,
                     value: s,
                 });
@@ -168,6 +170,17 @@ impl Observed {
             (self.threshold, f64::INFINITY)
         } else {
             (f64::NEG_INFINITY, self.threshold)
+        }
+    }
+
+    /// Row `row`'s observation: its truncation bounds and weight `w`.
+    #[inline]
+    pub(crate) fn obs(&self, row: usize) -> Obs {
+        let (lower, upper) = self.bounds(row);
+        Obs {
+            lower,
+            upper,
+            w: self.w[row],
         }
     }
 }
@@ -195,31 +208,26 @@ mod tests {
 
     #[test]
     fn invalid_tables_name_the_position() {
-        let cases: [(Vec<f64>, Vec<f64>, &str, usize); 6] = [
-            (vec![], vec![], "the table is empty", 0),
+        let cases: [(Vec<f64>, Vec<f64>, CipProblem, usize); 6] = [
+            (vec![], vec![], CipProblem::Empty, 0),
             (
                 vec![1.0, 1.0],
                 vec![0.1, 0.2],
-                "ages are not strictly increasing",
+                CipProblem::AgesNotIncreasing,
                 1,
             ),
             (
                 vec![1.0, f64::NAN],
                 vec![0.1, 0.2],
-                "an age is not finite",
+                CipProblem::AgeNotFinite,
                 1,
             ),
-            (vec![1.0, 2.0], vec![0.2, 0.1], "cip decreases", 1),
-            (
-                vec![1.0, 2.0],
-                vec![0.1, 1.0],
-                "a cip value is outside [0, 1)",
-                1,
-            ),
+            (vec![1.0, 2.0], vec![0.2, 0.1], CipProblem::CipDecreases, 1),
+            (vec![1.0, 2.0], vec![0.1, 1.0], CipProblem::CipOutOfRange, 1),
             (
                 vec![1.0, 2.0],
                 vec![0.0, 0.0],
-                "the last cip value (K) is not positive",
+                CipProblem::PrevalenceNotPositive,
                 1,
             ),
         ];

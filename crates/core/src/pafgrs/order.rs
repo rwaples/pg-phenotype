@@ -14,25 +14,21 @@
 //! compared: dyadic float32 kinship summed in float64 is exact, so a tie in
 //! exact arithmetic is a tie here, broken by row.
 
+/// One observation's sort key; `trait_index` is 0 in a univariate score.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct UniKey {
+pub(crate) struct Key {
     pub(crate) w: f64,
     pub(crate) to_proband: f64,
     pub(crate) row_sum: f64,
     pub(crate) row: u32,
-    /// Position in the caller's valid list.
+    pub(crate) trait_index: u8,
+    /// Position in the caller's list of observed relatives.
     pub(crate) index: usize,
 }
 
-pub(crate) fn sort_univariate(keys: &mut [UniKey]) {
-    keys.sort_unstable_by(|a, b| {
-        b.w.total_cmp(&a.w)
-            .then_with(|| b.to_proband.total_cmp(&a.to_proband))
-            .then_with(|| b.row_sum.total_cmp(&a.row_sum))
-            .then_with(|| a.row.cmp(&b.row))
-    });
-}
-
+/// Univariate observation `r`: `w` descending, `C[r, p]` descending, the
+/// row sum descending, row ascending (the trait is always 0).
+///
 /// Bivariate observation `o = (r, t)`: `w` descending, `|C[o, p1]| +
 /// |C[o, p2]|` descending, `sum_j |C[o, j]|` descending, row ascending,
 /// trait ascending.
@@ -43,17 +39,7 @@ pub(crate) fn sort_univariate(keys: &mut [UniKey]) {
 /// `2 (h2_t A + |cov_g| B)`, where `A` and `B` sum `phi(r, s)` over the
 /// other relatives `s` observed on `t` and on `t'`.  `A` and `B` are exact
 /// and the rest is one fixed expression, so exact ties stay ties.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct BivKey {
-    pub(crate) w: f64,
-    pub(crate) to_proband: f64,
-    pub(crate) row_sum: f64,
-    pub(crate) row: u32,
-    pub(crate) trait_index: u8,
-    pub(crate) index: usize,
-}
-
-pub(crate) fn sort_bivariate(keys: &mut [BivKey]) {
+pub(crate) fn sort(keys: &mut [Key]) {
     keys.sort_unstable_by(|a, b| {
         b.w.total_cmp(&a.w)
             .then_with(|| b.to_proband.total_cmp(&a.to_proband))

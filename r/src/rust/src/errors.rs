@@ -133,15 +133,6 @@ fn one_based(err: Error) -> Error {
             id,
             positions: positions.map(|p| p + 1),
         },
-        Error::InvalidTraitValue {
-            field,
-            position,
-            value,
-        } => Error::InvalidTraitValue {
-            field,
-            position: position + 1,
-            value,
-        },
         Error::InvalidAge {
             field,
             position,

@@ -12,6 +12,15 @@
   not a bare `ValueError`.
 - Rust: `BivParams`'s fields are private, so every value has passed
   `BivParams::new`; read them through `h2()`, `rg()` and `rho_within()`.
+- Error `reason` fields are stable slugs instead of English prose:
+  `invalid_cip` gives `empty`, `length_mismatch`, `age_not_finite`,
+  `ages_not_increasing`, `cip_out_of_range`, `cip_decreases` or
+  `prevalence_not_positive`, and `inconsistent_parameters` gives
+  `non_genetic_covariance_not_psd`.  The messages are unchanged.
+- PA-FGRS's `invalid_trait_value` (a binary status not 0 or 1) carries the
+  `kind` field, as assortative mating's does.  Rust: `InvalidTraitValue` is
+  merged into `InvalidTraitCode`, and error `kind`/`expected`/`actual` fields
+  are `TraitKind`s.
 
 ## v0.1.1
 

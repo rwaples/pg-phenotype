@@ -196,6 +196,8 @@ def test_bivariate_parameters_are_checked(kwargs, code):
             **kwargs,
         )
     assert err.value.code == code
+    if code == "inconsistent_parameters":
+        assert err.value.fields == {"reason": "non_genetic_covariance_not_psd"}
 
 
 @pytest.mark.parametrize(
@@ -212,8 +214,10 @@ def test_trait_values_are_validated(affected, age, code, field):
     with pytest.raises(pg_phenotype.ValidationError) as err:
         pafgrs.score_univariate(pafgrs.prepare(ped), trait.trait, age=trait.age, cip=trait.cip, h2=0.5)
     assert err.value.code == code
+    kind = {"kind": "binary"} if field == "trait" else {}
     assert dict(err.value.fields) == {
         "field": field,
+        **kind,
         "position": 0,
         "value": pytest.approx(affected[0] if field == "trait" else age[0]),
     }
@@ -228,14 +232,19 @@ def test_trait_length_is_checked():
 
 
 @pytest.mark.parametrize(
-    ("ages", "cip", "position"),
-    [([0.0, 1.0], [0.0, 1.0], 1), ([1.0, 0.0], [0.0, 0.1], 1), ([0.0, 1.0], [0.0, 0.0], 1), ([], [], 0)],
+    ("ages", "cip", "reason", "position"),
+    [
+        ([0.0, 1.0], [0.0, 1.0], "cip_out_of_range", 1),
+        ([1.0, 0.0], [0.0, 0.1], "ages_not_increasing", 1),
+        ([0.0, 1.0], [0.0, 0.0], "prevalence_not_positive", 1),
+        ([], [], "empty", 0),
+    ],
 )
-def test_cip_is_validated(ages, cip, position):
+def test_cip_is_validated(ages, cip, reason, position):
     with pytest.raises(pg_phenotype.ParameterError) as err:
         pafgrs.Cip(ages, cip)
     assert err.value.code == "invalid_cip"
-    assert err.value.fields["position"] == position
+    assert err.value.fields == {"reason": reason, "position": position}
 
 
 def test_cip_threshold_is_the_lifetime_quantile():
