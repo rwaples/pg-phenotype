@@ -7,11 +7,10 @@
 //! takes one Newton step from the observed ρ̂ with the draw's score and the
 //! full-sample Hessian.  A draw whose Hessian is not positive is refit in full.
 
-use super::bvn;
-use super::estimators::{argsort, point, table_shape, Serial, Sides};
+use super::estimators::{argsort, point, table_shape, Serial, Sides, Tables};
 use super::kernels::{
     count_table, inverse_sd, margin, margin_status, pearson, sorted_ranks_into, stratum_moments,
-    thresholds, Grid, Moments, Polyserial, Status, Table, LATENT_BOUND, TINY,
+    thresholds, Grid, Moments, Polyserial, Status, Table, LATENT_BOUND,
 };
 use super::result::{Draws, Estimator, Reason};
 use super::rng::{network_multiplicities, network_weights};
@@ -38,62 +37,84 @@ struct Scratch {
     spare: Vec<f64>,
 }
 
-/// The cell's draws: one column per fitted estimator, crude first, the
-/// stratified one last, from the observed values `starts` (`None` where
-/// undefined).
+/// One estimator of a cell: the estimator and whether it is the stratified form.
+type Key = (Estimator, bool);
+
+/// A cell's fitted estimators and their observed values, looked up by
+/// estimator rather than by position.
+#[derive(Clone, Copy)]
+struct Fitted<'a> {
+    estimators: &'a [Key],
+    starts: &'a [Option<f64>],
+}
+
+impl Fitted<'_> {
+    fn has(&self, key: Key) -> bool {
+        self.estimators.contains(&key)
+    }
+
+    /// The observed value of `key`, NaN when it was not fitted or is undefined.
+    fn start(&self, key: Key) -> f64 {
+        self.estimators
+            .iter()
+            .position(|&k| k == key)
+            .and_then(|i| self.starts[i])
+            .unwrap_or(f64::NAN)
+    }
+}
+
+/// The resampling of one cell's G Mate Networks.
+#[derive(Clone, Copy)]
+struct Resample<'a> {
+    /// Each pair's Mate Network.
+    labels: &'a [usize],
+    /// The number of networks.
+    g: usize,
+    n_draws: u64,
+    seed: i64,
+}
+
+/// The cell's draws: one column per entry of `estimators`, in that order,
+/// from the observed values `starts` (`None` where undefined).  An estimator
+/// no draw kernel computes gets no draws, so its CI is withheld.
 pub(crate) fn draws(
-    estimators: &[(Estimator, bool)],
+    estimators: &[Key],
     starts: &[Option<f64>],
     pairs: &CellPairs,
     labels: &[usize],
     n_draws: u64,
     seed: i64,
 ) -> Vec<Vec<Draw>> {
-    let g = labels.iter().max().map_or(0, |&l| l + 1);
-    let stratified = estimators.last().is_some_and(|e| e.1);
-    let columns: Vec<Vec<Draw>> = match Sides::of(pairs) {
-        Sides::Continuous => continuous(pairs, labels, g, n_draws, seed, stratified),
-        Sides::Tables { m, f } => {
-            let two = estimators[0].0 == Estimator::Tetrachoric;
-            tables(
-                pairs,
-                [m, f],
-                labels,
-                g,
-                n_draws,
-                seed,
-                starts,
-                two,
-                stratified,
-            )
-        }
-        Sides::Serial(s) => serial(
-            s,
-            labels,
-            g,
-            n_draws,
-            seed,
-            starts,
-            estimators.len(),
-            stratified,
-        ),
+    let fitted = Fitted { estimators, starts };
+    let plan = Resample {
+        labels,
+        g: n_codes(labels),
+        n_draws,
+        seed,
     };
-    columns
-        .into_iter()
-        .zip(estimators.iter().zip(starts))
-        .map(|(column, (&(est, strat), start))| {
+    let mut columns: Vec<(Key, Vec<Draw>)> = match Sides::of(pairs) {
+        Sides::Continuous => continuous(pairs, plan, fitted),
+        Sides::Tables { m, f } => tables(pairs, [m, f], plan, fitted),
+        Sides::Serial(s) => serial(s, plan, fitted),
+    };
+    estimators
+        .iter()
+        .zip(starts)
+        .map(|(&(est, strat), start)| {
+            let column = columns
+                .iter_mut()
+                .find(|(key, _)| *key == (est, strat))
+                .map(|(_, column)| std::mem::take(column))
+                .unwrap_or_default();
             column
                 .into_par_iter()
                 .enumerate()
                 .map(|(d, draw)| match draw {
                     Draw::Refit => {
                         let mut w = vec![0.0; labels.len()];
-                        let mut mult = vec![0; g];
+                        let mut mult = vec![0; plan.g];
                         network_weights(&mut w, &mut mult, labels, seed, d as u64);
-                        match point(est, strat, pairs, &w, *start) {
-                            Ok(p) => Draw::Value(p.value),
-                            Err(status) => Draw::Failed(status),
-                        }
+                        kernel_draw(point(est, strat, pairs, &w, *start).map(|p| p.value))
                     }
                     other => other,
                 })
@@ -102,19 +123,23 @@ pub(crate) fn draws(
         .collect()
 }
 
-/// Run `per_draw` over draws `0..n_draws` on the pool, each with a worker's
-/// scratch filled with that draw's network multiplicities and, when
-/// `weights`, its pair weights, plus a spare buffer the draw may reuse;
-/// transpose to columns.
+/// Run `per_draw` over the draws on the pool, each with a worker's scratch
+/// filled with that draw's network multiplicities and, when `weights`, its
+/// pair weights, plus a spare buffer the draw may reuse.  `per_draw` returns
+/// one value per entry of `keys`, in that order; the result is one column
+/// per key.
 fn run(
-    labels: &[usize],
-    g: usize,
-    n_draws: u64,
-    seed: i64,
-    n_columns: usize,
+    plan: Resample<'_>,
+    keys: Vec<Key>,
     weights: bool,
     per_draw: impl Fn(&[f64], &[u32], &mut Vec<f64>) -> Vec<Draw> + Sync,
-) -> Vec<Vec<Draw>> {
+) -> Vec<(Key, Vec<Draw>)> {
+    let Resample {
+        labels,
+        g,
+        n_draws,
+        seed,
+    } = plan;
     let rows: Vec<Vec<Draw>> = (0..n_draws)
         .into_par_iter()
         .map_init(
@@ -129,12 +154,15 @@ fn run(
                 } else {
                     network_multiplicities(&mut s.mult, seed, d);
                 }
-                per_draw(&s.w, &s.mult, &mut s.spare)
+                let row = per_draw(&s.w, &s.mult, &mut s.spare);
+                debug_assert_eq!(row.len(), keys.len());
+                row
             },
         )
         .collect();
-    (0..n_columns)
-        .map(|c| rows.iter().map(|r| r[c]).collect())
+    keys.into_iter()
+        .enumerate()
+        .map(|(c, key)| (key, rows.iter().map(|r| r[c]).collect()))
         .collect()
 }
 
@@ -146,14 +174,9 @@ fn kernel_draw(k: Result<f64, Status>) -> Draw {
 }
 
 /// Continuous x continuous: exact Pearson, Spearman and stratified Pearson.
-fn continuous(
-    pairs: &CellPairs,
-    labels: &[usize],
-    g: usize,
-    n_draws: u64,
-    seed: i64,
-    stratified: bool,
-) -> Vec<Vec<Draw>> {
+fn continuous(pairs: &CellPairs, plan: Resample<'_>, fitted: Fitted<'_>) -> Vec<(Key, Vec<Draw>)> {
+    let labels = plan.labels;
+    let stratified = fitted.has((Estimator::Pearson, true));
     let order_m = argsort(&pairs.m);
     let order_f = argsort(&pairs.f);
     let mut inv_f = vec![0; order_f.len()];
@@ -166,30 +189,25 @@ fn continuous(
     let labels_f: Vec<usize> = order_f.iter().map(|&i| labels[i]).collect();
     let f_pos: Vec<usize> = order_m.iter().map(|&i| inv_f[i]).collect();
     let (n_m, n_f) = pairs.n_strata();
-    let n_columns = 2 + usize::from(stratified);
-    run(
-        labels,
-        g,
-        n_draws,
-        seed,
-        n_columns,
-        true,
-        |w, mult, rank_f| {
-            let mut out = vec![kernel_draw(pearson(&pairs.m, &pairs.f, w, false))];
-            rank_f.resize(f_sorted.len(), 0.0);
-            sorted_ranks_into(rank_f, &f_sorted, |t| mult[labels_f[t]] as f64);
-            out.push(kernel_draw(spearman_sorted(
-                &m_sorted,
-                |q| mult[labels_m[q]] as f64,
-                rank_f,
-                &f_pos,
-            )));
-            if stratified {
-                out.push(kernel_draw(stratified_pearson(pairs, n_m, n_f, w)));
-            }
-            out
-        },
-    )
+    let mut keys = vec![(Estimator::Pearson, false), (Estimator::Spearman, false)];
+    if stratified {
+        keys.push((Estimator::Pearson, true));
+    }
+    run(plan, keys, true, |w, mult, rank_f| {
+        let mut out = vec![kernel_draw(pearson(&pairs.m, &pairs.f, w, false))];
+        rank_f.resize(f_sorted.len(), 0.0);
+        sorted_ranks_into(rank_f, &f_sorted, |t| mult[labels_f[t]] as f64);
+        out.push(kernel_draw(spearman_sorted(
+            &m_sorted,
+            |q| mult[labels_m[q]] as f64,
+            rank_f,
+            &f_pos,
+        )));
+        if stratified {
+            out.push(kernel_draw(stratified_pearson(pairs, n_m, n_f, w)));
+        }
+        out
+    })
 }
 
 /// Weighted Pearson of the ranks, walked in `m`'s sorted order and centred
@@ -368,20 +386,16 @@ fn polyserial_hessian(rho: f64, serial: &Serial<'_>) -> f64 {
     }
 }
 
-/// Continuous x discrete: one-step polyserial draws (crude, stratified) and
-/// the exact point-biserial of a binary side.
-#[allow(clippy::too_many_arguments)]
-fn serial(
-    s: Serial<'_>,
-    labels: &[usize],
-    g: usize,
-    n_draws: u64,
-    seed: i64,
-    starts: &[Option<f64>],
-    n_fitted: usize,
-    stratified: bool,
-) -> Vec<Vec<Draw>> {
-    let point_biserial = n_fitted == 2 + usize::from(stratified);
+/// Continuous x discrete: one-step polyserial (biserial) draws, crude and
+/// stratified, and the exact point-biserial of a binary side.
+fn serial(s: Serial<'_>, plan: Resample<'_>, fitted: Fitted<'_>) -> Vec<(Key, Vec<Draw>)> {
+    let primary = if fitted.has((Estimator::Biserial, false)) {
+        Estimator::Biserial
+    } else {
+        Estimator::Polyserial
+    };
+    let point_biserial = fitted.has((Estimator::PointBiserial, false));
+    let stratified = fitted.has((primary, true));
     let zeros = vec![0; s.x.len()];
     let crude = Serial {
         x_stratum: &zeros,
@@ -389,12 +403,8 @@ fn serial(
         y_levels: &pooled_levels(s.y_levels),
         ..s
     };
-    let rho_crude = starts[0].unwrap_or(f64::NAN);
-    let rho_strat = if stratified {
-        starts[n_fitted - 1].unwrap_or(f64::NAN)
-    } else {
-        f64::NAN
-    };
+    let rho_crude = fitted.start((primary, false));
+    let rho_strat = fitted.start((primary, true));
     let hess_crude = polyserial_hessian(rho_crude, &crude);
     let hess_strat = polyserial_hessian(rho_strat, &s);
     let (n_ys, k) = (s.y_levels.rows, s.y_levels.cols);
@@ -406,7 +416,14 @@ fn serial(
             *repeated_levels.at_mut(r, c) = shown;
         }
     }
-    run(labels, g, n_draws, seed, n_fitted, true, |w, _, _| {
+    let mut keys = vec![(primary, false)];
+    if point_biserial {
+        keys.push((Estimator::PointBiserial, false));
+    }
+    if stratified {
+        keys.push((primary, true));
+    }
+    run(plan, keys, true, |w, _, _| {
         let moments = stratum_moments(s.x, s.x_stratum, w, n_xs, false);
         let y_margin = margin(s.y, s.y_stratum, w, n_ys, k, false);
         let mut out = vec![Draw::Value(f64::NAN)];
@@ -444,70 +461,20 @@ fn serial(
     })
 }
 
-/// Per draw table: `(grad, hess)` of the NLL in ρ at `rho`, thresholds refit
-/// from the table's margins, or the margins' failure.
-fn polychoric_terms(
-    n: &Table,
-    m_levels: &Grid<bool>,
-    f_levels: &Grid<bool>,
-    rho: f64,
-) -> Result<(f64, f64), Status> {
-    if !n.data.iter().any(|&v| v != 0.0) {
-        return Err(Status::NoPairs);
-    }
-    let (m_margin, f_margin) = (n.mother_margin(), n.father_margin());
-    for (margin, levels) in [(&m_margin, m_levels), (&f_margin, f_levels)] {
-        if let Some(status) = margin_status(margin, levels) {
-            return Err(status);
-        }
-    }
-    let (a, b) = (thresholds(&m_margin), thresholds(&f_margin));
-    let (mut grad, mut hess) = (0.0, 0.0);
-    for s in 0..n.n_ms {
-        for u in 0..n.n_fs {
-            let grid = |f: &dyn Fn(f64, f64) -> f64| {
-                let mut g = Grid::filled(n.k_m + 1, n.k_f + 1, 0.0);
-                for i in 0..=n.k_m {
-                    for j in 0..=n.k_f {
-                        *g.at_mut(i, j) = f(a.at(s, i), b.at(u, j));
-                    }
-                }
-                g
-            };
-            let cdf = grid(&|h, k| bvn::cdf(h, k, rho));
-            let pdf = grid(&|h, k| bvn::pdf_and_drho(h, k, rho).0);
-            let drho = grid(&|h, k| bvn::pdf_and_drho(h, k, rho).1);
-            for i in 0..n.k_m {
-                for j in 0..n.k_f {
-                    let count = n.at(s, u, i, j);
-                    if count > 0.0 {
-                        let c = |g: &Grid<f64>| {
-                            g.at(i + 1, j + 1) - g.at(i, j + 1) - g.at(i + 1, j) + g.at(i, j)
-                        };
-                        let pi = c(&cdf).max(TINY);
-                        let score = c(&pdf) / pi;
-                        grad += count * score;
-                        hess += count * (c(&drho) / pi - score * score);
-                    }
-                }
-            }
-        }
-    }
-    Ok((-grad, -hess))
-}
-
-/// One-step polychoric draws from per-draw tables and the observed table.
+/// One-step polychoric draw from a draw's table: thresholds refit from its
+/// margins, one Newton step from the observed `rho` with the observed Hessian.
 fn polychoric_step(
-    table: &Table,
+    table: Table,
     observed_hess: f64,
     m_levels: &Grid<bool>,
     f_levels: &Grid<bool>,
     rho: f64,
 ) -> Draw {
-    match polychoric_terms(table, m_levels, f_levels, rho) {
+    match Tables::from_counts(table, m_levels, f_levels) {
         Err(status) => Draw::Failed(status),
         Ok(_) if !(observed_hess > 0.0) => Draw::Refit,
-        Ok((grad, _)) => {
+        Ok(t) => {
+            let (grad, _) = t.grad_hess(rho);
             Draw::Value((rho - grad / observed_hess).clamp(-LATENT_BOUND, LATENT_BOUND))
         }
     }
@@ -532,20 +499,21 @@ fn two_by_two(t: &Table) -> (Draw, Draw) {
     (Draw::Value(odds), Draw::Value(phi))
 }
 
-/// Discrete x discrete: one-step polychoric draws (crude, stratified) and the
-/// exact odds ratio and phi of a 2 x 2 cell.
-#[allow(clippy::too_many_arguments)]
+/// Discrete x discrete: one-step polychoric (tetrachoric) draws, crude and
+/// stratified, and the exact odds ratio and phi of a 2 x 2 cell.
 fn tables(
     pairs: &CellPairs,
     [m_levels, f_levels]: [&Grid<bool>; 2],
-    labels: &[usize],
-    g: usize,
-    n_draws: u64,
-    seed: i64,
-    starts: &[Option<f64>],
-    two: bool,
-    stratified: bool,
-) -> Vec<Vec<Draw>> {
+    plan: Resample<'_>,
+    fitted: Fitted<'_>,
+) -> Vec<(Key, Vec<Draw>)> {
+    let primary = if fitted.has((Estimator::Tetrachoric, false)) {
+        Estimator::Tetrachoric
+    } else {
+        Estimator::Polychoric
+    };
+    let two = fitted.has((Estimator::OddsRatio, false)) || fitted.has((Estimator::Phi, false));
+    let stratified = fitted.has((primary, true));
     let shape = table_shape(pairs, m_levels, f_levels);
     let ones = vec![1.0; pairs.len()];
     let observed = count_table(
@@ -558,14 +526,21 @@ fn tables(
         true,
     );
     let (pooled_m, pooled_f) = (pooled_levels(m_levels), pooled_levels(f_levels));
-    let rho_crude = starts[0].unwrap_or(f64::NAN);
-    let rho_strat = starts.last().copied().flatten().unwrap_or(f64::NAN);
-    let hess = |t: &Table, ml: &Grid<bool>, fl: &Grid<bool>, rho: f64| {
-        polychoric_terms(t, ml, fl, rho).map_or(f64::NAN, |(_, h)| h)
+    let rho_crude = fitted.start((primary, false));
+    let rho_strat = fitted.start((primary, true));
+    let hess = |t: Table, ml: &Grid<bool>, fl: &Grid<bool>, rho: f64| {
+        Tables::from_counts(t, ml, fl).map_or(f64::NAN, |t| t.grad_hess(rho).1)
     };
-    let hess_crude = hess(&observed.pooled(), &pooled_m, &pooled_f, rho_crude);
-    let hess_strat = hess(&observed, m_levels, f_levels, rho_strat);
-    let n_columns = 1 + 2 * usize::from(two) + usize::from(stratified);
+    let hess_crude = hess(observed.pooled(), &pooled_m, &pooled_f, rho_crude);
+    let hess_strat = hess(observed.clone(), m_levels, f_levels, rho_strat);
+    let mut keys = vec![(primary, false)];
+    if two {
+        keys.extend([(Estimator::OddsRatio, false), (Estimator::Phi, false)]);
+    }
+    if stratified {
+        keys.push((primary, true));
+    }
+    let labels = plan.labels;
     let cell_of: Vec<usize> = (0..pairs.len())
         .map(|i| {
             observed.index(
@@ -576,19 +551,20 @@ fn tables(
             )
         })
         .collect();
-    run(labels, g, n_draws, seed, n_columns, false, |_, mult, _| {
+    run(plan, keys, false, |_, mult, _| {
         let table = draw_table(&cell_of, labels, mult, shape);
         let pooled = table.pooled();
-        let mut out = vec![polychoric_step(
-            &pooled, hess_crude, &pooled_m, &pooled_f, rho_crude,
-        )];
-        if two {
-            let (odds, phi) = two_by_two(&pooled);
+        let mut out = Vec::with_capacity(4);
+        let two_by_two = two.then(|| two_by_two(&pooled));
+        out.push(polychoric_step(
+            pooled, hess_crude, &pooled_m, &pooled_f, rho_crude,
+        ));
+        if let Some((odds, phi)) = two_by_two {
             out.extend([odds, phi]);
         }
         if stratified {
             out.push(polychoric_step(
-                &table, hess_strat, m_levels, f_levels, rho_strat,
+                table, hess_strat, m_levels, f_levels, rho_strat,
             ));
         }
         out
@@ -663,4 +639,62 @@ pub(crate) fn failure_reasons(draws: &[Draw]) -> Vec<(Reason, u64)> {
         }
     }
     counts.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::cell_estimators;
+    use super::super::input::Kind;
+    use super::*;
+
+    /// A side's values on 40 pairs in two strata: deterministic, every level used.
+    fn side(kind: Kind, salt: usize) -> Vec<f64> {
+        (0..40)
+            .map(|i| {
+                let x = ((i * 7 + salt * 3) % 11) as f64 / 11.0 + (i % 3) as f64 * 0.1;
+                match kind {
+                    Kind::Continuous => x,
+                    Kind::Binary => f64::from(x > 0.5),
+                    Kind::Ordinal { k } => ((x * k as f64) as usize).min(k - 1) as f64,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_fitted_estimator_gets_its_draws() {
+        let kinds = [Kind::Continuous, Kind::Binary, Kind::Ordinal { k: 3 }];
+        let labels: Vec<usize> = (0..40).map(|i| i / 2).collect();
+        for m in kinds {
+            for f in kinds {
+                let pairs = CellPairs {
+                    m: side(m, 1),
+                    f: side(f, 2),
+                    m_stratum: (0..40).map(|i| i % 2).collect(),
+                    f_stratum: (0..40).map(|i| (i / 3) % 2).collect(),
+                    m_levels: None,
+                    f_levels: None,
+                }
+                .with_levels(m.levels(), f.levels());
+                let (crude, strat) = cell_estimators(m, f);
+                let estimators: Vec<Key> = crude
+                    .iter()
+                    .map(|&e| (e, false))
+                    .chain([(strat, true)])
+                    .collect();
+                let starts: Vec<Option<f64>> = estimators
+                    .iter()
+                    .map(|&(e, s)| {
+                        let ones = vec![1.0; pairs.len()];
+                        point(e, s, &pairs, &ones, None).ok().map(|p| p.value)
+                    })
+                    .collect();
+                let columns = draws(&estimators, &starts, &pairs, &labels, 7, 3);
+                assert_eq!(columns.len(), estimators.len());
+                for (key, column) in estimators.iter().zip(&columns) {
+                    assert_eq!(column.len(), 7, "{m:?} x {f:?}: {key:?} has no draws");
+                }
+            }
+        }
+    }
 }

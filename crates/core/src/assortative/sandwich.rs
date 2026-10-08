@@ -311,10 +311,9 @@ pub(crate) fn sandwich_se(
     }
 }
 
-/// The 95% Wald interval on the Fisher-z or the log scale.
+/// The [`CI_LEVEL`](super::CI_LEVEL) Wald interval on the Fisher-z or the log scale.
 pub(crate) fn wald_ci(value: f64, se: f64, scale: CiScale) -> [f64; 2] {
-    // SciPy's cephes ndtri((1 + 0.95) / 2), one ulp above the kernels' AS 241.
-    let z = 1.959_963_984_540_054;
+    let z = super::WALD_Z;
     match scale {
         CiScale::Log => [(value.ln() - z * se).exp(), (value.ln() + z * se).exp()],
         CiScale::FisherZ => {

@@ -48,6 +48,12 @@ pub use result::{
 /// The confidence level of every interval.
 pub(crate) const CI_LEVEL: f64 = 0.95;
 
+/// The two-sided normal quantile of [`CI_LEVEL`] for Wald intervals: SciPy's
+/// cephes `ndtri((1 + 0.95) / 2)`, as pedsum computes it, one ulp above the
+/// kernels' AS 241.  A literal for parity; `ci_level_and_wald_z_agree` ties
+/// it to `CI_LEVEL`.
+pub(crate) const WALD_Z: f64 = 1.959_963_984_540_054;
+
 /// A cell kind's estimators: the crude ones, primary first, and the
 /// stratified form of the primary (pedsum `CELL_ESTIMATORS`).
 fn cell_estimators(m: Kind, f: Kind) -> (&'static [Estimator], Estimator) {
@@ -90,242 +96,28 @@ pub fn mate_correlation(
     }
     let stratified = strata.is_some();
     let ids = &graph.ids;
-    let (all_mothers, all_fathers) = mating_pairs(ids, &graph.mother_rows, &graph.father_rows);
-    let codes = stratum_codes(strata, n_rows);
-    let known: Vec<usize> = (0..all_mothers.len())
-        .filter(|&p| codes[all_mothers[p]].is_some() && codes[all_fathers[p]].is_some())
-        .collect();
-    let mothers: Vec<usize> = known.iter().map(|&p| all_mothers[p]).collect();
-    let fathers: Vec<usize> = known.iter().map(|&p| all_fathers[p]).collect();
-    let code = |row: usize| codes[row].unwrap_or(0);
-
-    let mut fathers_by_id: Vec<usize> = fathers.clone();
-    fathers_by_id.sort_unstable_by_key(|&r| ids[r]);
-    fathers_by_id.dedup();
-    let pair_father: Vec<usize> = fathers
-        .iter()
-        .map(|&r| fathers_by_id.partition_point(|&o| ids[o] < ids[r]))
-        .collect();
-    let present: Vec<Vec<bool>> = columns
-        .iter()
-        .map(|c| {
-            fathers_by_id
-                .iter()
-                .map(|&r| !c.values[r].is_nan())
-                .collect()
-        })
-        .collect();
-    let blocks = permutation::father_blocks(
-        &fathers_by_id.iter().map(|&r| code(r)).collect::<Vec<_>>(),
-        &present,
-    );
-    let mut block_size = vec![0usize; blocks.iter().max().map_or(0, |&b| b + 1)];
-    for &b in &blocks {
-        block_size[b] += 1;
-    }
-    let fixed: Vec<bool> = blocks.iter().map(|&b| block_size[b] == 1).collect();
-
-    let labels = mate_networks(&mothers, &fathers);
-    let (n_mate_networks, largest_mate_network_share) = network_summary(&labels);
-    let multiple = |rows: &[usize], n: usize| {
-        let mut count = vec![0u32; n];
-        for &r in rows {
-            count[r] += 1;
-        }
-        count.iter().filter(|&&c| c > 1).count() as u64
-    };
-    let sample = Sample {
-        n_total: all_mothers.len() as u64,
-        n_dropped_unknown_stratum: (all_mothers.len() - known.len()) as u64,
-        n_mate_networks,
-        largest_mate_network_share,
-        n_mothers_multiple_mates: multiple(&mothers, n_rows),
-        n_fathers_multiple_mates: multiple(&pair_father, fathers_by_id.len()),
-    };
+    let pairs = Pairs::build(ids, &graph.mother_rows, &graph.father_rows, strata);
+    let fathers = DistinctFathers::build(&pairs, ids, &columns);
+    let sample = pairs.sample(&fathers, n_rows);
 
     let mut cells = Vec::with_capacity(columns.len() * columns.len());
     let mut fitted = Vec::with_capacity(cells.capacity());
-    for (mt, mother_trait) in columns.iter().enumerate() {
-        for (ft, father_trait) in columns.iter().enumerate() {
-            let m_all: Vec<f64> = mothers.iter().map(|&r| mother_trait.values[r]).collect();
-            let f_all: Vec<f64> = fathers.iter().map(|&r| father_trait.values[r]).collect();
-            let mut dropped = Dropped::default();
-            let mut complete = Vec::new();
-            for p in 0..mothers.len() {
-                match (m_all[p].is_nan(), f_all[p].is_nan()) {
-                    (false, false) => complete.push(p),
-                    (true, false) => dropped.mother_missing += 1,
-                    (false, true) => dropped.father_missing += 1,
-                    (true, true) => dropped.both_missing += 1,
-                }
-            }
-            let mut pairs = CellPairs {
-                m: complete.iter().map(|&p| m_all[p]).collect(),
-                f: complete.iter().map(|&p| f_all[p]).collect(),
-                m_stratum: complete.iter().map(|&p| code(mothers[p])).collect(),
-                f_stratum: complete.iter().map(|&p| code(fathers[p])).collect(),
-                m_levels: None,
-                f_levels: None,
-            };
-            let cell_mothers: Vec<usize> = complete.iter().map(|&p| mothers[p]).collect();
-            let cell_fathers: Vec<usize> = complete.iter().map(|&p| fathers[p]).collect();
-            let n_complete = complete.len() as u64;
-            let cell_labels = if stratified {
-                let Kept {
-                    keep,
-                    n_small,
-                    labels: cell_labels,
-                } = drop_thin_strata(
-                    &pairs,
-                    &cell_mothers,
-                    &cell_fathers,
-                    settings.min_stratum_networks,
-                );
-                complete = keep.iter().map(|&i| complete[i]).collect();
-                pairs = pairs.take(&keep);
-                dropped.small_stratum = n_small;
-                dropped.degenerate_stratum = n_complete - complete.len() as u64 - n_small;
-                cell_labels
-            } else {
-                mate_networks(&cell_mothers, &cell_fathers)
-            };
-            let pairs = pairs.with_levels(mother_trait.kind.levels(), father_trait.kind.levels());
-            let (crude, strat) = cell_estimators(mother_trait.kind, father_trait.kind);
-            let estimators: Vec<(Estimator, bool)> = crude
-                .iter()
-                .map(|&e| (e, false))
-                .chain(stratified.then_some((strat, true)))
-                .collect();
-            let results = fit_cell(
-                &estimators,
-                &pairs,
-                &cell_labels,
-                settings.bootstrap,
-                settings.seed,
-            );
-            let (n_mate_networks, largest_mate_network_share) = network_summary(&cell_labels);
-            let n_strata = |code: &[usize]| {
-                let mut distinct = code.to_vec();
-                distinct.sort_unstable();
-                distinct.dedup();
-                distinct.len() as u64
-            };
-            let mut results = results.into_iter();
-            let crude_results: Vec<EstimatorResult> = results.by_ref().take(crude.len()).collect();
-            let stratified_result = results.next().map(|result| Stratified {
-                result,
-                n_strata_mothers: n_strata(&pairs.m_stratum),
-                n_strata_fathers: n_strata(&pairs.f_stratum),
-            });
-            let table = (crude[0] == Estimator::Tetrachoric).then(|| {
-                let t = estimators::two_by_two(&pairs.pooled(), &vec![1.0; pairs.len()]);
-                t.map(|row| row.map(|v| v as u64))
-            });
-            let cell_pair_father: Vec<usize> = complete.iter().map(|&p| pair_father[p]).collect();
-            cells.push(Cell {
-                mother_trait: mt,
-                father_trait: ft,
-                n: pairs.len() as u64,
-                n_dropped: dropped,
-                n_mate_networks,
-                largest_mate_network_share,
-                table,
-                crude: crude_results,
-                stratified: stratified_result,
-            });
-            fitted.push((pairs, cell_pair_father, ft));
+    for mt in 0..columns.len() {
+        for ft in 0..columns.len() {
+            let (cell, fit) =
+                analyse_cell(&pairs, &fathers, &columns, [mt, ft], stratified, settings);
+            cells.push(cell);
+            fitted.push(fit);
         }
     }
-
-    let statistic_of = |cell: &Cell| {
-        if cell.crude[0].estimator == Estimator::Pearson {
-            PermutationStatistic::Pearson
-        } else {
-            PermutationStatistic::ScoreAtZero
-        }
-    };
-    let tested: Vec<[bool; 2]> = cells
-        .iter()
-        .map(|cell| {
-            [
-                cell.crude[0].outcome.is_ok(),
-                cell.stratified
-                    .as_ref()
-                    .is_some_and(|s| s.result.outcome.is_ok()),
-            ]
-        })
-        .collect();
-    let informative: Vec<usize> = (0..cells.len())
-        .filter(|&c| (tested[c][0] || tested[c][1]) && !fitted[c].1.iter().all(|&f| fixed[f]))
-        .collect();
-    let mut null: Vec<[Vec<NullDraw>; 2]> =
-        (0..cells.len()).map(|_| [Vec::new(), Vec::new()]).collect();
-    let mut observed_stat = vec![[f64::NAN; 2]; cells.len()];
-    if !informative.is_empty() && settings.permutations > 0 {
-        let perm_cells: Vec<permutation::Cell<'_>> = informative
-            .iter()
-            .map(|&c| {
-                let (pairs, pair_father, ft) = &fitted[c];
-                let k_m = columns[cells[c].mother_trait].kind.levels();
-                let scores = |stratum: &[usize]| {
-                    permutation::latent_scores(&pairs.m, stratum, k_m)
-                        .unwrap_or_else(|| vec![0.0; pairs.len()])
-                };
-                permutation::Cell {
-                    pairs,
-                    trait_index: *ft,
-                    pair_father,
-                    e_m: [scores(&vec![0; pairs.len()]), scores(&pairs.m_stratum)],
-                    tested: tested[c],
-                }
-            })
-            .collect();
-        let trait_values: Vec<Vec<f64>> = columns
-            .iter()
-            .map(|c| fathers_by_id.iter().map(|&r| c.values[r]).collect())
-            .collect();
-        let packed = Packed::new(&perm_cells, &trait_values, &blocks);
-        let observed = packed.observed();
-        let tests: Vec<[bool; 2]> = perm_cells.iter().map(|c| c.tested).collect();
-        let draws = packed.permuted(&observed, &tests, settings.permutations, settings.seed);
-        for ((&c, stat), cell_draws) in informative.iter().zip(observed).zip(draws) {
-            observed_stat[c] = stat;
-            null[c] = cell_draws;
-        }
-    }
-    for (c, cell) in cells.iter_mut().enumerate() {
-        let mut fathers: Vec<usize> = fitted[c].1.clone();
-        fathers.sort_unstable();
-        fathers.dedup();
-        let n_fixed = fathers.iter().filter(|&&f| fixed[f]).count() as u64;
-        let statistic = statistic_of(cell);
-        let forms = [
-            Some(&mut cell.crude[0]),
-            cell.stratified.as_mut().map(|s| &mut s.result),
-        ];
-        for (form, result) in forms.into_iter().enumerate() {
-            if let Some(EstimatorResult {
-                outcome: Ok(estimate),
-                ..
-            }) = result
-            {
-                estimate.permutation = Some(permutation_record(
-                    observed_stat[c][form],
-                    &null[c][form],
-                    settings.permutations,
-                    settings.seed,
-                    n_fixed,
-                    statistic,
-                ));
-            }
-        }
-    }
+    let nulls = permutation_nulls(&cells, &fitted, &columns, &fathers, settings);
+    attach_permutations(&mut cells, &fitted, &fathers, &nulls, settings);
 
     let within_person = (columns.len() == 2).then(|| {
         let one = |rows: &[usize]| within_person(&columns, ids, rows);
         WithinPersonPair {
-            mothers: one(&mothers),
-            fathers: one(&fathers),
+            mothers: one(&pairs.mothers),
+            fathers: one(&pairs.fathers),
         }
     });
     Ok(MateCorrelation {
@@ -342,6 +134,349 @@ pub fn mate_correlation(
         },
         method: METHOD,
     })
+}
+
+/// The Mating Pairs whose parents both have a known stratum.
+struct Pairs {
+    /// Every Mating Pair, before the unknown-stratum drop.
+    n_total: usize,
+    mothers: Vec<usize>,
+    fathers: Vec<usize>,
+    /// Each row's stratum code, `None` where unknown.
+    codes: Vec<Option<usize>>,
+}
+
+impl Pairs {
+    fn build(
+        ids: &[i64],
+        mother_rows: &[i32],
+        father_rows: &[i32],
+        strata: Option<Strata<'_>>,
+    ) -> Pairs {
+        let (all_mothers, all_fathers) = mating_pairs(ids, mother_rows, father_rows);
+        let codes = stratum_codes(strata, ids.len());
+        let (mothers, fathers) = all_mothers
+            .iter()
+            .zip(&all_fathers)
+            .filter(|&(&m, &f)| codes[m].is_some() && codes[f].is_some())
+            .unzip();
+        Pairs {
+            n_total: all_mothers.len(),
+            mothers,
+            fathers,
+            codes,
+        }
+    }
+
+    /// Row `row`'s stratum code, 0 where unknown (no kept pair has one).
+    fn code(&self, row: usize) -> usize {
+        self.codes[row].unwrap_or(0)
+    }
+
+    fn sample(&self, fathers: &DistinctFathers, n_rows: usize) -> Sample {
+        let labels = mate_networks(&self.mothers, &self.fathers);
+        let (n_mate_networks, largest_mate_network_share) = network_summary(&labels);
+        let multiple = |rows: &[usize], n: usize| {
+            let mut count = vec![0u32; n];
+            for &r in rows {
+                count[r] += 1;
+            }
+            count.iter().filter(|&&c| c > 1).count() as u64
+        };
+        Sample {
+            n_total: self.n_total as u64,
+            n_dropped_unknown_stratum: (self.n_total - self.mothers.len()) as u64,
+            n_mate_networks,
+            largest_mate_network_share,
+            n_mothers_multiple_mates: multiple(&self.mothers, n_rows),
+            n_fathers_multiple_mates: multiple(&fathers.of_pair, fathers.rows.len()),
+        }
+    }
+}
+
+/// The distinct fathers of the kept pairs, in father-id order, with their
+/// permutation blocks.
+struct DistinctFathers {
+    rows: Vec<usize>,
+    /// Each kept pair's father, as an index into `rows`.
+    of_pair: Vec<usize>,
+    /// Each father's permutation block: stratum x which traits he has.
+    blocks: Vec<usize>,
+    /// Whether a father is alone in his block, so never exchanged.
+    fixed: Vec<bool>,
+}
+
+impl DistinctFathers {
+    fn build(pairs: &Pairs, ids: &[i64], columns: &[input::Column<'_>]) -> DistinctFathers {
+        let mut rows = pairs.fathers.clone();
+        rows.sort_unstable_by_key(|&r| ids[r]);
+        rows.dedup();
+        let of_pair = pairs
+            .fathers
+            .iter()
+            .map(|&r| rows.partition_point(|&o| ids[o] < ids[r]))
+            .collect();
+        let present: Vec<Vec<bool>> = columns
+            .iter()
+            .map(|c| rows.iter().map(|&r| !c.values[r].is_nan()).collect())
+            .collect();
+        let blocks = permutation::father_blocks(
+            &rows.iter().map(|&r| pairs.code(r)).collect::<Vec<_>>(),
+            &present,
+        );
+        let mut block_size = vec![0usize; sample::n_codes(&blocks)];
+        for &b in &blocks {
+            block_size[b] += 1;
+        }
+        let fixed = blocks.iter().map(|&b| block_size[b] == 1).collect();
+        DistinctFathers {
+            rows,
+            of_pair,
+            blocks,
+            fixed,
+        }
+    }
+}
+
+/// What the permutation test needs of a fitted cell.
+struct CellFit {
+    pairs: CellPairs,
+    /// Each of the cell's pairs' father, as an index into the distinct fathers.
+    pair_father: Vec<usize>,
+    father_trait: usize,
+}
+
+/// One cell (mother trait `mt` x father trait `ft`): its complete pairs, the
+/// thin-stratum drop, and every estimator with its SE and CI.
+fn analyse_cell(
+    pairs: &Pairs,
+    fathers: &DistinctFathers,
+    columns: &[input::Column<'_>],
+    [mt, ft]: [usize; 2],
+    stratified: bool,
+    settings: input::Checked,
+) -> (Cell, CellFit) {
+    let (mother_trait, father_trait) = (&columns[mt], &columns[ft]);
+    let m_all: Vec<f64> = pairs
+        .mothers
+        .iter()
+        .map(|&r| mother_trait.values[r])
+        .collect();
+    let f_all: Vec<f64> = pairs
+        .fathers
+        .iter()
+        .map(|&r| father_trait.values[r])
+        .collect();
+    let mut dropped = Dropped::default();
+    let mut complete = Vec::new();
+    for p in 0..pairs.mothers.len() {
+        match (m_all[p].is_nan(), f_all[p].is_nan()) {
+            (false, false) => complete.push(p),
+            (true, false) => dropped.mother_missing += 1,
+            (false, true) => dropped.father_missing += 1,
+            (true, true) => dropped.both_missing += 1,
+        }
+    }
+    let mut cell_pairs = CellPairs {
+        m: complete.iter().map(|&p| m_all[p]).collect(),
+        f: complete.iter().map(|&p| f_all[p]).collect(),
+        m_stratum: complete
+            .iter()
+            .map(|&p| pairs.code(pairs.mothers[p]))
+            .collect(),
+        f_stratum: complete
+            .iter()
+            .map(|&p| pairs.code(pairs.fathers[p]))
+            .collect(),
+        m_levels: None,
+        f_levels: None,
+    };
+    let cell_mothers: Vec<usize> = complete.iter().map(|&p| pairs.mothers[p]).collect();
+    let cell_fathers: Vec<usize> = complete.iter().map(|&p| pairs.fathers[p]).collect();
+    let n_complete = complete.len() as u64;
+    let labels = if stratified {
+        let Kept {
+            keep,
+            n_small,
+            labels,
+        } = drop_thin_strata(
+            &cell_pairs,
+            &cell_mothers,
+            &cell_fathers,
+            settings.min_stratum_networks,
+        );
+        complete = keep.iter().map(|&i| complete[i]).collect();
+        cell_pairs = cell_pairs.take(&keep);
+        dropped.small_stratum = n_small;
+        dropped.degenerate_stratum = n_complete - complete.len() as u64 - n_small;
+        labels
+    } else {
+        mate_networks(&cell_mothers, &cell_fathers)
+    };
+    let cell_pairs = cell_pairs.with_levels(mother_trait.kind.levels(), father_trait.kind.levels());
+    let (crude, strat) = cell_estimators(mother_trait.kind, father_trait.kind);
+    let estimators: Vec<(Estimator, bool)> = crude
+        .iter()
+        .map(|&e| (e, false))
+        .chain(stratified.then_some((strat, true)))
+        .collect();
+    let results = fit_cell(
+        &estimators,
+        &cell_pairs,
+        &labels,
+        settings.bootstrap,
+        settings.seed,
+    );
+    let (n_mate_networks, largest_mate_network_share) = network_summary(&labels);
+    let n_strata = |code: &[usize]| {
+        let mut distinct = code.to_vec();
+        distinct.sort_unstable();
+        distinct.dedup();
+        distinct.len() as u64
+    };
+    let mut results = results.into_iter();
+    let crude_results: Vec<EstimatorResult> = results.by_ref().take(crude.len()).collect();
+    let stratified_result = results.next().map(|result| Stratified {
+        result,
+        n_strata_mothers: n_strata(&cell_pairs.m_stratum),
+        n_strata_fathers: n_strata(&cell_pairs.f_stratum),
+    });
+    let table = (crude[0] == Estimator::Tetrachoric).then(|| {
+        let t = estimators::two_by_two(&cell_pairs.pooled(), &vec![1.0; cell_pairs.len()]);
+        t.map(|row| row.map(|v| v as u64))
+    });
+    let cell = Cell {
+        mother_trait: mt,
+        father_trait: ft,
+        n: cell_pairs.len() as u64,
+        n_dropped: dropped,
+        n_mate_networks,
+        largest_mate_network_share,
+        table,
+        crude: crude_results,
+        stratified: stratified_result,
+    };
+    let fit = CellFit {
+        pair_father: complete.iter().map(|&p| fathers.of_pair[p]).collect(),
+        pairs: cell_pairs,
+        father_trait: ft,
+    };
+    (cell, fit)
+}
+
+/// Per cell, the observed permutation statistic and the null draws read of
+/// each form (crude, stratified); empty where a cell is not tested.
+struct Nulls {
+    observed: Vec<[f64; 2]>,
+    draws: Vec<[Vec<NullDraw>; 2]>,
+}
+
+/// Run the father-permutation test of every cell with a defined primary
+/// estimate and an exchangeable father.
+fn permutation_nulls(
+    cells: &[Cell],
+    fitted: &[CellFit],
+    columns: &[input::Column<'_>],
+    fathers: &DistinctFathers,
+    settings: input::Checked,
+) -> Nulls {
+    let mut nulls = Nulls {
+        observed: vec![[f64::NAN; 2]; cells.len()],
+        draws: (0..cells.len()).map(|_| [Vec::new(), Vec::new()]).collect(),
+    };
+    let tested: Vec<[bool; 2]> = cells
+        .iter()
+        .map(|cell| {
+            [
+                cell.crude[0].outcome.is_ok(),
+                cell.stratified
+                    .as_ref()
+                    .is_some_and(|s| s.result.outcome.is_ok()),
+            ]
+        })
+        .collect();
+    let informative: Vec<usize> = (0..cells.len())
+        .filter(|&c| {
+            (tested[c][0] || tested[c][1])
+                && !fitted[c].pair_father.iter().all(|&f| fathers.fixed[f])
+        })
+        .collect();
+    if informative.is_empty() || settings.permutations == 0 {
+        return nulls;
+    }
+    let perm_cells: Vec<permutation::Cell<'_>> = informative
+        .iter()
+        .map(|&c| {
+            let fit = &fitted[c];
+            let pairs = &fit.pairs;
+            let k_m = columns[cells[c].mother_trait].kind.levels();
+            let scores = |stratum: &[usize]| {
+                permutation::latent_scores(&pairs.m, stratum, k_m)
+                    .unwrap_or_else(|| vec![0.0; pairs.len()])
+            };
+            permutation::Cell {
+                pairs,
+                trait_index: fit.father_trait,
+                pair_father: &fit.pair_father,
+                e_m: [scores(&vec![0; pairs.len()]), scores(&pairs.m_stratum)],
+                tested: tested[c],
+            }
+        })
+        .collect();
+    let trait_values: Vec<Vec<f64>> = columns
+        .iter()
+        .map(|c| fathers.rows.iter().map(|&r| c.values[r]).collect())
+        .collect();
+    let packed = Packed::new(&perm_cells, &trait_values, &fathers.blocks);
+    let observed = packed.observed();
+    let tests: Vec<[bool; 2]> = perm_cells.iter().map(|c| c.tested).collect();
+    let draws = packed.permuted(&observed, &tests, settings.permutations, settings.seed);
+    for ((&c, stat), cell_draws) in informative.iter().zip(observed).zip(draws) {
+        nulls.observed[c] = stat;
+        nulls.draws[c] = cell_draws;
+    }
+    nulls
+}
+
+/// Give every defined primary estimate its permutation record.
+fn attach_permutations(
+    cells: &mut [Cell],
+    fitted: &[CellFit],
+    fathers: &DistinctFathers,
+    nulls: &Nulls,
+    settings: input::Checked,
+) {
+    for (c, cell) in cells.iter_mut().enumerate() {
+        let mut cell_fathers: Vec<usize> = fitted[c].pair_father.clone();
+        cell_fathers.sort_unstable();
+        cell_fathers.dedup();
+        let n_fixed = cell_fathers.iter().filter(|&&f| fathers.fixed[f]).count() as u64;
+        let statistic = if cell.crude[0].estimator == Estimator::Pearson {
+            PermutationStatistic::Pearson
+        } else {
+            PermutationStatistic::ScoreAtZero
+        };
+        let forms = [
+            Some(&mut cell.crude[0]),
+            cell.stratified.as_mut().map(|s| &mut s.result),
+        ];
+        for (form, result) in forms.into_iter().enumerate() {
+            if let Some(EstimatorResult {
+                outcome: Ok(estimate),
+                ..
+            }) = result
+            {
+                estimate.permutation = Some(permutation_record(
+                    nulls.observed[c][form],
+                    &nulls.draws[c][form],
+                    settings.permutations,
+                    settings.seed,
+                    n_fixed,
+                    statistic,
+                ));
+            }
+        }
+    }
 }
 
 /// Observed estimates of one cell, and their records with SE, CI and draws.
@@ -409,30 +544,18 @@ fn fit_cell(
 }
 
 /// Two-sided sequential Monte Carlo p-value by magnitude (Besag & Clifford
-/// 1991, closed scheme): stop at the `h`-th valid draw at least as extreme.
+/// 1991, closed scheme) from the draws [`Packed::permuted`] read: they end at
+/// the `h`-th valid draw at least as extreme, or at the last one requested.
 fn permutation_record(
     observed: f64,
-    draws: &[NullDraw],
+    read: &[NullDraw],
     requested: u64,
     seed: i64,
     n_fixed_fathers: u64,
     statistic: PermutationStatistic,
 ) -> Permutation {
     let h = SEQUENTIAL_H;
-    let mut hits = 0;
-    let mut used = draws.len();
-    for (d, draw) in draws.iter().enumerate() {
-        if let NullDraw::Value(v) = draw {
-            if permutation::extreme(*v, observed) {
-                hits += 1;
-                if hits == h {
-                    used = d + 1;
-                    break;
-                }
-            }
-        }
-    }
-    let read = &draws[..used];
+    let used = read.len();
     let valid: Vec<f64> = read
         .iter()
         .filter_map(|d| match d {
@@ -510,5 +633,19 @@ fn within_person(columns: &[input::Column<'_>], ids: &[i64], pair_rows: &[usize]
         n: n as u64,
         outcome: estimators::point(estimator, false, &people, &vec![1.0; n], None)
             .map_err(kernels::Status::reason),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ci_level_and_wald_z_agree() {
+        let z = kernels::ndtri(0.5 + CI_LEVEL / 2.0);
+        assert!(
+            (z - WALD_Z).abs() <= 2.0 * f64::EPSILON * WALD_Z,
+            "{z} vs {WALD_Z}"
+        );
     }
 }

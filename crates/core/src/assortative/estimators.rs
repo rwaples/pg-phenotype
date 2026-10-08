@@ -190,6 +190,17 @@ impl Tables {
 
     /// NLL and its first two ρ-derivatives (Olsson 1979 eqs 3, 4, 9).
     pub fn terms(&self, rho: f64) -> Terms {
+        self.accumulate(rho, true)
+    }
+
+    /// The first two ρ-derivatives of the NLL alone (`nll` is 0), as a
+    /// bootstrap draw's one Newton step needs.
+    pub fn grad_hess(&self, rho: f64) -> (f64, f64) {
+        let t = self.accumulate(rho, false);
+        (t.grad, t.hess)
+    }
+
+    fn accumulate(&self, rho: f64, with_nll: bool) -> Terms {
         let (mut nll, mut grad, mut hess) = (0.0, 0.0, 0.0);
         for &combo in &self.combos {
             let cdf = self.grid(combo, |h, k| bvn::cdf(h, k, rho));
@@ -202,7 +213,9 @@ impl Tables {
                         let pi = corner(&cdf, i, j).max(TINY);
                         let score = corner(&pdf, i, j) / pi;
                         let curvature = corner(&drho, i, j) / pi - score * score;
-                        nll += count * pi.ln();
+                        if with_nll {
+                            nll += count * pi.ln();
+                        }
                         grad += count * score;
                         hess += count * curvature;
                     }

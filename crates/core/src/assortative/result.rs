@@ -162,7 +162,7 @@ impl CiMethod {
     }
 }
 
-/// A 95% interval and how it was built.
+/// An interval at the result's `ci_level` and how it was built.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ci {
     pub bounds: [f64; 2],
@@ -218,8 +218,9 @@ pub struct Permutation {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Estimate {
     pub point: Point,
-    /// The Mate Network cluster-robust sandwich SE, on the estimator's
-    /// [`CiScale`].
+    /// The Mate Network cluster-robust sandwich SE, on the scale of the
+    /// estimate: a correlation's raw r (its Wald interval converts it to
+    /// Fisher z), the odds ratio's log.
     pub se: Result<f64, Reason>,
     pub ci: Result<Ci, Reason>,
     /// Present when a bootstrap was requested.
