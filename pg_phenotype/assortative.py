@@ -20,6 +20,7 @@ import numpy as np
 from pg_phenotype import _native
 from pg_phenotype._errors import ParameterError, ValidationError
 from pg_phenotype._input import floats, pedigree_arrays
+from pg_phenotype._memory import release_free_memory
 from pg_phenotype._threads import thread_budget
 from pg_phenotype._trait import Trait
 
@@ -341,6 +342,7 @@ def mate_correlation(
         (np.ascontiguousarray(t.values), t.kind, None if t.levels is None else len(t.levels)) for t in trait_list
     ]
     labels, known = (None, None) if stratum is None else _strata(stratum)
+    release_free_memory()
     raw = _native.mate_correlation(
         cols.id,
         cols.mother,
