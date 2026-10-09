@@ -289,6 +289,7 @@ def mate_correlation(
     bootstrap: int = 0,
     seed: int = 0,
     min_stratum_networks: int = 10,
+    spearman: bool = False,
 ) -> MateCorrelation:
     """The Mate Correlation of one or two traits over *pedigree*'s Mating Pairs.
 
@@ -313,6 +314,9 @@ def mate_correlation(
             CI from its sandwich SE.
         seed: Keys every permutation and bootstrap draw (int64).
         min_stratum_networks: The thin-stratum rule, used only with *stratum*.
+        spearman: Add Spearman to the crude estimators of a continuous x
+            continuous cell.  Off by default: it ranks every pair, which costs
+            more than the rest of such a cell.
 
     Returns:
         A :class:`MateCorrelation`.
@@ -334,6 +338,8 @@ def mate_correlation(
         (np.ascontiguousarray(t.values), t.kind, None if t.levels is None else len(t.levels)) for t in trait_list
     ]
     labels, known = (None, None) if stratum is None else _strata(stratum)
+    if not isinstance(spearman, (bool, np.bool_)):
+        raise TypeError(f"spearman must be a bool, got {spearman!r}")
     release_free_memory()
     raw = _native.mate_correlation(
         cols.id,
@@ -348,6 +354,7 @@ def mate_correlation(
         bootstrap=_count("bootstrap", bootstrap),
         seed=_count("seed", seed),
         min_stratum_networks=_count("min_stratum_networks", min_stratum_networks),
+        spearman=bool(spearman),
         threads=thread_budget(),
     )
     s = raw["sample"]

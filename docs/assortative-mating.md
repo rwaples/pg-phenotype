@@ -24,13 +24,14 @@ res = mate_correlation(
     bootstrap=0,
     seed=0,
     min_stratum_networks=10,
+    spearman=False,
 )
 ```
 
 ```r
 res <- assortative_mate_correlation(ped, list(trait(ped$liability), trait(ped$dx, kind = "binary")),
                                     stratum = ped$birth_decade, permutations = 999, bootstrap = 0,
-                                    seed = 0, min_stratum_networks = 10)
+                                    seed = 0, min_stratum_networks = 10, spearman = FALSE)
 ```
 
 | Argument | Meaning | Default |
@@ -42,6 +43,7 @@ res <- assortative_mate_correlation(ped, list(trait(ped$liability), trait(ped$dx
 | `bootstrap` | Mate Network bootstrap draws. 0 gives sandwich (Wald) CIs | 0 |
 | `seed` | Keys every permutation and bootstrap draw. Any int64 (R: a whole number below 2^53 in magnitude) | 0 |
 | `min_stratum_networks` | With `stratum`, the fewest Mate Networks a sex x stratum may span. At least 1 | 10 |
+| `spearman` | Add `spearman` to a continuous x continuous cell. It ranks every pair, which costs more than the rest of such a cell | `False` |
 
 The thread count is the package budget (`configure_threads`, or
 `PG_PHENOTYPE_THREADS`).  The same input and `seed` give the same result
@@ -112,7 +114,7 @@ permutation p-value.
 
 | Mother x father | Primary | Also reported |
 |---|---|---|
-| continuous x continuous | `pearson` | `spearman` |
+| continuous x continuous | `pearson` | `spearman`, with `spearman=True` |
 | binary x binary | `tetrachoric` | `odds_ratio`, `phi`, and `table` (the 2 x 2 counts) |
 | binary x ordinal, ordinal x binary, ordinal x ordinal | `polychoric` | |
 | continuous x binary, binary x continuous | `biserial` | `point_biserial` |
@@ -239,7 +241,7 @@ values come as nested lists with the same names, `NULL` where Python has
 | `sample` | `n_total` (Mating Pairs), `n_dropped_unknown_stratum`, `n_mate_networks`, `largest_mate_network_share`, `n_mothers_multiple_mates`, `n_fathers_multiple_mates` |
 | `cells` | One `Cell` per cell, in the order above |
 | `within_person` | Two traits only: `{"mothers": WithinPerson, "fathers": WithinPerson}` |
-| `settings` | `permutations`, `bootstrap`, `seed`, `threads`, `ci_level` (0.95), `min_stratum_networks` (`None` without `stratum`) |
+| `settings` | `permutations`, `bootstrap`, `seed`, `threads`, `ci_level` (0.95), `min_stratum_networks` (`None` without `stratum`), `spearman` |
 | `method` | `se_method`, `ci_scale`, `bootstrap_unit`, `bootstrap_assumption`, `bootstrap_method`, `permutation_null`, `permutation_blocks`, `permutation_statistic`, `permutation_stopping`, `permutation_stop_h`: the method in words |
 | `metadata` | `pg_phenotype_version`, `pedigree_graph_core_rev` |
 

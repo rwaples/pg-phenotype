@@ -31,6 +31,12 @@
   as.double(x)
 }
 
+# One TRUE or FALSE.
+.pgp_flag <- function(x, name, call = sys.call(-1L)) {
+  if (!is.logical(x) || length(x) != 1L || is.na(x)) .pgp_usage(sprintf("`%s` must be TRUE or FALSE", name), call)
+  x
+}
+
 # A numeric or logical vector as doubles, NA kept.
 .pgp_doubles <- function(x, name, call = sys.call(-1L)) {
   if (!(is.numeric(x) || is.logical(x))) {

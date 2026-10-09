@@ -36,7 +36,8 @@ run_case <- function(case) {
   stratum <- if (isTRUE(as.logical(case$stratified))) data$stratum else NULL
   assortative_mate_correlation(
     data[c("id", "mother", "father")], traits, stratum = stratum, permutations = case$permutations,
-    bootstrap = case$bootstrap, seed = case$seed, min_stratum_networks = case$min_stratum_networks
+    bootstrap = case$bootstrap, seed = case$seed, min_stratum_networks = case$min_stratum_networks,
+    spearman = TRUE
   )
 }
 
@@ -79,7 +80,10 @@ test_that("one trait gives one cell, no within-person block, and the method desc
   expect_s3_class(r, "pgphenotype_mate_correlation")
   expect_length(r$cells, 1L)
   expect_null(r$within_person)
-  expect_identical(r$cells[[1L]]$crude[[1L]]$estimator, "pearson")
+  expect_identical(vapply(r$cells[[1L]]$crude, `[[`, "", "estimator"), "pearson")
+  expect_false(r$settings$spearman)
+  with_spearman <- assortative_mate_correlation(ped, x, permutations = 49, spearman = TRUE)
+  expect_identical(vapply(with_spearman$cells[[1L]]$crude, `[[`, "", "estimator"), c("pearson", "spearman"))
   expect_identical(r$method$permutation_stop_h, 20L)
   expect_identical(r$metadata$pedigree_graph_core_rev, pg_core_rev())
   expect_output(print(r), "4 Mating Pairs")
@@ -107,6 +111,8 @@ test_that("input errors carry the core's codes", {
   expect_pgp_error(assortative_mate_correlation(ped, x, stratum = rep(1, 12), min_stratum_networks = 0),
                    "parameter", "parameter_out_of_range")
   expect_pgp_error(assortative_mate_correlation(ped, x, seed = 0.5), "usage")
+  expect_pgp_error(assortative_mate_correlation(ped, x, spearman = NA), "usage")
+  expect_pgp_error(assortative_mate_correlation(ped, x, spearman = 1), "usage")
   # Outside int64 is a parameter error, as in Python; inside, a whole double is a seed.
   err <- expect_pgp_error(assortative_mate_correlation(ped, x, seed = 2^63), "parameter", "parameter_out_of_range")
   expect_identical(err$fields$name, "seed")

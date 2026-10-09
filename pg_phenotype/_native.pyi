@@ -81,5 +81,6 @@ def mate_correlation(
     bootstrap: int,
     seed: int,
     min_stratum_networks: int,
+    spearman: bool,
     threads: int,
 ) -> dict[str, Any]: ...

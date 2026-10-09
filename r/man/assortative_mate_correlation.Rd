@@ -11,7 +11,8 @@ assortative_mate_correlation(
   permutations = 999,
   bootstrap = 0,
   seed = 0,
-  min_stratum_networks = 10
+  min_stratum_networks = 10,
+  spearman = FALSE
 )
 }
 \arguments{
@@ -36,6 +37,10 @@ Wald CI from its sandwich SE.}
 \item{seed}{Keys every permutation and bootstrap draw (a whole number).}
 
 \item{min_stratum_networks}{The thin-stratum rule, used only with `stratum`.}
+
+\item{spearman}{Add Spearman to the crude estimators of a continuous x
+continuous cell.  Off by default: it ranks every pair, which costs
+more than the rest of such a cell.}
 }
 \value{
 An object of class `pgphenotype_mate_correlation`: a list with

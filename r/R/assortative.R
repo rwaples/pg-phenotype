@@ -24,6 +24,9 @@
 #'   Wald CI from its sandwich SE.
 #' @param seed Keys every permutation and bootstrap draw (a whole number).
 #' @param min_stratum_networks The thin-stratum rule, used only with `stratum`.
+#' @param spearman Add Spearman to the crude estimators of a continuous x
+#'   continuous cell.  Off by default: it ranks every pair, which costs
+#'   more than the rest of such a cell.
 #' @return An object of class `pgphenotype_mate_correlation`: a list with
 #'   `sample`, `cells` (mother trait 1 x father trait 1, then 1 x 2, 2 x 1,
 #'   2 x 2), `within_person` (with two traits), `settings`, `method` (the
@@ -43,7 +46,7 @@
 #' r
 #' @export
 assortative_mate_correlation <- function(pedigree, traits, stratum = NULL, permutations = 999, bootstrap = 0,
-                                         seed = 0, min_stratum_networks = 10) {
+                                         seed = 0, min_stratum_networks = 10, spearman = FALSE) {
   call <- sys.call()
   if (!is.list(pedigree)) {
     .pgp_usage("`pedigree` must be a data frame or a named list of columns", call)
@@ -58,7 +61,8 @@ assortative_mate_correlation <- function(pedigree, traits, stratum = NULL, permu
     column("id"), column("mother"), column("father"), column("twin"), column("sex"),
     lapply(traits, `[[`, "values"), vapply(traits, `[[`, "", "kind"), n_levels, stratum,
     .pgp_number(permutations, "permutations", call), .pgp_number(bootstrap, "bootstrap", call),
-    .pgp_number(seed, "seed", call), .pgp_number(min_stratum_networks, "min_stratum_networks", call)
+    .pgp_number(seed, "seed", call), .pgp_number(min_stratum_networks, "min_stratum_networks", call),
+    .pgp_flag(spearman, "spearman", call)
   ), call)
   raw$metadata <- list(pg_phenotype_version = pgphenotype_version(), pedigree_graph_core_rev = pg_core_rev())
   structure(raw, class = "pgphenotype_mate_correlation")

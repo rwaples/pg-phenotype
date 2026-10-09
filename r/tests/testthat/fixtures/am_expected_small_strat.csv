@@ -307,6 +307,7 @@ settings.bootstrap,int,200
 settings.seed,int,9
 settings.ci_level,float,0x1.e666666666666p-1
 settings.min_stratum_networks,int,2
+settings.spearman,bool,TRUE
 method.se_method,str,"cluster-robust sandwich over Mate Networks of the stacked two-step estimating equations (thresholds, stratum means and variances, then rho), G/(G-1) small-sample factor"
 method.ci_scale,str,"Fisher z for correlations, log for the odds ratio"
 method.bootstrap_unit,str,mate_network

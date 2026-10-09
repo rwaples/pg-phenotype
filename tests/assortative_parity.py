@@ -26,14 +26,14 @@ LATENT = {"tetrachoric", "polychoric", "biserial", "polyserial"}
 
 
 def run(g: Golden, threads: int = 1) -> dict:
-    """The native result of fixture ``g`` with its settings."""
+    """The native result of fixture ``g`` with its settings, with Spearman, which pedsum always computes."""
     traits = [(np.ascontiguousarray(v), k, n) for v, k, n in zip(g.values, g.kinds, g.n_levels, strict=True)]
     labels, known = (g.stratum_labels, g.stratum_known) if g.stratified else (None, None)
     s = g.settings
     return _native.mate_correlation(
         g.id, g.mother, g.father, None, None, traits, labels, known,
         permutations=s["permutations"], bootstrap=s["bootstrap"], seed=s["seed"],
-        min_stratum_networks=s["min_stratum_networks"], threads=threads,
+        min_stratum_networks=s["min_stratum_networks"], spearman=True, threads=threads,
     )  # fmt: skip
 
 

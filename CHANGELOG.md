@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+`mate_correlation` computes Spearman only when asked: pass `spearman=True`
+(R: `spearman = TRUE`) to keep a continuous x continuous cell's `spearman`
+record.  The result's `settings` echo `spearman`.  Every other value is
+unchanged.
+
+- `mate_correlation` takes about half the time and less memory: on a
+  1M-row pedigree (401,523 Mating Pairs) with two continuous traits and
+  `permutations=0`, the median call fell from 1.2 s to 0.6 s, and from
+  16 s to 5.6 s at 5.4M rows, where the peak memory fell from +1.1 GB to
+  +0.65 GB.  With `permutations=0` the per-cell pairs are no longer kept
+  for the permutation test, the Mate Networks of a cell with no missing
+  values are reused, and the father lookups use a row index.
+
 ## v0.2.0
 
 Error details are stable and the same in Python and R: `reason` fields are

@@ -15,7 +15,7 @@ pub struct Strata<'a> {
     pub known: &'a [bool],
 }
 
-/// Draw counts, the seed, and the thin-stratum rule.
+/// Draw counts, the seed, the thin-stratum rule, and the optional estimators.
 #[derive(Clone, Copy, Debug)]
 pub struct Settings {
     /// Father permutations per primary estimate; 0 turns them off.
@@ -27,16 +27,19 @@ pub struct Settings {
     /// With strata, a sex x stratum is kept only when a cell's pairs in it
     /// span at least this many Mate Networks.
     pub min_stratum_networks: i64,
+    /// Add Spearman to a continuous x continuous cell's crude estimators.
+    pub spearman: bool,
 }
 
 impl Default for Settings {
-    /// pedsum's CLI defaults.
+    /// pedsum's CLI defaults, without Spearman, which pedsum always computes.
     fn default() -> Settings {
         Settings {
             permutations: 999,
             bootstrap: 0,
             seed: 0,
             min_stratum_networks: 10,
+            spearman: false,
         }
     }
 }
@@ -48,6 +51,7 @@ pub(crate) struct Checked {
     pub bootstrap: u64,
     pub seed: i64,
     pub min_stratum_networks: u64,
+    pub spearman: bool,
 }
 
 impl Settings {
@@ -68,6 +72,7 @@ impl Settings {
             bootstrap: count("bootstrap", self.bootstrap, 0)?,
             seed: self.seed,
             min_stratum_networks: count("min_stratum_networks", self.min_stratum_networks, 1)?,
+            spearman: self.spearman,
         })
     }
 }

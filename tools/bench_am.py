@@ -127,7 +127,7 @@ def run_pg(args: argparse.Namespace) -> None:
     stratum = d["stratum"] if args.config == "b" else None
     start = time.perf_counter()
     out = mate_correlation(
-        ped, traits, stratum=stratum, permutations=args.permutations, bootstrap=args.bootstrap, seed=0
+        ped, traits, stratum=stratum, permutations=args.permutations, bootstrap=args.bootstrap, seed=0, spearman=True
     )
     wall = time.perf_counter() - start
     used = [

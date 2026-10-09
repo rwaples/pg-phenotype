@@ -177,41 +177,65 @@ fn kernel_draw(k: Result<f64, Status>) -> Draw {
     }
 }
 
-/// Continuous x continuous: exact Pearson, Spearman and stratified Pearson.
+/// Continuous x continuous: exact Pearson, Spearman when fitted, and stratified Pearson.
 fn continuous(pairs: &CellPairs, plan: Resample<'_>, fitted: Fitted<'_>) -> Vec<(Key, Vec<Draw>)> {
-    let labels = plan.labels;
     let stratified = fitted.has((Estimator::Pearson, true));
-    let order_m = argsort(&pairs.m);
-    let order_f = argsort(&pairs.f);
-    let mut inv_f = vec![0; order_f.len()];
-    for (t, &i) in order_f.iter().enumerate() {
-        inv_f[i] = t;
-    }
-    let m_sorted: Vec<f64> = order_m.iter().map(|&i| pairs.m[i]).collect();
-    let f_sorted: Vec<f64> = order_f.iter().map(|&i| pairs.f[i]).collect();
-    let labels_m: Vec<usize> = order_m.iter().map(|&i| labels[i]).collect();
-    let labels_f: Vec<usize> = order_f.iter().map(|&i| labels[i]).collect();
-    let f_pos: Vec<usize> = order_m.iter().map(|&i| inv_f[i]).collect();
+    let ranks = fitted
+        .has((Estimator::Spearman, false))
+        .then(|| SortedPairs::new(pairs, plan.labels));
     let (n_m, n_f) = pairs.n_strata();
-    let mut keys = vec![(Estimator::Pearson, false), (Estimator::Spearman, false)];
+    let mut keys = vec![(Estimator::Pearson, false)];
+    if ranks.is_some() {
+        keys.push((Estimator::Spearman, false));
+    }
     if stratified {
         keys.push((Estimator::Pearson, true));
     }
     run(plan, keys, true, |w, mult, rank_f| {
         let mut out = vec![kernel_draw(pearson(&pairs.m, &pairs.f, w, false))];
-        rank_f.resize(f_sorted.len(), 0.0);
-        sorted_ranks_into(rank_f, &f_sorted, |t| mult[labels_f[t]] as f64);
-        out.push(kernel_draw(spearman_sorted(
-            &m_sorted,
-            |q| mult[labels_m[q]] as f64,
-            rank_f,
-            &f_pos,
-        )));
+        if let Some(s) = &ranks {
+            rank_f.resize(s.f_sorted.len(), 0.0);
+            sorted_ranks_into(rank_f, &s.f_sorted, |t| mult[s.labels_f[t]] as f64);
+            out.push(kernel_draw(spearman_sorted(
+                &s.m_sorted,
+                |q| mult[s.labels_m[q]] as f64,
+                rank_f,
+                &s.f_pos,
+            )));
+        }
         if stratified {
             out.push(kernel_draw(stratified_pearson(pairs, n_m, n_f, w)));
         }
         out
     })
+}
+
+/// A cell's pairs in each side's sorted order, for Spearman on a draw.
+struct SortedPairs {
+    m_sorted: Vec<f64>,
+    f_sorted: Vec<f64>,
+    labels_m: Vec<usize>,
+    labels_f: Vec<usize>,
+    /// Each pair, in `m`'s sorted order, as a position in `f`'s.
+    f_pos: Vec<usize>,
+}
+
+impl SortedPairs {
+    fn new(pairs: &CellPairs, labels: &[usize]) -> SortedPairs {
+        let order_m = argsort(&pairs.m);
+        let order_f = argsort(&pairs.f);
+        let mut inv_f = vec![0; order_f.len()];
+        for (t, &i) in order_f.iter().enumerate() {
+            inv_f[i] = t;
+        }
+        SortedPairs {
+            m_sorted: order_m.iter().map(|&i| pairs.m[i]).collect(),
+            f_sorted: order_f.iter().map(|&i| pairs.f[i]).collect(),
+            labels_m: order_m.iter().map(|&i| labels[i]).collect(),
+            labels_f: order_f.iter().map(|&i| labels[i]).collect(),
+            f_pos: order_m.iter().map(|&i| inv_f[i]).collect(),
+        }
+    }
 }
 
 /// Weighted Pearson of the ranks, walked in `m`'s sorted order and centred

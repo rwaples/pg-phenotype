@@ -13,15 +13,37 @@ pub(crate) fn mating_pairs(
     mother_rows: &[i32],
     father_rows: &[i32],
 ) -> (Vec<usize>, Vec<usize>) {
-    let mut keys: Vec<(i64, i64, usize, usize)> = mother_rows
+    // Rows are unique, non-negative i32: (mother, father) packs into one u64
+    // whose order is row order, which is id order when ids ascend by row.
+    let mut keys: Vec<u64> = mother_rows
         .iter()
         .zip(father_rows)
         .filter(|(&m, &f)| m >= 0 && f >= 0)
-        .map(|(&m, &f)| (ids[m as usize], ids[f as usize], m as usize, f as usize))
+        .map(|(&m, &f)| (m as u64) << 32 | f as u64)
         .collect();
     keys.sort_unstable();
-    keys.dedup_by_key(|k| (k.0, k.1));
-    keys.into_iter().map(|k| (k.2, k.3)).unzip()
+    keys.dedup();
+    let rows = |k: u64| ((k >> 32) as usize, k as u32 as usize);
+    if !ids.is_sorted() {
+        keys.sort_unstable_by_key(|&k| {
+            let (m, f) = rows(k);
+            (ids[m], ids[f])
+        });
+    }
+    keys.into_iter().map(rows).unzip()
+}
+
+/// The distinct rows of `pair_rows`, in id order.
+pub(crate) fn distinct_rows(pair_rows: &[usize], ids: &[i64]) -> Vec<usize> {
+    let mut seen = vec![false; ids.len()];
+    for &r in pair_rows {
+        seen[r] = true;
+    }
+    let mut rows: Vec<usize> = (0..ids.len()).filter(|&r| seen[r]).collect();
+    if !ids.is_sorted() {
+        rows.sort_unstable_by_key(|&r| ids[r]);
+    }
+    rows
 }
 
 fn find(parent: &mut [usize], mut x: usize) -> usize {
@@ -74,11 +96,8 @@ pub(crate) fn network_summary(labels: &[usize]) -> (u64, Option<f64>) {
 
 /// Dense stratum code per row: the rank of its label among every row's
 /// distinct label, unknown ranked first (pedsum's `-1`).  `None` is the
-/// unknown code itself; without strata every row is code 0.
-pub(crate) fn stratum_codes(strata: Option<Strata<'_>>, n_rows: usize) -> Vec<Option<usize>> {
-    let Some(strata) = strata else {
-        return vec![Some(0); n_rows];
-    };
+/// unknown code itself.
+pub(crate) fn stratum_codes(strata: Strata<'_>) -> Vec<Option<usize>> {
     let mut known: Vec<i64> = strata
         .labels
         .iter()
@@ -284,17 +303,11 @@ mod tests {
             labels: &labels,
             known: &[true, true, false, true],
         };
-        assert_eq!(
-            stratum_codes(Some(strata), 4),
-            vec![Some(2), Some(1), None, Some(1)]
-        );
+        assert_eq!(stratum_codes(strata), vec![Some(2), Some(1), None, Some(1)]);
         let all = Strata {
             labels: &labels,
             known: &[true; 4],
         };
-        assert_eq!(
-            stratum_codes(Some(all), 4),
-            vec![Some(2), Some(1), Some(0), Some(1)]
-        );
+        assert_eq!(stratum_codes(all), vec![Some(2), Some(1), Some(0), Some(1)]);
     }
 }

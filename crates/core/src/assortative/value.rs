@@ -205,6 +205,7 @@ impl MateCorrelation {
                     ("threads", (e.threads as u64).into()),
                     ("ci_level", e.ci_level.into()),
                     ("min_stratum_networks", e.min_stratum_networks.into()),
+                    ("spearman", Value::Bool(e.spearman)),
                 ]),
             ),
             (

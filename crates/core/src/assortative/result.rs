@@ -315,6 +315,7 @@ pub struct SettingsEcho {
     pub ci_level: f64,
     /// `Some` with strata.
     pub min_stratum_networks: Option<u64>,
+    pub spearman: bool,
 }
 
 /// The method description: what pedsum writes as its `inference` block.

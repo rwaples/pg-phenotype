@@ -719,7 +719,7 @@ def permutation_payload() -> object:
 def bootstrap_payload() -> object:
     """pedsum test_assortative_bootstrap ``_payload``: run in a subprocess with a set thread budget."""
     ped, traits, strata = _frame_traits(21, 300)
-    return b.plain(mate_correlation(ped, traits, stratum=strata, permutations=0, bootstrap=150, seed=4))
+    return b.plain(mate_correlation(ped, traits, stratum=strata, permutations=0, bootstrap=150, seed=4, spearman=True))
 
 
 def _payload_with_threads(name: str, threads: int) -> dict:
@@ -799,11 +799,32 @@ def test_payload_records_stopping_per_cell():
     assert xb.p == 20 / xb.draws.valid
 
 
+def test_spearman_is_opt_in_and_leaves_the_rest_unchanged():
+    """Spearman runs only when asked; asking changes no other record, draw or count."""
+    ped, traits, strata = _frame_traits(2, 150)
+    without, with_spearman = (
+        b.plain(mate_correlation(ped, traits, stratum=strata, permutations=49, bootstrap=50, seed=3, spearman=s))
+        for s in (False, True)
+    )
+    assert [r["estimator"] for r in with_spearman["cells"][0]["crude"]] == ["pearson", "spearman"]
+    assert [r["estimator"] for r in without["cells"][0]["crude"]] == ["pearson"]
+    assert (without["settings"].pop("spearman"), with_spearman["settings"].pop("spearman")) == (False, True)
+    for cell in with_spearman["cells"]:
+        cell["crude"] = [r for r in cell["crude"] if r["estimator"] != "spearman"]
+    assert without == with_spearman
+
+
+def test_spearman_must_be_a_bool():
+    ped, traits, _ = _frame_traits(2, 20)
+    with pytest.raises(TypeError, match="spearman must be a bool"):
+        mate_correlation(ped, traits[:1], permutations=0, spearman=1)
+
+
 def test_spearman_ci_needs_the_bootstrap():
     """pedsum test_spearman_ci_needs_the_bootstrap: no sandwich for Spearman, the bootstrap gives it a percentile CI."""
     ped, traits, _ = _frame_traits(2, 120)
     without, with_bootstrap = (
-        mate_correlation(ped, traits[:1], permutations=0, bootstrap=n, seed=0).cells[0] for n in (0, 50)
+        mate_correlation(ped, traits[:1], permutations=0, bootstrap=n, seed=0, spearman=True).cells[0] for n in (0, 50)
     )
     assert without["spearman"].ci is None
     assert without["spearman"].ci_unavailable_reason == "bootstrap_not_requested"
@@ -904,7 +925,7 @@ def test_single_network_and_spearman_reasons():
     ped = b.pedigree(pairs)
     rng = np.random.default_rng(9)
     values = {p: float(v) for p, v in zip([p for pair in pairs for p in pair], rng.normal(size=80), strict=True)}
-    cell = mate_correlation(ped, _continuous(ped, values), permutations=0, bootstrap=0, seed=0).cells[0]
+    cell = mate_correlation(ped, _continuous(ped, values), permutations=0, bootstrap=0, seed=0, spearman=True).cells[0]
     spearman = cell["spearman"]
     assert isinstance(spearman.value, float)
     assert (spearman.se, spearman.ci, spearman.ci_method) == (None, None, None)
@@ -1018,7 +1039,7 @@ def test_dataclass_fields_are_the_core_tree_keys():
         ped["id"], ped["mother"], ped["father"], None, None,
         [(np.ascontiguousarray(x), "continuous", None), (np.ascontiguousarray(bb), "binary", None)],
         labels, ~np.isnan(strata),
-        permutations=19, bootstrap=19, seed=0, min_stratum_networks=2, threads=1,
+        permutations=19, bootstrap=19, seed=0, min_stratum_networks=2, spearman=True, threads=1,
     )  # fmt: skip
 
     def names(cls):

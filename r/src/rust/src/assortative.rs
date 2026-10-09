@@ -55,6 +55,7 @@ fn mate_correlation_impl(
     n_levels: &Robj,
     stratum: &Robj,
     counts: [&Robj; 4],
+    spearman: bool,
 ) -> HostResult<Robj> {
     let pedigree = Pedigree::coerce(columns)?;
     let [permutations, bootstrap, seed, min_stratum_networks] = counts;
@@ -85,6 +86,7 @@ fn mate_correlation_impl(
         bootstrap: whole("bootstrap", bootstrap)?,
         seed: whole("seed", seed)?,
         min_stratum_networks: whole("min_stratum_networks", min_stratum_networks)?,
+        spearman,
     };
     let pool = threads::pool()?;
     let result = pool.install(|| {
@@ -117,6 +119,7 @@ fn assortative_mate_correlation(
     bootstrap: Robj,
     seed: Robj,
     min_stratum_networks: Robj,
+    spearman: bool,
 ) -> Robj {
     finish(mate_correlation_impl(
         [id, mother, father, twin, sex],
@@ -125,6 +128,7 @@ fn assortative_mate_correlation(
         &n_levels,
         &stratum,
         [&permutations, &bootstrap, &seed, &min_stratum_networks],
+        spearman,
     ))
 }
 
