@@ -19,7 +19,7 @@
 )]
 
 /// The pedigree-graph revision this build links, as `Cargo.toml` pins it.
-pub const PG_CORE_REV: &str = "62c82fa6468aec0f579dc9286c5dbebe7d077500";
+pub const PG_CORE_REV: &str = "66595d3371d2f8c68622b7b98f597af56818a77c";
 
 pub mod assortative;
 pub mod error;
@@ -48,4 +48,14 @@ pub fn configure_pool(
     threads: std::num::NonZeroUsize,
 ) -> Result<&'static rayon::ThreadPool, Error> {
     Ok(pedigree_graph_core::pool::configure(threads)?)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pg_core_rev_is_the_rev_cargo_toml_pins() {
+        let manifest = include_str!("../../../Cargo.toml");
+        let pin = format!("rev = \"{}\"", super::PG_CORE_REV);
+        assert!(manifest.contains(&pin), "Cargo.toml does not pin {pin}");
+    }
 }
