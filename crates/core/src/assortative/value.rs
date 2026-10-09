@@ -141,10 +141,7 @@ fn cell(c: &Cell) -> Value {
 }
 
 fn within(w: &WithinPerson) -> Value {
-    let mut out = vec![
-        ("estimator", w.estimator.name().into()),
-        ("n", w.n.into()),
-    ];
+    let mut out = vec![("estimator", w.estimator.name().into()), ("n", w.n.into())];
     match &w.outcome {
         Ok(p) => {
             point(&mut out, p);
@@ -170,14 +167,23 @@ impl MateCorrelation {
                 "sample",
                 Value::Map(vec![
                     ("n_total", s.n_total.into()),
-                    ("n_dropped_unknown_stratum", s.n_dropped_unknown_stratum.into()),
+                    (
+                        "n_dropped_unknown_stratum",
+                        s.n_dropped_unknown_stratum.into(),
+                    ),
                     ("n_mate_networks", s.n_mate_networks.into()),
                     (
                         "largest_mate_network_share",
                         s.largest_mate_network_share.into(),
                     ),
-                    ("n_mothers_multiple_mates", s.n_mothers_multiple_mates.into()),
-                    ("n_fathers_multiple_mates", s.n_fathers_multiple_mates.into()),
+                    (
+                        "n_mothers_multiple_mates",
+                        s.n_mothers_multiple_mates.into(),
+                    ),
+                    (
+                        "n_fathers_multiple_mates",
+                        s.n_fathers_multiple_mates.into(),
+                    ),
                 ]),
             ),
             ("cells", Value::List(self.cells.iter().map(cell).collect())),
