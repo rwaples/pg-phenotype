@@ -11,6 +11,7 @@ import pytest
 
 import pg_phenotype
 from pg_phenotype import pafgrs
+from pg_phenotype._input import pedigree_arrays
 from tests.pedigrees import random_pedigree
 from tests.scoring_fixtures import Case, random_trait
 
@@ -96,6 +97,19 @@ def test_ids_outside_int64_are_rejected(ids, position):
     assert err.value.code == "invalid_integer_value"
     assert err.value.fields["field"] == "id"
     assert err.value.fields["position"] == position
+
+
+def test_object_ids_are_taken_exactly():
+    big = 2**53
+    ped = {
+        "id": np.array([big, big + 1, big + 2, 2**63 - 1], dtype=object),
+        "mother": [None, None, big + 1, pd.NA],
+        "father": [None, None, float("nan"), None],
+    }
+    arrays = pedigree_arrays(ped)
+    assert arrays.id.tolist() == [big, big + 1, big + 2, 2**63 - 1]
+    assert arrays.mother.tolist() == [-1, -1, big + 1, -1]
+    assert arrays.father.tolist() == [-1, -1, -1, -1]
 
 
 def test_missingness_rules():
@@ -268,6 +282,7 @@ def test_metadata_names_versions(case):
 _SCORES = """
 import sys, numpy as np
 from pg_phenotype import pafgrs
+from pg_phenotype._input import pedigree_arrays
 sys.path.insert(0, {root!r})
 from tests.pedigrees import random_pedigree
 from tests.scoring_fixtures import Case, random_trait

@@ -9,7 +9,9 @@
 - Python rejects pedigree ids and stratum labels outside `[-2^63, 2^63)` with
   `invalid_integer_value`, as R does, where it cast them to wrong int64
   values.  A non-numeric object entry raises `invalid_integer_value` too,
-  not a bare `ValueError`.
+  not a bare `ValueError`.  An object column (a list holding `None`) takes
+  its integers exactly: an id past 2^53 was rounded to a neighbour's id,
+  and `2^63 - 1` was refused.  `None`, NaN and `pd.NA` are all missing.
 - Rust: `BivParams`'s fields are private, so every value has passed
   `BivParams::new`; read them through `h2()`, `rg()` and `rho_within()`.
 - Error `reason` fields are stable slugs instead of English prose:

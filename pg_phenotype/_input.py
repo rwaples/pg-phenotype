@@ -62,16 +62,43 @@ def as_int64(floats: np.ndarray, known: np.ndarray, name: str, *, what: str = "a
     return whole.astype(np.int64)
 
 
-def as_float64(values: np.ndarray, name: str) -> np.ndarray:
-    """*values* (float or object) as float64, None as NaN; a structured error otherwise."""
-    if values.dtype != object:
-        return np.asarray(values, dtype=np.float64)
-    out = np.empty(len(values), dtype=np.float64)
+def _is_missing(value: object) -> bool:
+    """None, a float NaN, or pandas' ``NA``: what an object column holds for a missing entry."""
+    if value is None or type(value).__name__ == "NAType":
+        return True
+    return isinstance(value, float | np.floating) and bool(np.isnan(value))
+
+
+def _missing_id(name: str, position: int) -> ValidationError:
+    return ValidationError(
+        "invalid_integer_value", f"{name}[{position}] is missing", field=name, position=position, value=None
+    )
+
+
+def _object_ids(values: np.ndarray, name: str, *, missing_ok: bool) -> np.ndarray:
+    """An object column as int64, ``-1`` for a missing entry.
+
+    Integers are taken exactly, so an id past ``2^53`` keeps its value; a
+    float must be whole.  Either must lie in ``[-2^63, 2^63)``.
+    """
+    out = np.empty(len(values), dtype=np.int64)
     for position, v in enumerate(values):
-        try:
-            out[position] = np.nan if v is None else float(v)
-        except (TypeError, ValueError):
-            raise _bad_integer(name, position, None, f"({v!r}) is not a number") from None
+        if _is_missing(v):
+            if not missing_ok:
+                raise _missing_id(name, position)
+            out[position] = -1
+            continue
+        if isinstance(v, int | np.integer):
+            whole = int(v)
+        elif isinstance(v, float | np.floating):
+            if not float(v).is_integer():
+                raise _bad_integer(name, position, float(v), "is not an integer")
+            whole = int(v)
+        else:
+            raise _bad_integer(name, position, None, f"({v!r}) is not a number")
+        if not -(2**63) <= whole < 2**63:
+            raise _bad_integer(name, position, float(whole), "is outside [-2^63, 2^63)")
+        out[position] = whole
     return out
 
 
@@ -89,15 +116,13 @@ def _ids(values: np.ndarray, name: str, *, missing_ok: bool) -> np.ndarray:
             position = int(too_big[0])
             raise _bad_integer(name, position, float(values[position]), "is outside [-2^63, 2^63)")
         return values.astype(np.int64)
-    if values.dtype.kind == "f" or values.dtype == object:
-        floats = as_float64(values, name)
-        missing = np.isnan(floats)
+    if values.dtype == object:
+        return _object_ids(values, name, missing_ok=missing_ok)
+    if values.dtype.kind == "f":
+        missing = np.isnan(values)
         if missing.any() and not missing_ok:
-            position = int(np.flatnonzero(missing)[0])
-            raise ValidationError(
-                "invalid_integer_value", f"{name}[{position}] is missing", field=name, position=position, value=None
-            )
-        return as_int64(floats, ~missing, name)
+            raise _missing_id(name, int(np.flatnonzero(missing)[0]))
+        return as_int64(values.astype(np.float64, copy=False), ~missing, name)
     raise ValidationError(
         "invalid_integer_value", f"{name} has dtype {values.dtype}, not integer", field=name, position=0, value=None
     )
