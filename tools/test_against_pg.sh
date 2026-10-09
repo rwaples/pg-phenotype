@@ -66,6 +66,10 @@ PG_PHENOTYPE_REQUIRE_TEST_HOOKS=1 pytest -n 6 --dist worksteal
 if [ "${PG_PHENOTYPE_WITH_R:-0}" = "1" ]; then
   echo "== R suite"
   PG_PHENOTYPE_CARGO_FEATURES=test-hooks R CMD INSTALL --no-multiarch --preclean r
+  # --locked holds the check to the lock file the R build just wrote.
+  cargo tree --manifest-path r/src/rust/Cargo.toml --locked -i pedigree-graph-core --depth 0 \
+    | grep -qF "$PG/crates/core" \
+    || { echo "error: the R build did not take the patch: pedigree-graph-core is not $PG" >&2; exit 1; }
   PG_PHENOTYPE_REQUIRE_TEST_HOOKS=1 Rscript -e 'testthat::test_local("r", stop_on_failure = TRUE)'
 fi
 echo "== all suites pass against $PG"
