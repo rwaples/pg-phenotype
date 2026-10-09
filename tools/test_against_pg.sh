@@ -8,8 +8,9 @@
 # The pinned git dependency is redirected with a cargo [patch] in a private
 # CARGO_HOME (sharing the user's registry and git caches), so cargo, maturin
 # and R CMD INSTALL all see the same override.  The patch rewrites the lock
-# files, so both are restored on exit, and the editable extension is rebuilt
-# against the pin so the checkout is left as it was found.
+# files, so both are restored on exit, and the editable extension (and, after
+# an R run, the installed R package) is rebuilt against the pin so the checkout
+# is left as it was found.
 set -euo pipefail
 
 if [ $# -ne 1 ]; then
@@ -36,6 +37,11 @@ restore() {
   unset CARGO_HOME
   echo "== restoring the editable build against the pinned pedigree-graph-core"
   maturin develop --release --features test-hooks >/dev/null 2>&1 || echo "warning: rerun 'pixi run build-dev'" >&2
+  if [ -n "${R_INSTALLED:-}" ]; then
+    echo "== restoring the R package against the pinned pedigree-graph-core"
+    PG_PHENOTYPE_CARGO_FEATURES=test-hooks R CMD INSTALL --no-multiarch --preclean r >/dev/null 2>&1 \
+      || echo "warning: rerun 'pixi run -e r r-install'" >&2
+  fi
   rm -rf "$SCRATCH"
   exit "$status"
 }
@@ -49,12 +55,21 @@ cat > "$CARGO_HOME/config.toml" <<TOML
 [patch."https://github.com/rwaples/pedigree-graph"]
 pedigree-graph-core = { path = "$PG/crates/core" }
 TOML
+# Fail unless the lock file the last build wrote resolves pedigree-graph-core
+# to the candidate.  The output is captured whole: `grep -q` would close the
+# pipe early and, under pipefail, fail the check on cargo's SIGPIPE.
+check_patch() {
+  local what="$1" tree
+  shift
+  tree="$(cargo tree "$@" --locked -i pedigree-graph-core --depth 0)" && [[ "$tree" == *"$PG/crates/core"* ]] \
+    || { echo "error: $what did not take the patch: pedigree-graph-core is not $PG" >&2; exit 1; }
+}
+
 echo "== pedigree-graph-core <- $PG ($(git -C "$PG" rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout'))"
 
 echo "== cargo test"
 cargo test --release
-cargo tree -p pg-phenotype-core -i pedigree-graph-core --depth 0 | grep -qF "$PG/crates/core" \
-  || { echo "error: the patch did not take: pedigree-graph-core is not $PG" >&2; exit 1; }
+check_patch "the cargo build" -p pg-phenotype-core
 
 # The pixi tasks (build-dev, test-all, r-test) are spelled out rather than
 # called: a nested `pixi run` re-runs activation, and the patched CARGO_HOME
@@ -65,11 +80,9 @@ PG_PHENOTYPE_REQUIRE_TEST_HOOKS=1 pytest -n 6 --dist worksteal
 
 if [ "${PG_PHENOTYPE_WITH_R:-0}" = "1" ]; then
   echo "== R suite"
+  R_INSTALLED=1
   PG_PHENOTYPE_CARGO_FEATURES=test-hooks R CMD INSTALL --no-multiarch --preclean r
-  # --locked holds the check to the lock file the R build just wrote.
-  cargo tree --manifest-path r/src/rust/Cargo.toml --locked -i pedigree-graph-core --depth 0 \
-    | grep -qF "$PG/crates/core" \
-    || { echo "error: the R build did not take the patch: pedigree-graph-core is not $PG" >&2; exit 1; }
+  check_patch "the R build" --manifest-path r/src/rust/Cargo.toml
   PG_PHENOTYPE_REQUIRE_TEST_HOOKS=1 Rscript -e 'testthat::test_local("r", stop_on_failure = TRUE)'
 fi
 echo "== all suites pass against $PG"
