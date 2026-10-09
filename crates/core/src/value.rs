@@ -9,7 +9,8 @@ pub enum Value {
     /// Python `None`, R `NULL`.
     Null,
     Bool(bool),
-    /// A count: a Python int, an R integer.
+    /// A count: a Python int, an R integer (a double, or `integer64` past
+    /// 2^53, beyond R's integer range).
     Count(u64),
     /// A full-range integer (a seed): a Python int, an R double, or
     /// `integer64` beyond 2^53.
@@ -18,7 +19,8 @@ pub enum Value {
     Str(&'static str),
     /// A fixed-length tuple of floats (a CI): a Python tuple, an R double vector.
     Floats(Vec<f64>),
-    /// A row of counts (a table row): a Python list, an R integer vector.
+    /// A row of counts (a table row): a Python list, an R integer vector
+    /// (as for [`Value::Count`] when one passes R's integer range).
     Counts(Vec<u64>),
     /// A Python list, an unnamed R list.
     List(Vec<Value>),

@@ -111,6 +111,9 @@ test_that("input errors carry the core's codes", {
   err <- expect_pgp_error(assortative_mate_correlation(ped, x, seed = 2^63), "parameter", "parameter_out_of_range")
   expect_identical(err$fields$name, "seed")
   expect_s3_class(assortative_mate_correlation(ped, x, seed = 2^60, permutations = 9), "pgphenotype_mate_correlation")
+  # A count past R's integer range comes back as a double, not wrapped negative.
+  wide <- assortative_mate_correlation(ped, x, stratum = rep(1, 12), min_stratum_networks = 3e9)
+  expect_identical(wide$settings$min_stratum_networks, 3e9)
   # A stratum label is coerced as an id is, and its error says which value.
   err <- expect_pgp_error(assortative_mate_correlation(ped, x, stratum = c(1.5, rep(1, 11))),
                           "validation", "invalid_integer_value")

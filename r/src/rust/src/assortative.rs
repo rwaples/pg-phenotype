@@ -15,12 +15,12 @@ fn to_robj(value: &Value) -> Robj {
     match value {
         Value::Null => ().into_robj(),
         Value::Bool(v) => (*v).into(),
-        Value::Count(n) => (*n as i32).into(),
+        Value::Count(n) => counts(&[*n]),
         Value::Int(v) => int_values(vec![*v]),
         Value::Float(v) => (*v).into(),
         Value::Str(v) => (*v).into(),
         Value::Floats(v) => Doubles::from_values(v.iter().copied()).into_robj(),
-        Value::Counts(v) => Integers::from_values(v.iter().map(|&n| n as i32)).into_robj(),
+        Value::Counts(v) => counts(v),
         Value::List(items) => List::from_values(items.iter().map(to_robj)).into_robj(),
         Value::Map(entries) => {
             let (names, values): (Vec<&str>, Vec<Robj>) =
@@ -29,6 +29,21 @@ fn to_robj(value: &Value) -> Robj {
                 .expect("names and values of one length")
                 .into_robj()
         }
+    }
+}
+
+/// Counts as an R integer vector, or through [`int_values`] (a double, or
+/// `integer64` past 2^53) when one passes R's integer range.
+fn counts(values: &[u64]) -> Robj {
+    let small: Option<Vec<i32>> = values.iter().map(|&n| i32::try_from(n).ok()).collect();
+    match small {
+        Some(small) => Integers::from_values(small).into_robj(),
+        None => int_values(
+            values
+                .iter()
+                .map(|&n| i64::try_from(n).unwrap_or(i64::MAX))
+                .collect(),
+        ),
     }
 }
 

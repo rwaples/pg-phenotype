@@ -32,7 +32,8 @@
   in Python; whole numbers up to 2^63 are accepted (the limit was 2^53).  A
   bad stratum label's error carries its `value`, and
   `assortative_mate_correlation()` has `pafgrs_prepare()`'s
-  `too_many_rows` check.
+  `too_many_rows` check.  A count in its result past R's integer range
+  (`permutations = 3e9`) comes back as a double, not wrapped negative.
 - The thread budget's rules live once, in the Rust core, for both hosts.
   Python now caps a budget at 2^31 - 1, as R does, and its
   `PG_PHENOTYPE_THREADS` error names that range.
