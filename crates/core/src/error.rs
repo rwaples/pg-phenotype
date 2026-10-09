@@ -175,6 +175,11 @@ pub enum Error {
         expected_length: usize,
         actual_length: usize,
     },
+    /// The second of two paired columns is not the first's length.
+    PairLength {
+        expected_length: usize,
+        actual_length: usize,
+    },
 }
 
 impl From<PgError> for Error {
@@ -230,6 +235,7 @@ impl Error {
             Error::AllMissingTrait { .. } => (Validation, "all_missing_trait"),
             Error::ConstantTrait { .. } => (Validation, "constant_trait"),
             Error::StratumLength { .. } => (Validation, "stratum_length_mismatch"),
+            Error::PairLength { .. } => (Validation, "pair_length_mismatch"),
         }
     }
 
@@ -352,6 +358,10 @@ impl Error {
             Error::StratumLength {
                 expected_length,
                 actual_length,
+            }
+            | Error::PairLength {
+                expected_length,
+                actual_length,
             } => vec![
                 ("expected_length", int(*expected_length)),
                 ("actual_length", int(*actual_length)),
@@ -425,6 +435,10 @@ impl fmt::Display for Error {
             Error::StratumLength { expected_length, actual_length } => write!(
                 f,
                 "stratum must have one label per pedigree row ({expected_length}), got {actual_length}"
+            ),
+            Error::PairLength { expected_length, actual_length } => write!(
+                f,
+                "y must have one entry per entry of x ({expected_length}), got {actual_length}"
             ),
         }
     }

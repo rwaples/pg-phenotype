@@ -40,6 +40,26 @@ unchanged.
   and strata, about 1 call in 6 at `min_stratum_networks=2` and 1 in 25 at
   the default hit it in the test fixtures.  v0.2.0 has the bug too.
 
+- A public tetrachoric correlation of two binary variables, from a 2 x 2
+  table or paired values: Rust `correlation::tetrachoric` and
+  `tetrachoric_pairs`, Python `pg_phenotype.correlation.tetrachoric`, R
+  `correlation_tetrachoric()`.  It is the Mate Correlation's fit and
+  `boundary` flag, with the two-step sandwich SE (each pair its own
+  cluster) and a Wald CI on the Fisher-z scale.  Pairs with a missing
+  value are dropped and counted.  New error codes: `pair_length_mismatch`,
+  and `invalid_table` from the hosts.  `docs/gates/tetrachoric` compares it
+  with simACE's `tetrachoric_from_table` (ADR 0006).
+- Tetrachoric and polychoric fits no longer stop far from the maximum after
+  a Newton overshoot.  Newton could step to where a populated cell's
+  probability is rounding noise or floored at 1e-300.  The score and
+  Hessian there are huge or infinite, the next step is about 0, and Newton
+  stopped as if converged, flagged as a boundary: `[[9891, 104], [1, 4]]`
+  gave rho = 0.9915 where the maximum is 0.7969.  Newton now hands over to
+  bounded Brent when a populated cell's probability falls below 1e-12.  On
+  about 140,000 random tables with near-empty cells, none now misses its
+  maximum, against about 1 in 1,000 before.  This departs from pedsum,
+  which has the same flaw (ADR 0005).
+
 ## v0.2.0
 
 Error details are stable and the same in Python and R: `reason` fields are

@@ -16,15 +16,15 @@
 mod bootstrap;
 mod bvn;
 mod cephes;
-mod estimators;
-mod fit;
+pub(crate) mod estimators;
+pub(crate) mod fit;
 mod input;
-mod kernels;
+pub(crate) mod kernels;
 mod permutation;
 mod result;
 mod rng;
 mod sample;
-mod sandwich;
+pub(crate) mod sandwich;
 mod value;
 
 #[cfg(test)]

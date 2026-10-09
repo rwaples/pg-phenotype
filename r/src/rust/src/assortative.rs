@@ -12,7 +12,7 @@ use pg_phenotype_core::Trait;
 
 /// A core result tree as nested R lists and vectors, `NULL` where Python
 /// has `None`.
-fn to_robj(value: &Value) -> Robj {
+pub(crate) fn to_robj(value: &Value) -> Robj {
     match value {
         Value::Null => ().into_robj(),
         Value::Bool(v) => (*v).into(),

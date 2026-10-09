@@ -32,6 +32,26 @@ fn threshold_correction(a_rho_tau: &Grid<f64>, tau: &Grid<f64>, n_stratum: &[f64
     out
 }
 
+/// Influence on the two-step polychoric ρ̂ of one pair, by its cell.
+pub(crate) struct CellInfluence {
+    /// Per (mother stratum, father stratum), the cells' scores; `None` when unpopulated.
+    score: Vec<Option<Grid<f64>>>,
+    n_fs: usize,
+    correction_a: Grid<f64>,
+    correction_b: Grid<f64>,
+    a_rr: f64,
+}
+
+impl CellInfluence {
+    /// The influence of a pair in cell `(i, j)` of stratum combination `(s, u)`.
+    pub fn at(&self, s: usize, u: usize, i: usize, j: usize) -> f64 {
+        let score = self.score[s * self.n_fs + u]
+            .as_ref()
+            .map_or(0.0, |g| g.at(i, j));
+        (score - (self.correction_a.at(s, i) + self.correction_b.at(u, j))) / -self.a_rr
+    }
+}
+
 /// Per-pair influence on the two-step polychoric ρ̂ at `rho`.
 fn polychoric_influence(
     pairs: &CellPairs,
@@ -41,6 +61,25 @@ fn polychoric_influence(
     rho: f64,
 ) -> Result<Vec<f64>, Reason> {
     let tables = Tables::new(pairs, m_levels, f_levels, w).map_err(Status::reason)?;
+    let influence = cell_influence(&tables, rho)?;
+    Ok((0..pairs.len())
+        .map(|p| {
+            if w[p] == 0.0 {
+                0.0
+            } else {
+                influence.at(
+                    pairs.m_stratum[p],
+                    pairs.f_stratum[p],
+                    pairs.m[p] as usize,
+                    pairs.f[p] as usize,
+                )
+            }
+        })
+        .collect())
+}
+
+/// The two-step polychoric influence of each cell of `tables` at `rho`.
+pub(crate) fn cell_influence(tables: &Tables, rho: f64) -> Result<CellInfluence, Reason> {
     let (k_m, k_f) = (tables.n.k_m, tables.n.k_f);
     let q = (1.0 - rho) * (1.0 + rho);
     struct Combo {
@@ -166,28 +205,17 @@ fn polychoric_influence(
         .collect();
     let correction_a = threshold_correction(&a_rho_a, &tables.a, &n_m);
     let correction_b = threshold_correction(&a_rho_b, &tables.b, &n_f);
-    let mut score_at = vec![None; n.n_ms * n.n_fs];
-    for (&(s, u), combo) in tables.combos.iter().zip(&combos) {
-        score_at[s * n.n_fs + u] = Some(&combo.score);
+    let mut score = vec![None; n.n_ms * n.n_fs];
+    for (&(s, u), combo) in tables.combos.iter().zip(combos) {
+        score[s * n.n_fs + u] = Some(combo.score);
     }
-    let influence = |s: usize, u: usize, i: usize, j: usize| {
-        let score = score_at[s * n.n_fs + u].map_or(0.0, |g| g.at(i, j));
-        (score - (correction_a.at(s, i) + correction_b.at(u, j))) / -a_rr
-    };
-    Ok((0..pairs.len())
-        .map(|p| {
-            if w[p] == 0.0 {
-                0.0
-            } else {
-                influence(
-                    pairs.m_stratum[p],
-                    pairs.f_stratum[p],
-                    pairs.m[p] as usize,
-                    pairs.f[p] as usize,
-                )
-            }
-        })
-        .collect())
+    Ok(CellInfluence {
+        score,
+        n_fs: n.n_fs,
+        correction_a,
+        correction_b,
+        a_rr,
+    })
 }
 
 fn polyserial_influence_of(serial: Serial<'_>, w: &[f64], rho: f64) -> Result<Vec<f64>, Reason> {

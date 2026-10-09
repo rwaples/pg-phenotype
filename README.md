@@ -9,6 +9,7 @@ core; each method is a module on top.
 |---|---|---|
 | PA-FGRS family genetic risk scores (Dybdahl Krebs et al., Am J Hum Genet 2024, doi:10.1016/j.ajhg.2024.09.009) | `pg_phenotype.pafgrs` | available |
 | Assortative mating: the Mate Correlation of one or two traits, ported from pedsum #13 | `pg_phenotype.assortative` | available |
+| Correlation estimators on their own: the tetrachoric correlation of a 2 x 2 table | `pg_phenotype.correlation` | available |
 
 ## Python
 
@@ -70,6 +71,20 @@ describes the inputs, rules and every result field, and
 [docs/assortative-mating-design.md](docs/assortative-mating-design.md)
 explains the design.
 
+### Tetrachoric correlation
+
+```python
+from pg_phenotype.correlation import tetrachoric
+
+res = tetrachoric(x, y)  # paired 0/1 values, NA dropped
+res = tetrachoric(table=[[n00, n01], [n10, n11]])  # rows by the x level
+res.value, res.se, res.ci, res.boundary, res.reason
+```
+
+The Mate Correlation's tetrachoric fit on one table: two-step maximum
+likelihood, a `boundary` flag, and the two-step sandwich SE with each pair
+its own cluster ([ADR 0006](docs/adr/0006-public-tetrachoric-is-the-mate-correlation-fit.md)).
+
 ## Rows and alignment
 
 A Pedigree keeps its input's row order: row *i* of the Pedigree is row *i*
@@ -104,6 +119,7 @@ both <- pafgrs_score_bivariate(prep, list(t1, t2), ages = list(a1, a2),
                                cips = list(c1, c2), h2 = c(0.4, 0.6), rg = 0.5)
 am <- assortative_mate_correlation(ped, list(trait(ped_df$liab), trait(ped_df$dx)),
                                    stratum = ped_df$birth_decade, bootstrap = 1000, seed = 1)
+tc <- correlation_tetrachoric(ped_df$dx1, ped_df$dx2)  # or table = matrix(...)
 ```
 
 The R package runs the same core as Python and returns the same scores bit

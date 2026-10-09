@@ -7,6 +7,7 @@
 //! ([`pafgrs`]).
 
 mod assortative;
+mod correlation;
 mod errors;
 mod input;
 mod pafgrs;
@@ -51,6 +52,7 @@ fn thread_budget() -> Robj {
 extendr_module! {
     mod pgphenotype;
     use assortative;
+    use correlation;
     use input;
     use pafgrs;
     use pedigree;

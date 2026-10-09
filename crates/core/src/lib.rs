@@ -22,6 +22,7 @@
 pub const PG_CORE_REV: &str = "727159175db19e0315e3743299c1e6538710c0ab";
 
 pub mod assortative;
+pub mod correlation;
 pub mod error;
 pub mod input;
 mod lineage;

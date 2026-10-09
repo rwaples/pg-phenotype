@@ -26,3 +26,5 @@
   .Call(wrap__assortative_mate_correlation, pedigree, id, mother, father, twin, sex, values, kinds, n_levels,
         stratum, permutations, bootstrap, seed, min_stratum_networks, spearman)
 }
+.native_correlation_tetrachoric_table <- function(table) .Call(wrap__correlation_tetrachoric_table, table)
+.native_correlation_tetrachoric_pairs <- function(x, y) .Call(wrap__correlation_tetrachoric_pairs, x, y)
