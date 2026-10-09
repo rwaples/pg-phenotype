@@ -11,6 +11,13 @@ use super::kernels::{
 use super::result::{Estimator, Point};
 use super::sample::{n_codes, CellPairs};
 
+/// Below this a cell probability, a difference of bivariate normal CDFs near
+/// 1, is mostly rounding (about 2e-15): its score and curvature, divided by
+/// it, are noise, and a Newton step there can stop at once far from the
+/// maximum.  A populated cell at the maximum has probability near its share
+/// of the pairs, far above this.
+const CELL_NOISE: f64 = 1e-12;
+
 /// A point estimate on one sample, or why there is none.
 pub(crate) type Fitted = Result<Point, Status>;
 
@@ -188,20 +195,32 @@ impl Tables {
         g
     }
 
-    /// NLL and its first two ρ-derivatives (Olsson 1979 eqs 3, 4, 9).
+    /// NLL and its first two ρ-derivatives (Olsson 1979 eqs 3, 4, 9), for
+    /// Newton.  The Hessian is NaN, so Newton hands over to Brent, where a
+    /// populated cell's probability is below [`CELL_NOISE`].
     pub fn terms(&self, rho: f64) -> Terms {
-        self.accumulate(rho, true)
+        let (terms, least) = self.accumulate(rho, true);
+        if least < CELL_NOISE {
+            Terms {
+                hess: f64::NAN,
+                ..terms
+            }
+        } else {
+            terms
+        }
     }
 
     /// The first two ρ-derivatives of the NLL alone (`nll` is 0), as a
     /// bootstrap draw's one Newton step needs.
     pub fn grad_hess(&self, rho: f64) -> (f64, f64) {
-        let t = self.accumulate(rho, false);
+        let (t, _) = self.accumulate(rho, false);
         (t.grad, t.hess)
     }
 
-    fn accumulate(&self, rho: f64, with_nll: bool) -> Terms {
+    /// The terms, and the least probability of a populated cell.
+    fn accumulate(&self, rho: f64, with_nll: bool) -> (Terms, f64) {
         let (mut nll, mut grad, mut hess) = (0.0, 0.0, 0.0);
+        let mut least = f64::INFINITY;
         for &combo in &self.combos {
             let cdf = self.grid(combo, |h, k| bvn::cdf(h, k, rho));
             let pdf = self.grid(combo, |h, k| bvn::pdf_and_drho(h, k, rho).0);
@@ -211,6 +230,7 @@ impl Tables {
                     let count = self.n.at(combo.0, combo.1, i, j);
                     if count > 0.0 {
                         let pi = corner(&cdf, i, j).max(TINY);
+                        least = least.min(pi);
                         let score = corner(&pdf, i, j) / pi;
                         let curvature = corner(&drho, i, j) / pi - score * score;
                         if with_nll {
@@ -222,11 +242,14 @@ impl Tables {
                 }
             }
         }
-        Terms {
-            nll: -nll,
-            grad: -grad,
-            hess: -hess,
-        }
+        (
+            Terms {
+                nll: -nll,
+                grad: -grad,
+                hess: -hess,
+            },
+            least,
+        )
     }
 
     pub fn nll(&self, rho: f64) -> f64 {

@@ -68,3 +68,13 @@ pedsum commit), not against a live pedsum.
   SE.  An empty cell is no term of the estimating equations, so
   pg-phenotype skips it.  The one golden this changes matches pedsum with
   the same fix to 4.4e-16 (`DEVIATIONS` in `tests/test_assortative_golden.py`).
+- A second departure (2026-10-09, issue #2): pedsum's polychoric Newton can
+  overshoot to where a populated cell's probability, a difference of
+  bivariate normal CDFs near 1, is rounding noise or floored at 1e-300.  The
+  score and Hessian, divided by it, are huge or infinite, the next step is
+  about 0, and Newton stops there: on `[[9891, 104], [1, 4]]` at
+  rho = 0.9915, flagged as a boundary, where the maximum is 0.7969.  About
+  1 in 1,000 skewed random 2 x 2 tables were affected.  pg-phenotype's
+  `Tables::terms` gives a NaN Hessian, so Newton hands over to bounded
+  Brent, while a populated cell's probability is below 1e-12 (`CELL_NOISE`).
+  The NLL itself is unchanged, and no golden moved.

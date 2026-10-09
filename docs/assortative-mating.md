@@ -142,8 +142,10 @@ permutation p-value.
 - rho is found by Newton's method on the analytic score, from 0 for the
   table estimators and from the ad hoc estimate of Olsson, Drasgow &
   Dorans (1982, eq 38) for the serial ones.  If the curvature is not
-  positive, a step leaves (-0.9999, 0.9999), or 12 steps do not converge to
-  1e-8, a bounded Brent search over that interval takes over.
+  positive, a step leaves (-0.9999, 0.9999), 12 steps do not converge to
+  1e-8, or (table estimators) a populated cell's probability falls below
+  1e-12, where it is mostly rounding, a bounded Brent search over that
+  interval takes over.
 - `boundary` is set on a latent estimate when rho is within 1e-3 of
   ±0.9999, or when the negative log-likelihood at the nearer bound is
   within 1e-6 (relative) of the optimum.  It comes from the fit, never from
