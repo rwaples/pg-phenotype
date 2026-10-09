@@ -15,6 +15,12 @@ unchanged.
   for the permutation test, the Mate Networks of a cell with no missing
   values are reused, and the father lookups use a row index.
 
+- A stratified biserial or polyserial cell whose continuous side had more
+  strata than its other side panicked (`index out of bounds` or
+  `mid > len`) while computing its SE; it now gets one.  With two traits
+  and strata, about 1 call in 6 at `min_stratum_networks=2` and 1 in 25 at
+  the default hit it in the test fixtures.  v0.2.0 has the bug too.
+
 ## v0.2.0
 
 Error details are stable and the same in Python and R: `reason` fields are

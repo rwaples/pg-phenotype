@@ -720,7 +720,8 @@ pub(crate) fn polyserial_influence(p: &Polyserial<'_>, var: &[f64], rho: f64) ->
             }
         }
     }
-    let width = 2 * n_ys + 2 * n_xs + n_ys * k1 + 1;
+    // n_x, n_y, a_mu, a_var, a_tau, a_rr.
+    let width = 3 * n_xs + n_ys + n_ys * k1 + 1;
     let parts = per_block(p.x.len(), true, |range| {
         let mut out = vec![0.0; width];
         let (n_x, rest) = out.split_at_mut(n_xs);

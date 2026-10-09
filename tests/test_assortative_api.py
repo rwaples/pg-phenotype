@@ -667,6 +667,20 @@ def test_odds_ratio_inf_is_a_value_and_the_ci_is_never_nan():
     assert not any(math.isnan(v) for v in floats)
 
 
+@pytest.mark.parametrize(("seed", "n_pairs"), [(2, 20), (3, 20), (5, 20), (5, 50)])
+def test_stratified_biserial_with_more_continuous_strata(seed, n_pairs):
+    """A biserial cell whose continuous side spans more strata than its binary side gets an SE.
+
+    These inputs indexed past the polyserial influence's scratch buffer and panicked (v0.2.0).
+    """
+    ped, x, bv, strata = b.frame(seed, n_pairs)
+    traits = [Trait(x, kind="continuous"), Trait(bv, kind="binary")]
+    res = mate_correlation(ped, traits, stratum=strata, permutations=0, bootstrap=0, min_stratum_networks=2)
+    for cell in (res.cell(0, 1), res.cell(1, 0)):
+        assert cell.stratified is not None
+        assert (cell.stratified.result.value is None) == (cell.stratified.result.reason is not None)
+
+
 def test_stratified_tetrachoric_in_the_payload():
     """pedsum test_stratified_tetrachoric_in_the_payload: per-stratum thresholds and one shared rho."""
     rng = np.random.default_rng(24)
