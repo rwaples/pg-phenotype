@@ -317,9 +317,9 @@ def test_a_pool_built_for_another_budget_raises_runtime_error():
         "import numpy as np\n"
         "from pg_phenotype import _native\n"
         "ped = [np.array(v, dtype=np.int64) for v in ([1, 2], [-1, -1], [-1, -1])]\n"
-        "_native.prepare(*ped, None, None, ndegree=1, probands=None, threads=1)\n"
+        "_native.prepare((*ped, None, None), ndegree=1, probands=None, threads=1)\n"
         "try:\n"
-        "    _native.prepare(*ped, None, None, ndegree=1, probands=None, threads=2)\n"
+        "    _native.prepare((*ped, None, None), ndegree=1, probands=None, threads=2)\n"
         "except RuntimeError as e:\n"
         "    print('RuntimeError', e)\n"
     )

@@ -4,7 +4,7 @@
 //!     cargo run --release --example prep_bench -- <dir> <ndegree> <threads> [all]
 
 use pg_phenotype_core::pafgrs::prepare;
-use pg_phenotype_core::{configure_pool, PedigreeInput};
+use pg_phenotype_core::{configure_pool, PedigreeArg, PedigreeInput};
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
@@ -27,13 +27,13 @@ fn main() {
         .map(|c| column(dir, c))
         .collect();
     let pool = configure_pool(NonZeroUsize::new(threads).expect("threads")).expect("pool");
-    let input = PedigreeInput {
+    let input = PedigreeArg::Columns(PedigreeInput {
         ids: &cols[0],
         mother: &cols[1],
         father: &cols[2],
         twin: Some(&cols[3]),
         sex: Some(&cols[4]),
-    };
+    });
     let t = Instant::now();
     let prep = pool
         .install(|| prepare(input, ndegree, if all { None } else { Some(&cols[5]) }))

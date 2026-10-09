@@ -7,7 +7,7 @@
 use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
 use pg_phenotype_core::error::{Class, FieldValue};
 use pg_phenotype_core::pafgrs::{self, BivParams, Cip};
-use pg_phenotype_core::{threads, Error, PedigreeInput, Trait, TraitKind};
+use pg_phenotype_core::{threads, Error, PedigreeArg, PedigreeInput, Trait, TraitKind};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
@@ -177,39 +177,81 @@ impl Prep {
     }
 }
 
-/// The pedigree columns as `pg_phenotype._input.pedigree_arrays` passes them.
-pub(crate) struct PedigreeArgs<'py> {
-    ids: PyReadonlyArray1<'py, i64>,
-    mother: PyReadonlyArray1<'py, i64>,
-    father: PyReadonlyArray1<'py, i64>,
-    twin: Option<PyReadonlyArray1<'py, i64>>,
-    sex: Option<PyReadonlyArray1<'py, i64>>,
+/// One pedigree column as `pg_phenotype._input.pedigree_arrays` passes it.
+type Column<'py> = PyReadonlyArray1<'py, i64>;
+
+/// The pedigree columns `(id, mother, father, twin, sex)`.
+#[derive(FromPyObject)]
+pub(crate) struct PedigreeArgs<'py>(
+    Column<'py>,
+    Column<'py>,
+    Column<'py>,
+    Option<Column<'py>>,
+    Option<Column<'py>>,
+);
+
+impl PedigreeArgs<'_> {
+    fn input(&self) -> PyResult<PedigreeInput<'_>> {
+        Ok(PedigreeInput {
+            ids: self.0.as_slice()?,
+            mother: self.1.as_slice()?,
+            father: self.2.as_slice()?,
+            twin: self.3.as_ref().map(|a| a.as_slice()).transpose()?,
+            sex: self.4.as_ref().map(|a| a.as_slice()).transpose()?,
+        })
+    }
 }
 
-impl<'py> PedigreeArgs<'py> {
-    pub(crate) fn new(
-        ids: PyReadonlyArray1<'py, i64>,
-        mother: PyReadonlyArray1<'py, i64>,
-        father: PyReadonlyArray1<'py, i64>,
-        twin: Option<PyReadonlyArray1<'py, i64>>,
-        sex: Option<PyReadonlyArray1<'py, i64>>,
-    ) -> PedigreeArgs<'py> {
-        PedigreeArgs {
-            ids,
-            mother,
-            father,
-            twin,
-            sex,
-        }
+/// A validated pedigree that methods share (`pg_phenotype.Pedigree`).
+#[pyclass(module = "pg_phenotype._native", name = "Pedigree", frozen)]
+struct Pedigree {
+    inner: pg_phenotype_core::Pedigree,
+}
+
+#[pymethods]
+impl Pedigree {
+    /// Validate the columns, with the GIL released.
+    #[new]
+    #[pyo3(signature = (ids, mother, father, twin, sex, /))]
+    fn new<'py>(
+        py: Python<'py>,
+        ids: Column<'py>,
+        mother: Column<'py>,
+        father: Column<'py>,
+        twin: Option<Column<'py>>,
+        sex: Option<Column<'py>>,
+    ) -> PyResult<Pedigree> {
+        let columns = PedigreeArgs(ids, mother, father, twin, sex);
+        let input = columns.input()?;
+        let inner = py
+            .detach(|| pg_phenotype_core::Pedigree::new(input))
+            .map_err(|e| to_pyerr(py, e))?;
+        Ok(Pedigree { inner })
     }
 
-    pub(crate) fn input(&self) -> PyResult<PedigreeInput<'_>> {
-        Ok(PedigreeInput {
-            ids: self.ids.as_slice()?,
-            mother: self.mother.as_slice()?,
-            father: self.father.as_slice()?,
-            twin: self.twin.as_ref().map(|a| a.as_slice()).transpose()?,
-            sex: self.sex.as_ref().map(|a| a.as_slice()).transpose()?,
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// A new array of the row ids, in input order.
+    #[getter]
+    fn ids<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i64>> {
+        PyArray1::from_slice(py, self.inner.ids())
+    }
+}
+
+/// What a method takes: a [`Pedigree`] or its columns.
+#[derive(FromPyObject)]
+pub(crate) enum PedigreeSource<'py> {
+    Built(Bound<'py, Pedigree>),
+    Columns(PedigreeArgs<'py>),
+}
+
+impl PedigreeSource<'_> {
+    pub(crate) fn arg(&self) -> PyResult<PedigreeArg<'_>> {
+        Ok(match self {
+            PedigreeSource::Built(pedigree) => PedigreeArg::Built(&pedigree.get().inner),
+            PedigreeSource::Columns(columns) => PedigreeArg::Columns(columns.input()?),
         })
     }
 }
@@ -226,28 +268,22 @@ fn saturating_i64(value: &Bound<'_, PyAny>) -> PyResult<i64> {
     }
 }
 
-/// Validate the pedigree and build its relative structure in the pool.
+/// Build a pedigree's relative structure in the pool, validating columns.
 #[pyfunction]
-#[pyo3(signature = (ids, mother, father, twin, sex, /, *, ndegree, probands, threads))]
-#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (pedigree, /, *, ndegree, probands, threads))]
 fn prepare<'py>(
     py: Python<'py>,
-    ids: PyReadonlyArray1<'py, i64>,
-    mother: PyReadonlyArray1<'py, i64>,
-    father: PyReadonlyArray1<'py, i64>,
-    twin: Option<PyReadonlyArray1<'py, i64>>,
-    sex: Option<PyReadonlyArray1<'py, i64>>,
+    pedigree: PedigreeSource<'py>,
     ndegree: &Bound<'py, PyAny>,
     probands: Option<PyReadonlyArray1<'py, i64>>,
     threads: usize,
 ) -> PyResult<Prep> {
     let ndegree = saturating_i64(ndegree)?;
-    let pedigree = PedigreeArgs::new(ids, mother, father, twin, sex);
-    let input = pedigree.input()?;
+    let pedigree = pedigree.arg()?;
     let probands = probands.as_ref().map(|a| a.as_slice()).transpose()?;
     let pool = checked_pool(py, threads)?;
     let inner = py
-        .detach(|| pool.install(|| pafgrs::prepare(input, ndegree, probands)))
+        .detach(|| pool.install(|| pafgrs::prepare(pedigree, ndegree, probands)))
         .map_err(|e| to_pyerr(py, e))?;
     Ok(Prep { inner })
 }
@@ -395,6 +431,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(score_bivariate, m)?)?;
     m.add_function(wrap_pyfunction!(assortative::mate_correlation, m)?)?;
     m.add_class::<Prep>()?;
+    m.add_class::<Pedigree>()?;
     #[cfg(feature = "test-hooks")]
     m.add_function(wrap_pyfunction!(test_hooks::_panic_for_test, m)?)?;
     Ok(())

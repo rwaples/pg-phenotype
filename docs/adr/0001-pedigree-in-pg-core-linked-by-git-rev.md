@@ -1,6 +1,6 @@
 # ADR 0001: The pedigree goes in; pedigree-graph-core is linked by git rev
 
-**Status:** accepted
+**Status:** accepted; amended by ADR 0006 (a validated Pedigree is shared across methods)
 **Date:** 2026-10-06
 **Context:** simACE `plans/pg-phenotype-extraction-v3.md`, decisions #1-#4, #10
 

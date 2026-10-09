@@ -6,13 +6,16 @@
 use super::input::Strata;
 use super::kernels::{stratum_moments, Grid};
 
+/// A pedigree's Mating Pairs, as rows: pair `p` is `(mothers[p], fathers[p])`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MatingPairs {
+    pub mothers: Vec<usize>,
+    pub fathers: Vec<usize>,
+}
+
 /// Mating Pairs: distinct (mother, father) of the children whose parents are
 /// both pedigree rows, in ascending (mother id, father id) order.
-pub(crate) fn mating_pairs(
-    ids: &[i64],
-    mother_rows: &[i32],
-    father_rows: &[i32],
-) -> (Vec<usize>, Vec<usize>) {
+pub(crate) fn mating_pairs(ids: &[i64], mother_rows: &[i32], father_rows: &[i32]) -> MatingPairs {
     // Rows are unique, non-negative i32: (mother, father) packs into one u64
     // whose order is row order, which is id order when ids ascend by row.
     let mut keys: Vec<u64> = mother_rows
@@ -30,7 +33,8 @@ pub(crate) fn mating_pairs(
             (ids[m], ids[f])
         });
     }
-    keys.into_iter().map(rows).unzip()
+    let (mothers, fathers) = keys.into_iter().map(rows).unzip();
+    MatingPairs { mothers, fathers }
 }
 
 /// The distinct rows of `pair_rows`, in id order.
@@ -289,7 +293,10 @@ mod tests {
         let ids = [50, 40, 30, 20, 10, 1, 2, 3, 4];
         let mother = [-1, -1, -1, -1, -1, 0, 1, 0, 0];
         let father = [-1, -1, -1, -1, -1, 3, 4, 2, 3];
-        let (m, f) = mating_pairs(&ids, &mother, &father);
+        let MatingPairs {
+            mothers: m,
+            fathers: f,
+        } = mating_pairs(&ids, &mother, &father);
         assert_eq!((m.clone(), f.clone()), (vec![1, 0, 0], vec![4, 3, 2]));
         assert_eq!(mate_networks(&m, &f), vec![0, 1, 1]);
         assert_eq!(network_summary(&[0, 1, 1]), (2, Some(2.0 / 3.0)));

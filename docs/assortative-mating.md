@@ -13,11 +13,12 @@ in [the gate report](gates/assortative-mating/README.md) and
 ## Call
 
 ```python
-from pg_phenotype import Trait
+from pg_phenotype import Pedigree, Trait
 from pg_phenotype.assortative import mate_correlation
 
+ped = Pedigree(pedigree)  # or pass the columns
 res = mate_correlation(
-    pedigree,
+    ped,
     [Trait(liability), Trait(dx, kind="binary")],
     stratum=birth_decade,  # None by default
     permutations=999,
@@ -29,14 +30,15 @@ res = mate_correlation(
 ```
 
 ```r
-res <- assortative_mate_correlation(ped, list(trait(ped$liability), trait(ped$dx, kind = "binary")),
-                                    stratum = ped$birth_decade, permutations = 999, bootstrap = 0,
+ped <- pedigree(ped_df)
+res <- assortative_mate_correlation(ped, list(trait(ped_df$liability), trait(ped_df$dx, kind = "binary")),
+                                    stratum = ped_df$birth_decade, permutations = 999, bootstrap = 0,
                                     seed = 0, min_stratum_networks = 10, spearman = FALSE)
 ```
 
 | Argument | Meaning | Default |
 |---|---|---|
-| `pedigree` | Columns `id`, `mother`, `father` (`-1` or NA when missing) and optional `twin`, `sex`, which pedigree-graph's rules validate | required |
+| `pedigree` | A `Pedigree`, or columns `id`, `mother`, `father` (`-1` or NA when missing) and optional `twin`, `sex`, which pedigree-graph's rules validate for this call alone | required |
 | `traits` | One or two `Trait`s on the pedigree's rows, continuous, binary or ordinal | required |
 | `stratum` | One integer label per row (a Depth, a birth-year bin), NA where unknown | `None` (unstratified) |
 | `permutations` | The most father permutations a primary estimate runs. 0 turns the p-value off | 999 |
@@ -48,6 +50,13 @@ res <- assortative_mate_correlation(ped, list(trait(ped$liability), trait(ped$dx
 The thread count is the package budget (`configure_threads`, or
 `PG_PHENOTYPE_THREADS`).  The same input and `seed` give the same result
 under every budget.
+
+A `Pedigree` keeps the Mating Pairs and Mate Networks that its first call
+finds.  A later call on it skips validating the pedigree and finding the
+pairs, and, when its strata drop no pair, building the networks.  The
+result is the same as with the columns.  Traits and strata are matched to
+the pedigree's rows by position; see
+[Rows and alignment](../README.md#rows-and-alignment).
 
 ## Traits
 

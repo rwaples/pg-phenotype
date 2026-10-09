@@ -16,8 +16,11 @@ assortative_mate_correlation(
 )
 }
 \arguments{
-\item{pedigree}{A data frame or a named list with columns `id`, `mother`
-and `father` (`NA` or -1 when missing), optionally `twin` and `sex`.}
+\item{pedigree}{A [pedigree()], which keeps its Mating Pairs and Mate
+Networks for later calls, or a data frame or a named list with columns
+`id`, `mother` and `father` (`NA` or -1 when missing), optionally `twin`
+and `sex`.  Columns are read first and checked by pedigree-graph's rules
+after the counts, for this call alone.}
 
 \item{traits}{One [trait()] or a list of one or two: continuous, binary or
 ordinal.  Binary and ordinal values are level codes 0, 1, ...; every

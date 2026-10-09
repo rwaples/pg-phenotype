@@ -11,6 +11,22 @@ def thread_budget() -> int: ...
 def _reset_thread_budget() -> None: ...
 def _panic_for_test() -> None: ...
 
+_Columns = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]
+
+class Pedigree:
+    def __new__(
+        cls,
+        ids: np.ndarray,
+        mother: np.ndarray,
+        father: np.ndarray,
+        twin: np.ndarray | None,
+        sex: np.ndarray | None,
+        /,
+    ) -> Pedigree: ...
+    def __len__(self) -> int: ...
+    @property
+    def ids(self) -> np.ndarray: ...
+
 class Prep:
     @property
     def n_rows(self) -> int: ...
@@ -25,11 +41,7 @@ class Prep:
     def triangle(self, i: int) -> np.ndarray: ...
 
 def prepare(
-    ids: np.ndarray,
-    mother: np.ndarray,
-    father: np.ndarray,
-    twin: np.ndarray | None,
-    sex: np.ndarray | None,
+    pedigree: Pedigree | _Columns,
     /,
     *,
     ndegree: int,
@@ -67,11 +79,7 @@ def score_bivariate(
     threads: int,
 ) -> dict[str, Any]: ...
 def mate_correlation(
-    ids: np.ndarray,
-    mother: np.ndarray,
-    father: np.ndarray,
-    twin: np.ndarray | None,
-    sex: np.ndarray | None,
+    pedigree: Pedigree | _Columns,
     traits: Sequence[tuple[np.ndarray, str, int | None]],
     stratum_labels: np.ndarray | None,
     stratum_known: np.ndarray | None,

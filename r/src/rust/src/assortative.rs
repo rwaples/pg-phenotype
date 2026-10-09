@@ -2,7 +2,8 @@
 //! the core's `to_value` tree that the Python binding converts too.
 
 use crate::errors::{finish, int_values, HostError, HostResult};
-use crate::input::{self, Pedigree};
+use crate::input;
+use crate::pedigree::Source;
 use crate::threads;
 use extendr_api::prelude::*;
 use pg_phenotype_core::assortative::{self, Settings, Strata};
@@ -49,6 +50,7 @@ fn counts(values: &[u64]) -> Robj {
 
 #[allow(clippy::too_many_arguments)]
 fn mate_correlation_impl(
+    ptr: &Robj,
     columns: [Robj; 5],
     values: &List,
     kinds: &Robj,
@@ -57,7 +59,7 @@ fn mate_correlation_impl(
     counts: [&Robj; 4],
     spearman: bool,
 ) -> HostResult<Robj> {
-    let pedigree = Pedigree::coerce(columns)?;
+    let pedigree = Source::read(ptr, columns)?;
     let [permutations, bootstrap, seed, min_stratum_networks] = counts;
     let whole =
         |name: &'static str, x: &Robj| input::number(name, x).and_then(|v| input::whole(name, v));
@@ -91,7 +93,7 @@ fn mate_correlation_impl(
     let pool = threads::pool()?;
     let result = pool.install(|| {
         assortative::mate_correlation(
-            pedigree.input(),
+            pedigree.arg(),
             &traits,
             strata
                 .as_ref()
@@ -102,10 +104,12 @@ fn mate_correlation_impl(
     Ok(to_robj(&result.to_value()))
 }
 
-/// The Mate Correlation of one or two traits, in the pool.
+/// The Mate Correlation of one or two traits, in the pool, over a
+/// `pedigree()` pointer or, when it is `NULL`, the columns.
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn assortative_mate_correlation(
+    pedigree: Robj,
     id: Robj,
     mother: Robj,
     father: Robj,
@@ -122,6 +126,7 @@ fn assortative_mate_correlation(
     spearman: bool,
 ) -> Robj {
     finish(mate_correlation_impl(
+        &pedigree,
         [id, mother, father, twin, sex],
         &values,
         &kinds,

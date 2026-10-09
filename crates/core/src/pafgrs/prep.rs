@@ -20,9 +20,9 @@
 
 use super::triangle::Triangle;
 use crate::error::Error;
-use crate::input::PedigreeInput;
 use crate::lineage::Terminals;
-use pedigree_graph_core::graph::{self, IdIndex};
+use crate::pedigree::{Pedigree as Validated, PedigreeArg};
+use pedigree_graph_core::graph::IdIndex;
 use pedigree_graph_core::kinship::ancestry::AncestorSignatures;
 use pedigree_graph_core::kinship::pairwise::Walker;
 use pedigree_graph_core::kinship::KinshipPedigree;
@@ -33,7 +33,7 @@ use pedigree_graph_core::topology;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// The deepest `ndegree` pedigree-graph-core classifies.
 pub const MAX_NDEGREE: u8 = 5;
@@ -48,7 +48,8 @@ const MEMO_CAP: usize = 1 << 22;
 /// The relative structure every score call of one pedigree reads.
 #[derive(Debug)]
 pub struct Prep {
-    pub(crate) ids: Vec<i64>,
+    /// Shared with the Pedigree it was built from.
+    pub(crate) ids: Arc<Vec<i64>>,
     pub(crate) ndegree: u8,
     pub(crate) chunks: Vec<Chunk>,
     /// `(chunk, member)` of each proband, in ascending row order.
@@ -227,18 +228,19 @@ pub fn kinship_threshold(ndegree: u8) -> f64 {
     0.5f64.powi(i32::from(ndegree) + 1) - 1e-6
 }
 
-/// Validate the pedigree and build its relative structure.
+/// Build the pedigree's relative structure, validating columns first.
 ///
-/// `probands` lists the ids to score, or `None` for every row.
+/// `probands` lists the ids to score, or `None` for every row.  The Prep
+/// shares a built pedigree's ids and does not hold the pedigree.
 ///
 /// # Errors
 ///
 /// [`Error::DegreeOutOfRange`] for `ndegree` outside `1..=5` (a host passes
-/// its integer as is); any pedigree-graph-core validation error;
+/// its integer as is); any pedigree-graph-core validation error of columns;
 /// [`Error::UnknownProband`] and [`Error::DuplicateProband`] for the proband
 /// list.
 pub fn prepare(
-    input: PedigreeInput<'_>,
+    pedigree: PedigreeArg<'_>,
     ndegree: i64,
     probands: Option<&[i64]>,
 ) -> Result<Prep, Error> {
@@ -252,16 +254,16 @@ pub fn prepare(
             })
         }
     };
-    let built = input.validate()?;
-    let probands = proband_rows(&built.ids, probands)?;
+    let built = pedigree.resolve()?;
+    let probands = proband_rows(built.ids(), probands)?;
     let candidates = candidates(&built, &probands, ndegree)?;
     let groups = sibship_groups(&built, &probands);
 
-    let depth = topology::structural_depth(&built.mother_rows, &built.father_rows);
+    let depth = topology::structural_depth(built.mother_rows(), built.father_rows());
     let kped = KinshipPedigree::try_new(
-        &built.mother_rows,
-        &built.father_rows,
-        &built.twin_rows,
+        built.mother_rows(),
+        built.father_rows(),
+        built.twin_rows(),
         &depth,
     )?;
     let chunks = walk_chunks(
@@ -281,7 +283,7 @@ pub fn prepare(
         }
     }
     Ok(Prep {
-        ids: built.ids,
+        ids: built.shared_ids(),
         ndegree,
         chunks,
         locate,
@@ -328,17 +330,13 @@ impl Candidates {
     }
 }
 
-fn candidates(
-    built: &graph::PedigreeGraph,
-    probands: &[u32],
-    ndegree: u8,
-) -> Result<Candidates, Error> {
+fn candidates(built: &Validated, probands: &[u32], ndegree: u8) -> Result<Candidates, Error> {
     let ped = Pedigree::try_new(
-        &built.mother_rows,
-        &built.father_rows,
-        &built.twin_rows,
-        &built.mother_ids,
-        &built.father_ids,
+        built.mother_rows(),
+        built.father_rows(),
+        built.twin_rows(),
+        built.mother_ids(),
+        built.father_ids(),
     )?;
     let blocks = pair_blocks(
         &ped,
@@ -384,13 +382,13 @@ fn candidates(
 /// Probands grouped by their two represented parents (full sibs and MZ
 /// twins); a proband missing a parent is a group of one.  Groups are in
 /// order of their first member, members ascending, as proband indices.
-fn sibship_groups(built: &graph::PedigreeGraph, probands: &[u32]) -> Vec<Vec<u32>> {
+fn sibship_groups(built: &Validated, probands: &[u32]) -> Vec<Vec<u32>> {
     let mut groups: Vec<Vec<u32>> = Vec::new();
     let mut by_parents: HashMap<(i32, i32), usize> = HashMap::new();
     for (i, &row) in probands.iter().enumerate() {
         let (m, f) = (
-            built.mother_rows[row as usize],
-            built.father_rows[row as usize],
+            built.mother_rows()[row as usize],
+            built.father_rows()[row as usize],
         );
         if m >= 0 && f >= 0 {
             let g = *by_parents.entry((m, f)).or_insert_with(|| {
@@ -688,6 +686,7 @@ impl<'w, 'a, 'p> ChunkBuilder<'w, 'a, 'p> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::PedigreeInput;
 
     /// Founders 10, 11; full sibs 12, 13; 14 is 12's child by external 99;
     /// 15 is unrelated.
@@ -699,14 +698,14 @@ mod tests {
         )
     }
 
-    fn input<'a>(ids: &'a [i64], mother: &'a [i64], father: &'a [i64]) -> PedigreeInput<'a> {
-        PedigreeInput {
+    fn input<'a>(ids: &'a [i64], mother: &'a [i64], father: &'a [i64]) -> PedigreeArg<'a> {
+        PedigreeArg::Columns(PedigreeInput {
             ids,
             mother,
             father,
             twin: None,
             sex: None,
-        }
+        })
     }
 
     #[test]
@@ -789,13 +788,13 @@ mod tests {
         let twin = [-1i64, -1, 4, 3];
         let sex = [0i64, 1, 0, 0];
         let prep = prepare(
-            PedigreeInput {
+            PedigreeArg::Columns(PedigreeInput {
                 ids: &ids,
                 mother: &mother,
                 father: &father,
                 twin: Some(&twin),
                 sex: Some(&sex),
-            },
+            }),
             1,
             None,
         )

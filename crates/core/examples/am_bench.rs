@@ -5,7 +5,7 @@
 //!     cargo run --release --example am_bench -- <dir> <a|b> <threads> <permutations> <bootstrap>
 
 use pg_phenotype_core::assortative::{mate_correlation, Settings, Strata};
-use pg_phenotype_core::{configure_pool, PedigreeInput, Trait, TraitKind};
+use pg_phenotype_core::{configure_pool, PedigreeArg, PedigreeInput, Trait, TraitKind};
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
@@ -60,13 +60,13 @@ fn main() {
         ..Settings::default()
     };
     let pool = configure_pool(NonZeroUsize::new(threads).expect("threads")).expect("pool");
-    let input = PedigreeInput {
+    let input = PedigreeArg::Columns(PedigreeInput {
         ids: &ids,
         mother: &mother,
         father: &father,
         twin: None,
         sex: None,
-    };
+    });
     let start = Instant::now();
     let result = pool
         .install(|| mate_correlation(input, &traits, strata, settings))

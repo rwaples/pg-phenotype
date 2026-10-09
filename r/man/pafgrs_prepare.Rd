@@ -7,11 +7,15 @@
 pafgrs_prepare(pedigree, ndegree = 2L, probands = NULL)
 }
 \arguments{
-\item{pedigree}{A data frame or a named list with columns `id`, `mother`
-and `father`, and optionally `twin` (the MZ co-twin's id) and `sex`
-(0 female, 1 male, -1 unknown).  Columns may be integer, whole-number
+\item{pedigree}{A [pedigree()], or a data frame or a named list with
+columns `id`, `mother` and `father`, and optionally `twin` (the MZ
+co-twin's id) and `sex` (0 female, 1 male, -1 unknown).  Columns are
+read first and checked by pedigree-graph's rules after `ndegree`, for
+this call alone.  Columns may be integer, whole-number
 double, or `bit64::integer64`; `NA` or -1 marks a missing parent, and
-`id` may not be `NA`.  Other columns are ignored.}
+`id` may not be `NA`.  Other columns are ignored.  A [pedigree()] helps
+when preparing again (another `ndegree` or set of probands) or running
+other methods on the same pedigree.}
 
 \item{ndegree}{The deepest relationship degree that counts, 1 to 5.}
 
@@ -19,14 +23,16 @@ double, or `bit64::integer64`; `NA` or -1 marks a missing parent, and
 }
 \value{
 An opaque handle of class `pgphenotype_pafgrs_prep`, held in
-  memory only: it does not survive [saveRDS()] or a new R session.
+  memory only: it does not survive [saveRDS()] or a new R session.  It
+  does not hold `pedigree`.
 }
 \description{
-Validates a pedigree and builds each proband's relatives up to `ndegree`.
-Call it once per pedigree and degree, then score each trait and parameter
-variant against the result.  A relative of a proband is a person whose
-closest relationship category is at most `ndegree` and whose exact kinship
-to the proband is at least `0.5^(ndegree + 1) - 1e-6`.
+Builds each proband's relatives up to `ndegree`.  Call it once per
+pedigree and degree, then score each trait and parameter variant against
+the result; scoring many traits needs only the result.  A relative of a
+proband is a person whose closest relationship category is at most
+`ndegree` and whose exact kinship to the proband is at least
+`0.5^(ndegree + 1) - 1e-6`.
 }
 \examples{
 ped <- data.frame(

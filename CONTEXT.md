@@ -8,6 +8,15 @@ relationships come from pedigree-graph-core.
 
 ## Language
 
+**Pedigree**:
+The rows of one pedigree (id, mother, father, and optional twin and sex)
+checked once by pedigree-graph's rules, in the order they were given.
+Traits, ages, strata and probands are matched to its rows by position;
+lining them up is the caller's job, since a valid Pedigree says nothing
+about whether a trait belongs to it.  A method given pedigree columns
+instead checks them into a Pedigree for that call alone.
+_Avoid_: graph, pedigree frame
+
 **Trait**:
 One phenotype column aligned to pedigree rows, missing where unknown, with a
 kind: continuous, binary, ordinal or categorical.  A trait is values only;

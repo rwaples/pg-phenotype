@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+A `Pedigree` (R: `pedigree()`) validates a pedigree once for several
+methods or calls: `mate_correlation` and `pafgrs.prepare` take one wherever
+they take columns, and columns work as before.  A Pedigree keeps the Mating
+Pairs and Mate Networks its first `mate_correlation` finds, so a later call
+skips validation and finding them.  It keeps its input's row order: traits,
+ages, strata and probands are matched to it by position, and `ped.ids`
+(R: `ped$ids`) aligns values from another table.  A Prep shares the
+Pedigree's ids and does not hold it.  A Pedigree cannot be pickled or saved.
+With columns, the order of errors is unchanged: a column that cannot be
+read (`missing_field`, `invalid_integer_value`), then a bad parameter, then
+pedigree-graph's checks of the pedigree.
+
+- Rust: `mate_correlation` and `prepare` take a `PedigreeArg`
+  (`Columns(PedigreeInput)` or `Built(&Pedigree)`), and
+  `PedigreeInput::validate` is gone; use `Pedigree::new`.
+- Python: the private natives `_native.mate_correlation` and
+  `_native.prepare` take one positional `pedigree`, a `_native.Pedigree` or
+  the column tuple.
+
 `mate_correlation` computes Spearman only when asked: pass `spearman=True`
 (R: `spearman = TRUE`) to keep a continuous x continuous cell's `spearman`
 record.  The result's `settings` echo `spearman`.  Every other value is

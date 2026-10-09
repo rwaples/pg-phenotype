@@ -1,9 +1,7 @@
 //! What every method takes: the pedigree and the traits on its rows.
 
-use crate::error::Error;
-use pedigree_graph_core::graph::{self, Columns, Limits, PedigreeGraph, SexEncoding};
-
-/// The pedigree columns a caller passes, one entry per row.
+/// The pedigree columns a caller passes, one entry per row; a method or
+/// [`crate::Pedigree::new`] validates them.
 #[derive(Clone, Copy, Debug)]
 pub struct PedigreeInput<'a> {
     pub ids: &'a [i64],
@@ -15,29 +13,6 @@ pub struct PedigreeInput<'a> {
     pub twin: Option<&'a [i64]>,
     /// `0` female, `1` male, `-1` unknown.
     pub sex: Option<&'a [i64]>,
-}
-
-impl PedigreeInput<'_> {
-    /// The validated graph, by pedigree-graph-core's own rules (ADR 0001).
-    ///
-    /// # Errors
-    ///
-    /// Any pedigree-graph-core validation error, with its code.
-    pub fn validate(&self) -> Result<PedigreeGraph, Error> {
-        Ok(graph::build(
-            Columns {
-                ids: self.ids,
-                mother: self.mother,
-                father: self.father,
-                twin: self.twin,
-                sex: self.sex,
-                generation: None,
-                birth_year: None,
-            },
-            SexEncoding::Simace,
-            Limits::default(),
-        )?)
-    }
 }
 
 /// How a trait's values are read.

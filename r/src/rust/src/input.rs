@@ -214,6 +214,20 @@ pub fn saturating_whole(name: &'static str, x: f64) -> HostResult<i64> {
     Ok(x as i64)
 }
 
+/// The object behind an external pointer `name` that `maker` returned: a
+/// usage error for another object or one emptied by serialization.
+pub fn handle<'a, T: 'static>(robj: &'a Robj, name: &str, maker: &str) -> HostResult<&'a T> {
+    let wrong = || HostError::usage(format!("`{name}` must come from {maker}"));
+    let ptr = <&ExternalPtr<T>>::try_from(robj).map_err(|err| match err {
+        extendr_api::Error::ExpectedExternalNonNullPtr(_) => HostError::usage(format!(
+            "this {name} is empty: a {name} does not survive saveRDS() or a new R session; \
+             rebuild it with {maker}"
+        )),
+        _ => wrong(),
+    })?;
+    ptr.try_addr().map_err(|_| wrong())
+}
+
 /// The pedigree columns, coerced; `twin` and `sex` are optional.
 pub struct Pedigree {
     pub ids: Coerced,

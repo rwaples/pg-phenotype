@@ -19,8 +19,9 @@ import numpy as np
 
 from pg_phenotype import _native
 from pg_phenotype._errors import ParameterError
-from pg_phenotype._input import as_int64, floats, pedigree_arrays
+from pg_phenotype._input import as_int64, floats
 from pg_phenotype._memory import release_free_memory
+from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._threads import thread_budget
 from pg_phenotype._trait import Trait
 
@@ -298,9 +299,12 @@ def mate_correlation(
     father trait) and the Within-Person Cross-Trait Correlation per sex.
 
     Args:
-        pedigree: Columns ``id``, ``mother``, ``father`` (``-1`` or NA when
-            missing) and optional ``twin``, ``sex``, as a polars or pandas
-            frame or a mapping of arrays.
+        pedigree: A :class:`~pg_phenotype.Pedigree`, which keeps its Mating
+            Pairs and Mate Networks for later calls, or its columns ``id``,
+            ``mother``, ``father`` (``-1`` or NA when missing) and optional
+            ``twin``, ``sex``, as a polars or pandas frame or a mapping of
+            arrays.  Columns are read first and checked by pedigree-graph's
+            rules after the counts, for this call alone.
         traits: One or two :class:`~pg_phenotype.Trait` (continuous, binary
             or ordinal).  Binary and ordinal values are level codes
             ``0..k-1``; every level is taken by some row.
@@ -332,7 +336,7 @@ def mate_correlation(
     """
     from pg_phenotype import __version__
 
-    cols = pedigree_arrays(pedigree)
+    native = native_pedigree(pedigree)
     trait_list = [traits] if isinstance(traits, Trait) else list(traits)
     native_traits = [
         (np.ascontiguousarray(t.values), t.kind, None if t.levels is None else len(t.levels)) for t in trait_list
@@ -342,11 +346,7 @@ def mate_correlation(
         raise TypeError(f"spearman must be a bool, got {spearman!r}")
     release_free_memory()
     raw = _native.mate_correlation(
-        cols.id,
-        cols.mother,
-        cols.father,
-        cols.twin,
-        cols.sex,
+        native,
         native_traits,
         labels,
         known,

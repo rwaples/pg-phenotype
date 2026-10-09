@@ -1050,7 +1050,7 @@ def test_dataclass_fields_are_the_core_tree_keys():
     ped, x, bb, strata = b.frame(3, 120)
     labels = np.where(np.isnan(strata), 0, strata).astype(np.int64)
     raw = _native.mate_correlation(
-        ped["id"], ped["mother"], ped["father"], None, None,
+        (ped["id"], ped["mother"], ped["father"], None, None),
         [(np.ascontiguousarray(x), "continuous", None), (np.ascontiguousarray(bb), "binary", None)],
         labels, ~np.isnan(strata),
         permutations=19, bootstrap=19, seed=0, min_stratum_networks=2, spearman=True, threads=1,

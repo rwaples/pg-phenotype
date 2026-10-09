@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from pg_phenotype import _native
-from pg_phenotype._input import floats, pedigree_arrays
+from pg_phenotype._input import floats
+from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._threads import thread_budget
 
 if TYPE_CHECKING:
@@ -26,35 +27,37 @@ __all__ = ["BivariateScores", "Cip", "UnivariateScores", "prepare", "score_bivar
 
 
 def prepare(pedigree: object, *, ndegree: int = 2, probands: Sequence[int] | np.ndarray | None = None) -> _native.Prep:
-    """Validate *pedigree* and build its relatives up to *ndegree*.
+    """Build *pedigree*'s relatives up to *ndegree*.
 
     Call once per pedigree and degree, then score each trait and parameter
-    variant against the result.  A relative of a proband is a row whose
-    closest relationship category is at most *ndegree* and whose exact
-    kinship to the proband is at least ``0.5**(ndegree + 1) - 1e-6``.
+    variant against the result; scoring many traits needs only the result.
+    A relative of a proband is a row whose closest relationship category is
+    at most *ndegree* and whose exact kinship to the proband is at least
+    ``0.5**(ndegree + 1) - 1e-6``.
 
     Args:
-        pedigree: Columns ``id``, ``mother``, ``father`` (``-1`` or NA when
-            missing) and optional ``twin``, ``sex`` (``0`` female, ``1`` male,
-            ``-1`` unknown), as a polars or pandas frame or a mapping of arrays.
+        pedigree: A :class:`~pg_phenotype.Pedigree`, or its columns ``id``,
+            ``mother``, ``father`` (``-1`` or NA when missing) and optional
+            ``twin``, ``sex`` (``0`` female, ``1`` male, ``-1`` unknown), as a
+            polars or pandas frame or a mapping of arrays.  Columns are read
+            first and checked by pedigree-graph's rules after *ndegree*, for
+            this call alone.  A Pedigree helps when preparing
+            again (another *ndegree* or set of probands) or running other
+            methods on the same pedigree.
         ndegree: The deepest relationship degree that counts, 1 to 5.
         probands: Ids to score; ``None`` scores every row.
 
     Returns:
-        An opaque in-memory handle.
+        An opaque in-memory handle.  It does not hold *pedigree*.
 
     Raises:
         ValidationError: The pedigree, *ndegree*, or *probands* is invalid.
         ResourceError: A capacity or allocation limit was reached.
     """
-    cols = pedigree_arrays(pedigree)
+    native = native_pedigree(pedigree)
     proband_ids = None if probands is None else np.ascontiguousarray(probands, dtype=np.int64)
     return _native.prepare(
-        cols.id,
-        cols.mother,
-        cols.father,
-        cols.twin,
-        cols.sex,
+        native,
         ndegree=ndegree,
         probands=proband_ids,
         threads=thread_budget(),

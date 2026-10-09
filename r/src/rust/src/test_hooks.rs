@@ -14,10 +14,18 @@ fn panic_for_test() {
     panic!("pgphenotype test hook: deliberate panic");
 }
 
+/// How many `pedigree()` handles have been freed in this session.
+#[cfg(feature = "test-hooks")]
+#[extendr]
+fn pedigrees_dropped_for_test() -> f64 {
+    crate::pedigree::DROPPED.load(std::sync::atomic::Ordering::Relaxed) as f64
+}
+
 #[cfg(feature = "test-hooks")]
 extendr_module! {
     mod test_hooks;
     fn panic_for_test;
+    fn pedigrees_dropped_for_test;
 }
 
 #[cfg(not(feature = "test-hooks"))]

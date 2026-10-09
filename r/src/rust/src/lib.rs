@@ -10,6 +10,7 @@ mod assortative;
 mod errors;
 mod input;
 mod pafgrs;
+mod pedigree;
 mod test_hooks;
 mod threads;
 
@@ -52,6 +53,7 @@ extendr_module! {
     use assortative;
     use input;
     use pafgrs;
+    use pedigree;
     use test_hooks;
     fn pgphenotype_version;
     fn pg_core_rev;

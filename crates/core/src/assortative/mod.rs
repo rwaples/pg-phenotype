@@ -31,14 +31,12 @@ mod value;
 mod primitives_parity;
 
 use crate::error::Error;
-use crate::input::{PedigreeInput, Trait};
+use crate::input::Trait;
+use crate::pedigree::{Pedigree, PedigreeArg};
 use bootstrap::Draw;
 use input::{check_strata, check_traits, Kind};
 use permutation::{NullDraw, Packed, SEQUENTIAL_H};
-use sample::{
-    distinct_rows, drop_thin_strata, mate_networks, mating_pairs, network_summary, stratum_codes,
-    CellPairs, Kept,
-};
+use sample::{distinct_rows, drop_thin_strata, network_summary, stratum_codes, CellPairs, Kept};
 use std::borrow::Cow;
 
 pub use input::{Settings, Strata};
@@ -47,6 +45,7 @@ pub use result::{
     MateCorrelation, Method, Permutation, PermutationStatistic, Point, Reason, Sample,
     SettingsEcho, Stratified, WithinPerson, WithinPersonPair, METHOD,
 };
+pub(crate) use sample::{mate_networks, mating_pairs, MatingPairs};
 
 /// The confidence level of every interval.
 pub(crate) const CI_LEVEL: f64 = 0.95;
@@ -77,29 +76,32 @@ fn cell_estimators(m: Kind, f: Kind) -> (&'static [Estimator], Estimator) {
 /// The Mate Correlation of `traits` (one or two, on the pedigree's rows) over
 /// the pedigree's Mating Pairs, optionally stratified, on the current pool.
 ///
+/// A built `pedigree` keeps its Mating Pairs and their Mate Networks for
+/// later calls; columns are validated for this call alone.
+///
 /// # Errors
 ///
 /// A settings [`Error::ParameterOutOfRange`], then any pedigree-graph-core
-/// validation error, then the trait and stratum errors of the input boundary
+/// validation error of columns, then the trait and stratum errors of the input boundary
 /// (`trait_count`, `trait_length_mismatch`, `unsupported_trait_kind`,
 /// `invalid_trait_value`, `all_missing_trait`, `constant_trait`,
 /// `sparse_ordinal_codes`, `unused_level`, `stratum_length_mismatch`).
 pub fn mate_correlation(
-    pedigree: PedigreeInput<'_>,
+    pedigree: PedigreeArg<'_>,
     traits: &[Trait<'_>],
     strata: Option<Strata<'_>>,
     settings: Settings,
 ) -> Result<MateCorrelation, Error> {
     let settings = settings.check()?;
-    let graph = pedigree.validate()?;
-    let n_rows = graph.len();
+    let pedigree = pedigree.resolve()?;
+    let n_rows = pedigree.len();
     let columns = check_traits(traits, n_rows)?;
     if let Some(s) = strata {
         check_strata(s, n_rows)?;
     }
     let stratified = strata.is_some();
-    let ids = &graph.ids;
-    let pairs = Pairs::build(ids, &graph.mother_rows, &graph.father_rows, strata);
+    let ids = pedigree.ids();
+    let pairs = Pairs::build(&pedigree, strata);
     let fathers = DistinctFathers::build(&pairs, ids, &columns);
     let sample = pairs.sample(n_rows);
 
@@ -107,8 +109,7 @@ pub fn mate_correlation(
     let mut fitted = Vec::with_capacity(cells.capacity());
     for mt in 0..columns.len() {
         for ft in 0..columns.len() {
-            let (cell, fit) =
-                analyse_cell(&pairs, &fathers, &columns, [mt, ft], stratified, settings);
+            let (cell, fit) = analyse_cell(&pairs, &fathers, &columns, [mt, ft], settings);
             cells.push(cell);
             fitted.push(fit);
         }
@@ -140,45 +141,54 @@ pub fn mate_correlation(
     })
 }
 
-/// The Mating Pairs whose parents both have a known stratum.
-struct Pairs {
+/// The Mating Pairs whose parents both have a known stratum: the
+/// Pedigree's own pairs and networks when no pair is dropped.
+struct Pairs<'p> {
     /// Every Mating Pair, before the unknown-stratum drop.
     n_total: usize,
-    mothers: Vec<usize>,
-    fathers: Vec<usize>,
+    mothers: Cow<'p, [usize]>,
+    fathers: Cow<'p, [usize]>,
     /// Each row's stratum code, `None` where unknown; without strata every
     /// row is code 0.
     codes: Option<Vec<Option<usize>>>,
     /// Each pair's Mate Network.
-    labels: Vec<usize>,
+    labels: Cow<'p, [usize]>,
 }
 
-impl Pairs {
-    fn build(
-        ids: &[i64],
-        mother_rows: &[i32],
-        father_rows: &[i32],
-        strata: Option<Strata<'_>>,
-    ) -> Pairs {
-        let (all_mothers, all_fathers) = mating_pairs(ids, mother_rows, father_rows);
-        let n_total = all_mothers.len();
+impl<'p> Pairs<'p> {
+    fn build(pedigree: &'p Pedigree, strata: Option<Strata<'_>>) -> Pairs<'p> {
+        let all = pedigree.mating_pairs();
         let codes = strata.map(stratum_codes);
-        let (mothers, fathers) = match &codes {
-            None => (all_mothers, all_fathers),
-            Some(c) => all_mothers
-                .iter()
-                .zip(&all_fathers)
-                .filter(|&(&m, &f)| c[m].is_some() && c[f].is_some())
-                .unzip(),
+        let all_pairs = || all.mothers.iter().zip(&all.fathers);
+        let known =
+            |c: &[Option<usize>], (&m, &f): (&usize, &usize)| c[m].is_some() && c[f].is_some();
+        let dropping = codes
+            .as_deref()
+            .filter(|c| !all_pairs().all(|pair| known(c, pair)));
+        let (mothers, fathers, labels) = match dropping {
+            Some(c) => {
+                let (mothers, fathers): (Vec<usize>, Vec<usize>) =
+                    all_pairs().filter(|&pair| known(c, pair)).unzip();
+                let labels = mate_networks(&mothers, &fathers);
+                (Cow::Owned(mothers), Cow::Owned(fathers), Cow::Owned(labels))
+            }
+            None => (
+                Cow::Borrowed(all.mothers.as_slice()),
+                Cow::Borrowed(all.fathers.as_slice()),
+                Cow::Borrowed(pedigree.networks()),
+            ),
         };
-        let labels = mate_networks(&mothers, &fathers);
         Pairs {
-            n_total,
+            n_total: all.mothers.len(),
             mothers,
             fathers,
             codes,
             labels,
         }
+    }
+
+    fn stratified(&self) -> bool {
+        self.codes.is_some()
     }
 
     /// Row `row`'s stratum code, 0 where unknown (no kept pair has one).
@@ -219,7 +229,7 @@ struct DistinctFathers {
 }
 
 impl DistinctFathers {
-    fn build(pairs: &Pairs, ids: &[i64], columns: &[input::Column<'_>]) -> DistinctFathers {
+    fn build(pairs: &Pairs<'_>, ids: &[i64], columns: &[input::Column<'_>]) -> DistinctFathers {
         let rows = distinct_rows(&pairs.fathers, ids);
         let mut index = vec![0; ids.len()];
         for (i, &r) in rows.iter().enumerate() {
@@ -269,19 +279,19 @@ struct CellTest {
 /// One cell (mother trait `mt` x father trait `ft`): its complete pairs, the
 /// thin-stratum drop, and every estimator with its SE and CI.
 fn analyse_cell(
-    pairs: &Pairs,
+    pairs: &Pairs<'_>,
     fathers: &DistinctFathers,
     columns: &[input::Column<'_>],
     [mt, ft]: [usize; 2],
-    stratified: bool,
     settings: input::Checked,
 ) -> (Cell, CellFit) {
+    let stratified = pairs.stratified();
     let (mother_trait, father_trait) = (&columns[mt], &columns[ft]);
     let mut dropped = Dropped::default();
     let n_pairs = pairs.mothers.len();
     let mut complete = Vec::with_capacity(n_pairs);
     let (mut m, mut f) = (Vec::with_capacity(n_pairs), Vec::with_capacity(n_pairs));
-    for (p, (&mr, &fr)) in pairs.mothers.iter().zip(&pairs.fathers).enumerate() {
+    for (p, (&mr, &fr)) in pairs.mothers.iter().zip(pairs.fathers.iter()).enumerate() {
         let (x, y) = (mother_trait.values[mr], father_trait.values[fr]);
         match (x.is_nan(), y.is_nan()) {
             (false, false) => {

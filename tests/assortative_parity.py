@@ -31,7 +31,7 @@ def run(g: Golden, threads: int = 1) -> dict:
     labels, known = (g.stratum_labels, g.stratum_known) if g.stratified else (None, None)
     s = g.settings
     return _native.mate_correlation(
-        g.id, g.mother, g.father, None, None, traits, labels, known,
+        (g.id, g.mother, g.father, None, None), traits, labels, known,
         permutations=s["permutations"], bootstrap=s["bootstrap"], seed=s["seed"],
         min_stratum_networks=s["min_stratum_networks"], spearman=True, threads=threads,
     )  # fmt: skip

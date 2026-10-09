@@ -17,10 +17,11 @@ fixture_inputs <- function(name) {
 }
 inputs <- lapply(c(small = "small", deep = "deep"), fixture_inputs)
 
-score_case <- function(case) {
+# `as_pedigree` is identity for the columns path, or pedigree().
+score_case <- function(case, as_pedigree = identity) {
   probands <- if (is.na(case$probands) || case$probands == "") NULL else
     as.integer(strsplit(case$probands, " ", fixed = TRUE)[[1L]])
-  prep <- pafgrs_prepare(pedigrees[[case$pedigree]], ndegree = case$ndegree, probands = probands)
+  prep <- pafgrs_prepare(as_pedigree(pedigrees[[case$pedigree]]), ndegree = case$ndegree, probands = probands)
   x <- inputs[[case$pedigree]]
   if (case$kind == "uni") {
     return(pafgrs_score_univariate(prep, x$traits[[1L]], x$ages[[1L]], cips[[1L]], h2 = case$h2_1))
@@ -35,6 +36,7 @@ test_that("scores equal the Python package's on every fixture case", {
   for (i in seq_len(nrow(cases))) {
     case <- cases[i, ]
     got <- score_case(case)
+    expect_identical(score_case(case, pedigree), got, info = case$case)
     want <- read_fixture(paste0("expected_", case$case, ".csv"))
     expect_identical(names(got), names(want), info = case$case)
     for (col in names(want)) {

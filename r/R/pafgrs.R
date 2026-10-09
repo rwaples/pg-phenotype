@@ -1,20 +1,26 @@
 #' Prepare a pedigree for PA-FGRS scoring
 #'
-#' Validates a pedigree and builds each proband's relatives up to `ndegree`.
-#' Call it once per pedigree and degree, then score each trait and parameter
-#' variant against the result.  A relative of a proband is a person whose
-#' closest relationship category is at most `ndegree` and whose exact kinship
-#' to the proband is at least `0.5^(ndegree + 1) - 1e-6`.
+#' Builds each proband's relatives up to `ndegree`.  Call it once per
+#' pedigree and degree, then score each trait and parameter variant against
+#' the result; scoring many traits needs only the result.  A relative of a
+#' proband is a person whose closest relationship category is at most
+#' `ndegree` and whose exact kinship to the proband is at least
+#' `0.5^(ndegree + 1) - 1e-6`.
 #'
-#' @param pedigree A data frame or a named list with columns `id`, `mother`
-#'   and `father`, and optionally `twin` (the MZ co-twin's id) and `sex`
-#'   (0 female, 1 male, -1 unknown).  Columns may be integer, whole-number
+#' @param pedigree A [pedigree()], or a data frame or a named list with
+#'   columns `id`, `mother` and `father`, and optionally `twin` (the MZ
+#'   co-twin's id) and `sex` (0 female, 1 male, -1 unknown).  Columns are
+#'   read first and checked by pedigree-graph's rules after `ndegree`, for
+#'   this call alone.  Columns may be integer, whole-number
 #'   double, or `bit64::integer64`; `NA` or -1 marks a missing parent, and
-#'   `id` may not be `NA`.  Other columns are ignored.
+#'   `id` may not be `NA`.  Other columns are ignored.  A [pedigree()] helps
+#'   when preparing again (another `ndegree` or set of probands) or running
+#'   other methods on the same pedigree.
 #' @param ndegree The deepest relationship degree that counts, 1 to 5.
 #' @param probands Ids to score, or `NULL` to score every row.
 #' @return An opaque handle of class `pgphenotype_pafgrs_prep`, held in
-#'   memory only: it does not survive [saveRDS()] or a new R session.
+#'   memory only: it does not survive [saveRDS()] or a new R session.  It
+#'   does not hold `pedigree`.
 #' @examples
 #' ped <- data.frame(
 #'   id = 1:6,
@@ -25,14 +31,9 @@
 #' prep
 #' @export
 pafgrs_prepare <- function(pedigree, ndegree = 2L, probands = NULL) {
-  if (!is.list(pedigree)) {
-    .pgp_usage("`pedigree` must be a data frame or a named list of columns", call = sys.call())
-  }
+  args <- .pgp_pedigree_args(pedigree, sys.call())
   ndegree <- .pgp_number(ndegree, "ndegree")
-  column <- function(name) if (name %in% names(pedigree)) pedigree[[name]] else NULL
-  .pgp_call(.native_pafgrs_prepare(
-    column("id"), column("mother"), column("father"), column("twin"), column("sex"), ndegree, probands
-  ))
+  .pgp_call(do.call(.native_pafgrs_prepare, c(args, list(ndegree, probands))))
 }
 
 #' @export

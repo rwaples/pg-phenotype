@@ -1,7 +1,10 @@
 # The native routines, registered by useDynLib(.registration = TRUE).
 
-.native_pafgrs_prepare <- function(id, mother, father, twin, sex, ndegree, probands) {
-  .Call(wrap__pafgrs_prepare, id, mother, father, twin, sex, ndegree, probands)
+.native_pedigree_new <- function(id, mother, father, twin, sex) {
+  .Call(wrap__pedigree_new, id, mother, father, twin, sex)
+}
+.native_pafgrs_prepare <- function(pedigree, id, mother, father, twin, sex, ndegree, probands) {
+  .Call(wrap__pafgrs_prepare, pedigree, id, mother, father, twin, sex, ndegree, probands)
 }
 .native_pafgrs_prep_info <- function(prep) .Call(wrap__pafgrs_prep_info, prep)
 .native_pafgrs_check_cip <- function(ages, cip) .Call(wrap__pafgrs_check_cip, ages, cip)
@@ -17,8 +20,9 @@
 .native_configure_threads <- function(n) .Call(wrap__configure_threads, n)
 .native_thread_budget <- function() .Call(wrap__thread_budget)
 .native_trait_kinds <- function() .Call(wrap__trait_kinds)
-.native_assortative_mate_correlation <- function(id, mother, father, twin, sex, values, kinds, n_levels, stratum,
-                                                 permutations, bootstrap, seed, min_stratum_networks, spearman) {
-  .Call(wrap__assortative_mate_correlation, id, mother, father, twin, sex, values, kinds, n_levels, stratum,
-        permutations, bootstrap, seed, min_stratum_networks, spearman)
+.native_assortative_mate_correlation <- function(pedigree, id, mother, father, twin, sex, values, kinds, n_levels,
+                                                 stratum, permutations, bootstrap, seed, min_stratum_networks,
+                                                 spearman) {
+  .Call(wrap__assortative_mate_correlation, pedigree, id, mother, father, twin, sex, values, kinds, n_levels,
+        stratum, permutations, bootstrap, seed, min_stratum_networks, spearman)
 }

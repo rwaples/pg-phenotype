@@ -1,7 +1,8 @@
 //! PA-FGRS: `pafgrs_prepare()`, `pafgrs_cip()` and the score functions.
 
 use crate::errors::{finish, HostError, HostResult};
-use crate::input::{self, IdType, Pedigree};
+use crate::input::{self, IdType};
+use crate::pedigree::Source;
 use crate::threads;
 use extendr_api::prelude::*;
 use pg_phenotype_core::pafgrs::{self, BivParams, Cip, Prep};
@@ -14,20 +15,16 @@ struct Handle {
 }
 
 fn handle(prep: &Robj) -> HostResult<&Handle> {
-    let ptr = <&ExternalPtr<Handle>>::try_from(prep).map_err(|err| match err {
-        extendr_api::Error::ExpectedExternalNonNullPtr(_) => HostError::usage(
-            "this prep is empty: a prep does not survive saveRDS() or a new R session; \
-             rebuild it with pafgrs_prepare()"
-                .to_string(),
-        ),
-        _ => HostError::usage("`prep` must come from pafgrs_prepare()".to_string()),
-    })?;
-    ptr.try_addr()
-        .map_err(|_| HostError::usage("`prep` must come from pafgrs_prepare()".to_string()))
+    input::handle(prep, "prep", "pafgrs_prepare()")
 }
 
-fn prepare_impl(columns: [Robj; 5], ndegree: &Robj, probands: Robj) -> HostResult<Robj> {
-    let pedigree = Pedigree::coerce(columns)?;
+fn prepare_impl(
+    ptr: &Robj,
+    columns: [Robj; 5],
+    ndegree: &Robj,
+    probands: Robj,
+) -> HostResult<Robj> {
+    let pedigree = Source::read(ptr, columns)?;
     let ndegree = input::saturating_whole("ndegree", input::number("ndegree", ndegree)?)?;
     let probands = (!probands.is_null())
         .then(|| input::coerce_required("probands", &probands))
@@ -35,14 +32,14 @@ fn prepare_impl(columns: [Robj; 5], ndegree: &Robj, probands: Robj) -> HostResul
     let pool = threads::pool()?;
     let prep = pool.install(|| {
         pafgrs::prepare(
-            pedigree.input(),
+            pedigree.arg(),
             ndegree,
             probands.as_ref().map(|c| c.values.as_slice()),
         )
     })?;
     let mut out: Robj = ExternalPtr::new(Handle {
         prep,
-        id_type: pedigree.ids.storage,
+        id_type: pedigree.id_type(),
     })
     .into();
     out.set_class(["pgphenotype_pafgrs_prep"])
@@ -50,9 +47,12 @@ fn prepare_impl(columns: [Robj; 5], ndegree: &Robj, probands: Robj) -> HostResul
     Ok(out)
 }
 
-/// Validate a pedigree and build its relative structure in the pool.
+/// Build a pedigree's relative structure in the pool, from a `pedigree()`
+/// pointer or, when it is `NULL`, the columns.
 #[extendr]
+#[allow(clippy::too_many_arguments)]
 fn pafgrs_prepare(
+    pedigree: Robj,
     id: Robj,
     mother: Robj,
     father: Robj,
@@ -62,6 +62,7 @@ fn pafgrs_prepare(
     probands: Robj,
 ) -> Robj {
     finish(prepare_impl(
+        &pedigree,
         [id, mother, father, twin, sex],
         &ndegree,
         probands,

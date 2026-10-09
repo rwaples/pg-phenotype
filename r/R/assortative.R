@@ -9,8 +9,11 @@
 #' test of each primary estimate.  The same inputs give the same numbers as
 #' the Python package's `pg_phenotype.assortative.mate_correlation`.
 #'
-#' @param pedigree A data frame or a named list with columns `id`, `mother`
-#'   and `father` (`NA` or -1 when missing), optionally `twin` and `sex`.
+#' @param pedigree A [pedigree()], which keeps its Mating Pairs and Mate
+#'   Networks for later calls, or a data frame or a named list with columns
+#'   `id`, `mother` and `father` (`NA` or -1 when missing), optionally `twin`
+#'   and `sex`.  Columns are read first and checked by pedigree-graph's rules
+#'   after the counts, for this call alone.
 #' @param traits One [trait()] or a list of one or two: continuous, binary or
 #'   ordinal.  Binary and ordinal values are level codes 0, 1, ...; every
 #'   level (a factor's levels included) must be taken by some row.
@@ -48,22 +51,18 @@
 assortative_mate_correlation <- function(pedigree, traits, stratum = NULL, permutations = 999, bootstrap = 0,
                                          seed = 0, min_stratum_networks = 10, spearman = FALSE) {
   call <- sys.call()
-  if (!is.list(pedigree)) {
-    .pgp_usage("`pedigree` must be a data frame or a named list of columns", call)
-  }
+  args <- .pgp_pedigree_args(pedigree, call)
   if (inherits(traits, "pgphenotype_trait")) traits <- list(traits)
   if (!is.list(traits) || !all(vapply(traits, inherits, logical(1), "pgphenotype_trait"))) {
     .pgp_usage("`traits` must be a trait() or a list of them", call)
   }
-  column <- function(name) if (name %in% names(pedigree)) pedigree[[name]] else NULL
   n_levels <- vapply(traits, function(t) if (is.null(t$levels)) NA_real_ else as.double(length(t$levels)), 0)
-  raw <- .pgp_call(.native_assortative_mate_correlation(
-    column("id"), column("mother"), column("father"), column("twin"), column("sex"),
+  raw <- .pgp_call(do.call(.native_assortative_mate_correlation, c(args, list(
     lapply(traits, `[[`, "values"), vapply(traits, `[[`, "", "kind"), n_levels, stratum,
     .pgp_number(permutations, "permutations", call), .pgp_number(bootstrap, "bootstrap", call),
     .pgp_number(seed, "seed", call), .pgp_number(min_stratum_networks, "min_stratum_networks", call),
     .pgp_flag(spearman, "spearman", call)
-  ), call)
+  ))), call)
   raw$metadata <- list(pg_phenotype_version = pgphenotype_version(), pedigree_graph_core_rev = pg_core_rev())
   structure(raw, class = "pgphenotype_mate_correlation")
 }

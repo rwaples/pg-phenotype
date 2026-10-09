@@ -29,13 +29,14 @@ flatten <- function(x, path = "") {
   list(list(path = path, value = x))
 }
 
-run_case <- function(case) {
+# `as_pedigree` is identity for the columns path, or pedigree().
+run_case <- function(case, as_pedigree = identity) {
   data <- read_fixture(paste0("am_", case$name, ".csv"))
   kinds <- strsplit(case$kinds, " ", fixed = TRUE)[[1L]]
   traits <- lapply(seq_along(kinds), function(k) trait(data[[paste0("t", k - 1L)]], kind = kinds[k]))
   stratum <- if (isTRUE(as.logical(case$stratified))) data$stratum else NULL
   assortative_mate_correlation(
-    data[c("id", "mother", "father")], traits, stratum = stratum, permutations = case$permutations,
+    as_pedigree(data[c("id", "mother", "father")]), traits, stratum = stratum, permutations = case$permutations,
     bootstrap = case$bootstrap, seed = case$seed, min_stratum_networks = case$min_stratum_networks,
     spearman = TRUE
   )
@@ -43,9 +44,9 @@ run_case <- function(case) {
 
 test_that("results equal the Python package's on every golden case, leaf for leaf", {
   expect_identical(nrow(am_cases), 6L)
-  for (i in seq_len(nrow(am_cases))) {
+  for (i in seq_len(nrow(am_cases))) for (path_kind in c("columns", "pedigree")) {
     case <- am_cases[i, ]
-    got <- run_case(case)
+    got <- run_case(case, if (path_kind == "pedigree") pedigree else identity)
     got$metadata <- NULL
     leaves <- flatten(unclass(got))
     paths <- vapply(leaves, `[[`, "", "path")
@@ -56,7 +57,7 @@ test_that("results equal the Python package's on every golden case, leaf for lea
     for (j in seq_len(nrow(want))) {
       path <- want$path[j]
       value <- by_path[[path]]
-      info <- paste(case$name, path)
+      info <- paste(case$name, path_kind, path)
       switch(want$kind[j],
         null = expect_null(value, label = info),
         bool = expect_identical(value, want$value[j] == "TRUE", label = info),

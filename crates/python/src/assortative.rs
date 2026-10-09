@@ -2,7 +2,7 @@
 //! values (the core's `to_value` tree), which `pg_phenotype.assortative`
 //! turns into frozen dataclasses.
 
-use crate::{checked_pool, to_pyerr, trait_kind, PedigreeArgs};
+use crate::{checked_pool, to_pyerr, trait_kind, PedigreeSource};
 use numpy::PyReadonlyArray1;
 use pg_phenotype_core::assortative::{self, Settings, Strata};
 use pg_phenotype_core::value::Value;
@@ -43,15 +43,11 @@ type TraitArg<'py> = (PyReadonlyArray1<'py, f64>, String, Option<usize>);
 
 /// The Mate Correlation of one or two traits, in the pool.
 #[pyfunction]
-#[pyo3(signature = (ids, mother, father, twin, sex, traits, stratum_labels, stratum_known, /, *, permutations, bootstrap, seed, min_stratum_networks, spearman, threads))]
+#[pyo3(signature = (pedigree, traits, stratum_labels, stratum_known, /, *, permutations, bootstrap, seed, min_stratum_networks, spearman, threads))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn mate_correlation<'py>(
     py: Python<'py>,
-    ids: PyReadonlyArray1<'py, i64>,
-    mother: PyReadonlyArray1<'py, i64>,
-    father: PyReadonlyArray1<'py, i64>,
-    twin: Option<PyReadonlyArray1<'py, i64>>,
-    sex: Option<PyReadonlyArray1<'py, i64>>,
+    pedigree: PedigreeSource<'py>,
     traits: Vec<TraitArg<'py>>,
     stratum_labels: Option<PyReadonlyArray1<'py, i64>>,
     stratum_known: Option<PyReadonlyArray1<'py, bool>>,
@@ -62,8 +58,7 @@ pub(crate) fn mate_correlation<'py>(
     spearman: bool,
     threads: usize,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let pedigree = PedigreeArgs::new(ids, mother, father, twin, sex);
-    let input = pedigree.input()?;
+    let pedigree = pedigree.arg()?;
     let traits = traits
         .iter()
         .map(|(values, kind, n_levels)| {
@@ -95,7 +90,9 @@ pub(crate) fn mate_correlation<'py>(
     };
     let pool = checked_pool(py, threads)?;
     let result = py
-        .detach(|| pool.install(|| assortative::mate_correlation(input, &traits, strata, settings)))
+        .detach(|| {
+            pool.install(|| assortative::mate_correlation(pedigree, &traits, strata, settings))
+        })
         .map_err(|e| to_pyerr(py, e))?;
     to_object(py, &result.to_value())
 }

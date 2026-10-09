@@ -27,11 +27,13 @@ pub mod input;
 mod lineage;
 pub(crate) mod normal;
 pub mod pafgrs;
+pub mod pedigree;
 pub mod threads;
 pub mod value;
 
 pub use error::Error;
 pub use input::{PedigreeInput, Trait, TraitKind};
+pub use pedigree::{Pedigree, PedigreeArg};
 pub use rayon;
 
 /// This build's one Rayon pool, built on first use with `threads` workers.
