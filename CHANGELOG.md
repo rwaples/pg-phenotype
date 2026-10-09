@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## v0.2.0
+
+Error details are stable and the same in Python and R: `reason` fields are
+slugs, out-of-range degrees, counts and seeds raise the package's own errors,
+and the thread budget's rules live in the Rust core.  Code that matched the
+old English `reason` text or caught `OverflowError` needs updating.
+
+- pedigree-graph-core is pinned at pedigree-graph's v0.12.3 tag.
 
 - An ordinal trait with no declared levels and a code far above the number of
   rows (say `1e12`) raised `sparse_ordinal_codes` only after allocating one

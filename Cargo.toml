@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/core", "crates/python"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 # pedigree-graph-core's floor; the R binding crate states the same.
 rust-version = "1.85"
@@ -12,9 +12,8 @@ repository = "https://github.com/rwaples/pg-phenotype"
 
 [workspace.dependencies]
 # Re-pinned on purpose only (ADR 0001): pg-core is unpublished until 1.0.
-# This rev is pedigree-graph's pg-core-smells branch on v0.12.2: the core
-# takes a Receiver instead of a view map and a compact flag.
-pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "66595d3371d2f8c68622b7b98f597af56818a77c" }
+# This rev is pedigree-graph's v0.12.3 tag.
+pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "727159175db19e0315e3743299c1e6538710c0ab" }
 rayon = "1.10"
 
 [profile.release]

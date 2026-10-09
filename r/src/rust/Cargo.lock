@@ -124,8 +124,8 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pedigree-graph-core"
-version = "0.12.2"
-source = "git+https://github.com/rwaples/pedigree-graph?rev=66595d3371d2f8c68622b7b98f597af56818a77c#66595d3371d2f8c68622b7b98f597af56818a77c"
+version = "0.12.3"
+source = "git+https://github.com/rwaples/pedigree-graph?rev=727159175db19e0315e3743299c1e6538710c0ab#727159175db19e0315e3743299c1e6538710c0ab"
 dependencies = [
  "num-bigint",
  "num-integer",
@@ -135,7 +135,7 @@ dependencies = [
 
 [[package]]
 name = "pg-phenotype-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "libm",
  "pedigree-graph-core",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "pg-phenotype-r"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "extendr-api",
  "pg-phenotype-core",

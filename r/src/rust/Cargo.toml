@@ -3,7 +3,7 @@ name = "pg-phenotype-r"
 # Kept equal to [workspace.package].version in the repository root and to
 # r/DESCRIPTION; this crate is its own workspace (below) so the R source
 # tarball builds without that one.
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
