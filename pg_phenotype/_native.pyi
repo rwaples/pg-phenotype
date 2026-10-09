@@ -95,3 +95,14 @@ def mate_correlation(
 ) -> dict[str, Any]: ...
 def tetrachoric_table(table: tuple[tuple[int, int], tuple[int, int]], /) -> dict[str, Any]: ...
 def tetrachoric_pairs(x: np.ndarray, y: np.ndarray, /) -> dict[str, Any]: ...
+def parent_offspring(
+    pedigree: Pedigree | _Columns,
+    values: np.ndarray,
+    kind: str,
+    n_levels: int | None,
+    stratum_labels: np.ndarray | None,
+    stratum_known: np.ndarray | None,
+    /,
+    *,
+    threads: int,
+) -> dict[str, Any]: ...

@@ -79,7 +79,9 @@ _Avoid_: couple, mates, union
 **Mate Network**:
 A connected set of Mating Pairs through shared mates: a remating mother or
 father joins two pairs.  The sandwich SE clusters by Mate Network, and the
-bootstrap resamples whole networks.
+bootstrap resamples whole networks.  In Parent-Offspring Regression a
+parent in no Mating Pair is a network of its own, and networks are always
+the whole pedigree's.
 _Avoid_: family, component
 
 **Cell**:
@@ -97,3 +99,10 @@ _Avoid_: spousal correlation, assortment coefficient
 **Within-Person Cross-Trait Correlation**:
 With two traits, the correlation of a person's two traits, per sex, once per
 distinct person with an analysed Mating Pair.
+
+**Parent-Offspring Regression**:
+The ordinary least-squares line of a child's trait on a parent value: the
+**midparent** `(mother + father) / 2`, the mother's value, or the father's.
+A child is analysed when the parents its line needs are pedigree rows and
+its own and their values are observed.  The slope is reported raw.
+_Avoid_: PO correlation, heritability regression

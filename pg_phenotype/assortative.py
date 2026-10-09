@@ -20,7 +20,7 @@ import numpy as np
 
 from pg_phenotype import _native
 from pg_phenotype._errors import ParameterError
-from pg_phenotype._input import as_int64, floats
+from pg_phenotype._input import strata
 from pg_phenotype._memory import release_free_memory
 from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._threads import thread_budget
@@ -267,16 +267,6 @@ def _cell(raw: dict) -> Cell:
     )
 
 
-def _strata(stratum: object) -> tuple[np.ndarray, np.ndarray]:
-    """Integer labels and a known mask from one value per row, NA/None/NaN unknown."""
-    values = floats(stratum, "stratum")
-    known = ~np.isnan(values)
-    labels = as_int64(values, known, "stratum", what="an integer label")
-    # Unknown rows carry label 0, which the core ignores under `known`.
-    labels[~known] = 0
-    return np.ascontiguousarray(labels), np.ascontiguousarray(known)
-
-
 def _count(name: str, value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
         raise TypeError(f"{name} must be an int, got {value!r}")
@@ -364,7 +354,7 @@ def mate_correlation(
     native_traits = [
         (np.ascontiguousarray(t.values), t.kind, None if t.levels is None else len(t.levels)) for t in trait_list
     ]
-    labels, known = (None, None) if stratum is None else _strata(stratum)
+    labels, known = (None, None) if stratum is None else strata(stratum)
     for name, flag in (("spearman", spearman), ("inference", inference)):
         if not isinstance(flag, (bool, np.bool_)):
             raise TypeError(f"{name} must be a bool, got {flag!r}")

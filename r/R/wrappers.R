@@ -28,3 +28,7 @@
 }
 .native_correlation_tetrachoric_table <- function(table) .Call(wrap__correlation_tetrachoric_table, table)
 .native_correlation_tetrachoric_pairs <- function(x, y) .Call(wrap__correlation_tetrachoric_pairs, x, y)
+.native_regression_parent_offspring <- function(pedigree, id, mother, father, twin, sex, values, kind, n_levels,
+                                                stratum) {
+  .Call(wrap__regression_parent_offspring, pedigree, id, mother, father, twin, sex, values, kind, n_levels, stratum)
+}

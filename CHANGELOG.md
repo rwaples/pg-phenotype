@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+Parent-offspring regression (#3): `pg_phenotype.regression.parent_offspring`
+(R: `regression_parent_offspring()`, Rust: `regression::parent_offspring`)
+fits the OLS line of each child's trait on its midparent's, its mother's and
+its father's value, pooled and, with `stratum=`, within strata of the child.
+Each fit reports the slope, intercept, r, r2, the plain OLS SE, and the Mate
+Network sandwich SE with a Wald p-value and CI.  Every pedigree row is a
+candidate child, and rows left out are counted by reason.  A trait that is
+all missing or constant gives fits with a reason, not an error
+([ADR 0007](docs/adr/0007-parent-offspring-regression.md)).  The gate
+against simACE is in `docs/gates/po-regression`.
+
 A `Pedigree` (R: `pedigree()`) validates a pedigree once for several
 methods or calls: `mate_correlation` and `pafgrs.prepare` take one wherever
 they take columns, and columns work as before.  A Pedigree keeps the Mating

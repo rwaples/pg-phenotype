@@ -300,7 +300,7 @@ fn influence(
 }
 
 /// `√(G/(G−1) · Σ_g (Σ_{i∈g} IF_i)²)` over the networks of `labels`.
-fn cluster_se(influence: &[f64], labels: &[usize]) -> f64 {
+pub(crate) fn cluster_se(influence: &[f64], labels: &[usize]) -> f64 {
     let g = labels.iter().max().map_or(0, |&l| l + 1);
     let mut sums = vec![0.0; g];
     for (&l, &v) in labels.iter().zip(influence) {

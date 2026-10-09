@@ -29,6 +29,7 @@ mod lineage;
 pub(crate) mod normal;
 pub mod pafgrs;
 pub mod pedigree;
+pub mod regression;
 pub mod threads;
 pub mod value;
 

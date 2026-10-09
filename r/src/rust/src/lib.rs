@@ -12,6 +12,7 @@ mod errors;
 mod input;
 mod pafgrs;
 mod pedigree;
+mod regression;
 mod test_hooks;
 mod threads;
 
@@ -56,6 +57,7 @@ extendr_module! {
     use input;
     use pafgrs;
     use pedigree;
+    use regression;
     use test_hooks;
     fn pgphenotype_version;
     fn pg_core_rev;

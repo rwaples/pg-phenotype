@@ -34,11 +34,12 @@ use crate::error::Error;
 use crate::input::Trait;
 use crate::pedigree::{Pedigree, PedigreeArg};
 use bootstrap::Draw;
-use input::{check_strata, check_traits, Kind};
+use input::{check_traits, Kind};
 use permutation::{NullDraw, Packed, SEQUENTIAL_H};
 use sample::{distinct_rows, drop_thin_strata, network_summary, stratum_codes, CellPairs, Kept};
 use std::borrow::Cow;
 
+pub(crate) use input::check_strata;
 pub use input::{Settings, Strata, DEFAULT_PERMUTATIONS};
 pub use result::{
     Cell, Ci, CiMethod, CiScale, Draws, Dropped, Estimate, Estimator, EstimatorResult,

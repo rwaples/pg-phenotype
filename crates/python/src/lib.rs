@@ -15,6 +15,7 @@ use std::num::NonZeroUsize;
 
 mod assortative;
 mod correlation;
+mod regression;
 #[cfg(feature = "test-hooks")]
 mod test_hooks;
 
@@ -433,6 +434,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(assortative::mate_correlation, m)?)?;
     m.add_function(wrap_pyfunction!(correlation::tetrachoric_table, m)?)?;
     m.add_function(wrap_pyfunction!(correlation::tetrachoric_pairs, m)?)?;
+    m.add_function(wrap_pyfunction!(regression::parent_offspring, m)?)?;
     m.add_class::<Prep>()?;
     m.add_class::<Pedigree>()?;
     #[cfg(feature = "test-hooks")]

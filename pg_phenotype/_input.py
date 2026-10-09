@@ -174,3 +174,13 @@ def floats(values: object, name: str) -> np.ndarray:
     if array.dtype == object:
         array = np.array([np.nan if v is None else v for v in array], dtype=np.float64)
     return np.ascontiguousarray(array, dtype=np.float64)
+
+
+def strata(stratum: object) -> tuple[np.ndarray, np.ndarray]:
+    """Integer labels and a known mask from one value per row, NA/None/NaN unknown."""
+    values = floats(stratum, "stratum")
+    known = ~np.isnan(values)
+    labels = as_int64(values, known, "stratum", what="an integer label")
+    # Unknown rows carry label 0, which the core ignores under `known`.
+    labels[~known] = 0
+    return np.ascontiguousarray(labels), np.ascontiguousarray(known)

@@ -8,8 +8,8 @@ Authors@R: c(
 Description: Methods for phenotypes measured on the members of a pedigree,
     computed by the Rust core shared with the 'pg-phenotype' Python package.
     Methods are PA-FGRS family genetic risk scores from one or two binary
-    traits, the Mate Correlation of assortative mating, and a standalone
-    tetrachoric correlation.
+    traits, the Mate Correlation of assortative mating, a standalone
+    tetrachoric correlation, and parent-offspring regression.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Depends: R (>= 4.2)
