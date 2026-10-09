@@ -55,6 +55,11 @@ cat > "$CARGO_HOME/config.toml" <<TOML
 [patch."https://github.com/rwaples/pedigree-graph"]
 pedigree-graph-core = { path = "$PG/crates/core" }
 TOML
+# A candidate whose version differs from the locked pin is not applied until
+# each lock's entry is resolved again (cargo warns that the patch "was not
+# used"); check_patch catches a lock that still names the pin.
+cargo update -p pedigree-graph-core
+cargo update --manifest-path r/src/rust/Cargo.toml -p pedigree-graph-core
 # Fail unless the lock file the last build wrote resolves pedigree-graph-core
 # to the candidate.  The output is captured whole: `grep -q` would close the
 # pipe early and, under pipefail, fail the check on cargo's SIGPIPE.
