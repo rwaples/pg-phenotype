@@ -100,8 +100,7 @@ jobs:
           python -m venv .venv
           . .venv/bin/activate
           pip install "maturin>=1.15.0,<2"
-          pip install -e ".[test]"
-          maturin develop --release --features test-hooks
+          maturin develop --release --features test-hooks --extras test
 
       - name: Run the test suite
         env:
