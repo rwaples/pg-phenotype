@@ -27,7 +27,7 @@ use pedigree_graph_core::kinship::ancestry::AncestorSignatures;
 use pedigree_graph_core::kinship::pairwise::Walker;
 use pedigree_graph_core::kinship::KinshipPedigree;
 use pedigree_graph_core::relationships::{
-    pair_blocks, CategorySet, Execution, MaxDegree, Pedigree, Progress,
+    pair_blocks, CategorySet, Execution, MaxDegree, Pedigree, Progress, Receiver,
 };
 use pedigree_graph_core::topology;
 use rayon::prelude::*;
@@ -344,7 +344,7 @@ fn candidates(
         &ped,
         MaxDegree::try_new(ndegree)?,
         CategorySet::up_to_degree(ndegree),
-        None,
+        Receiver::Graph,
         Execution::Speed,
         &Progress::default(),
     )?;

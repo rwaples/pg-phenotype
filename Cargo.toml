@@ -12,8 +12,9 @@ repository = "https://github.com/rwaples/pg-phenotype"
 
 [workspace.dependencies]
 # Re-pinned on purpose only (ADR 0001): pg-core is unpublished until 1.0.
-# This rev is pedigree-graph v0.12.2.
-pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "62c82fa6468aec0f579dc9286c5dbebe7d077500" }
+# This rev is pedigree-graph's pg-core-smells branch on v0.12.2: the core
+# takes a Receiver instead of a view map and a compact flag.
+pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "66595d3371d2f8c68622b7b98f597af56818a77c" }
 rayon = "1.10"
 
 [profile.release]

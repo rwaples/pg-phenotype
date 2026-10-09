@@ -6,7 +6,7 @@ use pedigree_graph_core::kinship::ancestry::AncestorSignatures;
 use pedigree_graph_core::kinship::pairwise::Walker;
 use pedigree_graph_core::kinship::KinshipPedigree;
 use pedigree_graph_core::relationships::{
-    pair_blocks_compact, Category, CategorySet, Execution, MaxDegree, Pedigree, Progress,
+    pair_blocks, Category, CategorySet, Execution, MaxDegree, Pedigree, Progress, Receiver,
 };
 use pedigree_graph_core::topology;
 
@@ -41,11 +41,14 @@ fn build_pairs_and_walk_compose_from_outside_the_crate() {
     )
     .expect("engine input");
     let view: Vec<i32> = (0..ids.len() as i32).collect();
-    let blocks = pair_blocks_compact(
+    let blocks = pair_blocks(
         &ped,
         MaxDegree::try_new(2).expect("degree"),
         CategorySet::up_to_degree(2),
-        &view,
+        Receiver::View {
+            rows: &view,
+            compact: true,
+        },
         Execution::Speed,
         &Progress::default(),
     )
