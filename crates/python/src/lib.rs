@@ -8,7 +8,7 @@ use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
 use pg_phenotype_core::error::{Class, FieldValue};
 use pg_phenotype_core::pafgrs::{self, BivParams, Cip};
 use pg_phenotype_core::{threads, Error, PedigreeInput, Trait, TraitKind};
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 use std::num::NonZeroUsize;
@@ -214,6 +214,18 @@ impl<'py> PedigreeArgs<'py> {
     }
 }
 
+/// An int as i64, saturated at the int64 bounds, so a range the core checks
+/// reports its own error for any int rather than an `OverflowError`.
+fn saturating_i64(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+    match value.extract::<i64>() {
+        Ok(v) => Ok(v),
+        Err(err) if err.is_instance_of::<PyOverflowError>(value.py()) => {
+            Ok(if value.lt(0)? { i64::MIN } else { i64::MAX })
+        }
+        Err(err) => Err(err),
+    }
+}
+
 /// Validate the pedigree and build its relative structure in the pool.
 #[pyfunction]
 #[pyo3(signature = (ids, mother, father, twin, sex, /, *, ndegree, probands, threads))]
@@ -225,10 +237,11 @@ fn prepare<'py>(
     father: PyReadonlyArray1<'py, i64>,
     twin: Option<PyReadonlyArray1<'py, i64>>,
     sex: Option<PyReadonlyArray1<'py, i64>>,
-    ndegree: i64,
+    ndegree: &Bound<'py, PyAny>,
     probands: Option<PyReadonlyArray1<'py, i64>>,
     threads: usize,
 ) -> PyResult<Prep> {
+    let ndegree = saturating_i64(ndegree)?;
     let pedigree = PedigreeArgs::new(ids, mother, father, twin, sex);
     let input = pedigree.input()?;
     let probands = probands.as_ref().map(|a| a.as_slice()).transpose()?;

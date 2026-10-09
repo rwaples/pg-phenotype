@@ -28,7 +28,7 @@ fn handle(prep: &Robj) -> HostResult<&Handle> {
 
 fn prepare_impl(columns: [Robj; 5], ndegree: &Robj, probands: Robj) -> HostResult<Robj> {
     let pedigree = Pedigree::coerce(columns)?;
-    let ndegree = input::whole("ndegree", input::number("ndegree", ndegree)?)?;
+    let ndegree = input::saturating_whole("ndegree", input::number("ndegree", ndegree)?)?;
     let probands = (!probands.is_null())
         .then(|| input::coerce_required("probands", &probands))
         .transpose()?;

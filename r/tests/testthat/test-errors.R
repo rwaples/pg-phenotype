@@ -27,6 +27,9 @@ test_that("the pedigree is validated", {
   expect_pgp_error(pafgrs_prepare(ped, ndegree = 0), "validation", "degree_out_of_range")
   err <- expect_pgp_error(pafgrs_prepare(ped, ndegree = 6), "validation", "degree_out_of_range")
   expect_identical(err$fields, list(value = 6, minimum = 1, maximum = 5))
+  # Past int64 too: a whole number saturates at the bound the core refuses.
+  expect_pgp_error(pafgrs_prepare(ped, ndegree = 1e19), "validation", "degree_out_of_range")
+  expect_pgp_error(pafgrs_prepare(ped, ndegree = -1e19), "validation", "degree_out_of_range")
   expect_pgp_error(pafgrs_prepare(ped, ndegree = 1.5), "usage")
   expect_pgp_error(pafgrs_prepare(ped, ndegree = "2"), "usage")
   expect_pgp_error(pafgrs_prepare(1:3), "usage")

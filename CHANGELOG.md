@@ -24,8 +24,10 @@
   merged into `InvalidTraitCode`, and error `kind`/`expected`/`actual` fields
   are `TraitKind`s.
 - Python `pafgrs.prepare(ndegree=256)` (or any int outside 1..5) raises
-  `degree_out_of_range`, not `OverflowError`.  Rust: `prepare` takes
-  `ndegree: i64` and does the one range check.
+  `degree_out_of_range`, not `OverflowError`; an int past int64 reports the
+  int64 bound as its `value`.  R's `pafgrs_prepare()` does the same for a
+  whole `ndegree` past 2^63, where it raised `parameter_out_of_range`.
+  Rust: `prepare` takes `ndegree: i64` and does the one range check.
 - R: a count or seed outside int64 is a `parameter_out_of_range` error, as
   in Python; whole numbers up to 2^63 are accepted (the limit was 2^53).  A
   bad stratum label's error carries its `value`, and

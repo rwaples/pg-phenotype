@@ -107,6 +107,12 @@ def test_errors_carry_codes_and_fields():
         with pytest.raises(pg_phenotype.ValidationError) as err:
             pafgrs.prepare(ped, ndegree=ndegree)
         assert err.value.fields["value"] == ndegree
+    # Past int64 too: the int saturates at the bound the core then refuses.
+    for ndegree, saturated in ((2**70, 2**63 - 1), (-(2**70), -(2**63))):
+        with pytest.raises(pg_phenotype.ValidationError) as err:
+            pafgrs.prepare(ped, ndegree=ndegree)
+        assert err.value.code == "degree_out_of_range"
+        assert err.value.fields["value"] == saturated
     with pytest.raises(pg_phenotype.ValidationError) as err:
         pafgrs.prepare(ped, probands=[ped["id"][0], -5])
     assert err.value.code == "unknown_proband"

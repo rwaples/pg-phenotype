@@ -202,6 +202,18 @@ pub fn whole(name: &'static str, x: f64) -> HostResult<i64> {
     Ok(x as i64)
 }
 
+/// `x` as a whole number saturated at the int64 bounds, for a value whose
+/// range the core checks, so any size reports the core's error.
+pub fn saturating_whole(name: &'static str, x: f64) -> HostResult<i64> {
+    if !(x.is_finite() && x == x.trunc()) {
+        return Err(HostError::usage(format!(
+            "`{name}` must be a whole number, got {x}"
+        )));
+    }
+    // `as` saturates a finite float at the integer bounds.
+    Ok(x as i64)
+}
+
 /// The pedigree columns, coerced; `twin` and `sex` are optional.
 pub struct Pedigree {
     pub ids: Coerced,
