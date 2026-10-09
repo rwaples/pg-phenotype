@@ -97,6 +97,8 @@ pub(crate) fn draws(
         Sides::Tables { m, f } => tables(pairs, [m, f], plan, fitted),
         Sides::Serial(s) => serial(s, plan, fitted),
     };
+    // An estimator no kernel produced a column for refits every draw, so a
+    // key the kernels miss costs time, never the interval.
     estimators
         .iter()
         .zip(starts)
@@ -104,8 +106,10 @@ pub(crate) fn draws(
             let column = columns
                 .iter_mut()
                 .find(|(key, _)| *key == (est, strat))
-                .map(|(_, column)| std::mem::take(column))
-                .unwrap_or_default();
+                .map_or_else(
+                    || vec![Draw::Refit; n_draws as usize],
+                    |(_, column)| std::mem::take(column),
+                );
             column
                 .into_par_iter()
                 .enumerate()
