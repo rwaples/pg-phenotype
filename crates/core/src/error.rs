@@ -93,6 +93,8 @@ pub enum FieldValue {
     Str(&'static str),
     Ints(Vec<i64>),
     Strs(Vec<&'static str>),
+    /// A string the caller passed, such as a category code it misspelt.
+    Text(String),
 }
 
 /// A structured pg-phenotype failure.
@@ -179,6 +181,30 @@ pub enum Error {
         expected_length: usize,
         actual_length: usize,
     },
+    /// A requested category is not a Relationship Category code.
+    UnknownCategory { category: String, position: usize },
+    /// A Relationship Category requested twice, in two entries or in one
+    /// Category Group; `positions` are the entries.
+    DuplicateCategory {
+        category: &'static str,
+        positions: [usize; 2],
+    },
+    /// A Category Group mixes symmetric and directed categories, or directed
+    /// categories with different roles.
+    MixedCategoryGroup {
+        group: String,
+        categories: [&'static str; 2],
+    },
+    /// Two entries of a category request share a name.
+    DuplicateEntryName { name: String, positions: [usize; 2] },
+    /// A Category Group with no categories.
+    EmptyCategoryGroup { group: String, position: usize },
+    /// A continuous trait's quantization step is too coarse for its spread.
+    InsufficientPrecision {
+        field: &'static str,
+        step: f64,
+        spread: f64,
+    },
     /// The second of two paired columns is not the first's length.
     PairLength {
         /// The two columns' names, first then second.
@@ -244,12 +270,19 @@ impl Error {
             Error::ConstantTrait { .. } => (Validation, "constant_trait"),
             Error::StratumLength { .. } => (Validation, "stratum_length_mismatch"),
             Error::PairLength { .. } => (Validation, "pair_length_mismatch"),
+            Error::UnknownCategory { .. } => (Validation, "unknown_category"),
+            Error::DuplicateCategory { .. } => (Validation, "duplicate_category"),
+            Error::MixedCategoryGroup { .. } => (Validation, "mixed_category_group"),
+            Error::DuplicateEntryName { .. } => (Validation, "duplicate_entry_name"),
+            Error::EmptyCategoryGroup { .. } => (Validation, "empty_category_group"),
+            Error::InsufficientPrecision { .. } => (Validation, "insufficient_precision"),
         }
     }
 
     /// The operands, as keyword fields.
     pub fn fields(&self) -> Vec<(&'static str, FieldValue)> {
-        use FieldValue::{Float, Int, Ints, Str};
+        use FieldValue::{Float, Int, Ints, Str, Text};
+        let ints = |p: &[usize; 2]| Ints(p.iter().map(|&p| p as i64).collect());
         let int = |n: usize| Int(n as i64);
         match self {
             Error::Pedigree(err) => err
@@ -371,6 +404,33 @@ impl Error {
                 ("expected_length", int(*expected_length)),
                 ("actual_length", int(*actual_length)),
             ],
+            Error::UnknownCategory { category, position } => vec![
+                ("category", Text(category.clone())),
+                ("position", int(*position)),
+            ],
+            Error::DuplicateCategory {
+                category,
+                positions,
+            } => vec![("category", Str(category)), ("positions", ints(positions))],
+            Error::MixedCategoryGroup { group, categories } => vec![
+                ("group", Text(group.clone())),
+                ("categories", FieldValue::Strs(categories.to_vec())),
+            ],
+            Error::DuplicateEntryName { name, positions } => {
+                vec![("name", Text(name.clone())), ("positions", ints(positions))]
+            }
+            Error::EmptyCategoryGroup { group, position } => {
+                vec![("group", Text(group.clone())), ("position", int(*position))]
+            }
+            Error::InsufficientPrecision {
+                field,
+                step,
+                spread,
+            } => vec![
+                ("field", Str(field)),
+                ("step", Float(*step)),
+                ("spread", Float(*spread)),
+            ],
             Error::PairLength {
                 columns,
                 expected_length,
@@ -457,6 +517,33 @@ impl fmt::Display for Error {
             Error::StratumLength { expected_length, actual_length } => write!(
                 f,
                 "stratum must have one label per pedigree row ({expected_length}), got {actual_length}"
+            ),
+            Error::UnknownCategory { category, position } => write!(
+                f,
+                "categories[{position}] names {category:?}, which is not a Relationship Category code"
+            ),
+            Error::DuplicateCategory { category, positions } => write!(
+                f,
+                "category {category} is requested in entries {} and {}",
+                positions[0], positions[1]
+            ),
+            Error::MixedCategoryGroup { group, categories: [a, b] } => write!(
+                f,
+                "category group {group:?} mixes {a} and {b}: a group's categories are all symmetric, \
+                 or all directed with the same roles"
+            ),
+            Error::DuplicateEntryName { name, positions } => write!(
+                f,
+                "entries {} and {} are both named {name:?}",
+                positions[0], positions[1]
+            ),
+            Error::EmptyCategoryGroup { group, position } => {
+                write!(f, "category group {group:?} (categories[{position}]) is empty")
+            }
+            Error::InsufficientPrecision { field, step, spread } => write!(
+                f,
+                "{field} is quantized in steps of {step:e}, more than 2^-20 of its spread {spread:e}: \
+                 its range is too wide for its spread"
             ),
             Error::PairLength { columns: [first, second], expected_length, actual_length } => write!(
                 f,

@@ -19,6 +19,7 @@ pub(crate) fn to_object<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'
         Value::Int(v) => v.into_pyobject(py)?.into_any(),
         Value::Float(v) => v.into_pyobject(py)?.into_any(),
         Value::Str(v) => v.into_pyobject(py)?.into_any(),
+        Value::Text(v) => v.into_pyobject(py)?.into_any(),
         Value::Floats(v) => PyTuple::new(py, v)?.into_any(),
         Value::Counts(v) => PyList::new(py, v)?.into_any(),
         Value::List(items) => {

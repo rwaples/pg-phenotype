@@ -213,6 +213,7 @@ fn field_robj(name: &str, value: FieldValue) -> Robj {
         FieldValue::Ints(v) => int_values(v.into_iter().map(|n| n + shift).collect()),
         FieldValue::Float(x) => x.into(),
         FieldValue::Str(s) => s.into(),
+        FieldValue::Text(s) => s.into(),
         FieldValue::Strs(v) => Strings::from_values(v).into_robj(),
     }
 }

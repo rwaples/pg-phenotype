@@ -20,6 +20,7 @@ pub(crate) fn to_robj(value: &Value) -> Robj {
         Value::Int(v) => int_values(vec![*v]),
         Value::Float(v) => (*v).into(),
         Value::Str(v) => (*v).into(),
+        Value::Text(v) => v.as_str().into(),
         Value::Floats(v) => Doubles::from_values(v.iter().copied()).into_robj(),
         Value::Counts(v) => counts(v),
         Value::List(items) => List::from_values(items.iter().map(to_robj)).into_robj(),

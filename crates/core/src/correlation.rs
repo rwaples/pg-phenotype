@@ -114,7 +114,7 @@ fn tetrachoric_of(table: [[u64; 2]; 2], n_dropped: u64) -> Tetrachoric {
     }
 }
 
-fn fit(table: [[u64; 2]; 2]) -> Result<Estimate, Reason> {
+pub(crate) fn fit(table: [[u64; 2]; 2]) -> Result<Estimate, Reason> {
     let mut counts = Table::zeros(1, 1, 2, 2);
     counts.data = table.iter().flatten().map(|&c| c as f64).collect();
     // A side's levels are the ones it shows, as a Mate Correlation cell's are.

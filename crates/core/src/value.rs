@@ -17,6 +17,8 @@ pub enum Value {
     Int(i64),
     Float(f64),
     Str(&'static str),
+    /// A string the caller passed (a Category Group's name).
+    Text(String),
     /// A fixed-length tuple of floats (a CI): a Python tuple, an R double vector.
     Floats(Vec<f64>),
     /// A row of counts (a table row): a Python list, an R integer vector
