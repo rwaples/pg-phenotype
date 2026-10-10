@@ -78,3 +78,23 @@ pedsum commit), not against a live pedsum.
   `Tables::terms` gives a NaN Hessian, so Newton hands over to bounded
   Brent, while a populated cell's probability is below 1e-12 (`CELL_NOISE`).
   The NLL itself is unchanged, and no golden moved.
+- A third departure (2026-10-10, issue #8): pedsum's plateau test
+  (decision 9) flags a fit whose NLL at the nearer bound is within
+  `1e-6 * |NLL|` of the optimum's.  At the bound, a populated cell's
+  probability can be rounding noise in place of its true value, far below
+  1e-16.  The bound then looks hundreds of nats better than it is, and at
+  large n the relative tolerance is tens of nats: `[[14045855, 3530593],
+  [1, 6012126]]` (n = 2.4e7) was flagged at the interior maximum 0.99546,
+  its SE withheld.  pg-phenotype counts a bound where a populated cell's
+  probability is below 1e-12 (`CELL_NOISE`) as no plateau
+  (`Tables::bound_nll`).  A real plateau comes from an empty cell, which
+  is no term of the NLL, so the test still finds it.  The rule also clears
+  a bound where such a cell's probability is computed accurately but is
+  below 1e-12.  pedsum would still call that a plateau when the NLL gap
+  is within its relative tolerance.  Since the cell's probability at the
+  optimum is at least about 1/n, that cell alone adds about
+  `ln(1e12 / n)` to the gap.  Against a tolerance of about `1e-6 * n`
+  nats, that points to n of 1e7 or more, where the tolerance is itself
+  tens of nats.  The tolerance stays relative.  No
+  golden moved, and on 100,000 random tables no other flag or estimate
+  changed.

@@ -124,7 +124,12 @@ fn fit(table: [[u64; 2]; 2]) -> Result<Estimate, Reason> {
     };
     let (rows, cols) = (shown(counts.mother_margin()), shown(counts.father_margin()));
     let tables = Tables::from_counts(counts, &rows, &cols).map_err(Status::reason)?;
-    let point = newton_rho(|r| tables.terms(r), |r| tables.nll(r), 0.0);
+    let point = newton_rho(
+        |r| tables.terms(r),
+        |r| tables.nll(r),
+        |r| tables.bound_nll(r),
+        0.0,
+    );
     let se = sandwich_se(&tables, point);
     let ci = se.map(|se| Ci {
         bounds: wald_ci(point.value, se, CiScale::FisherZ),

@@ -252,20 +252,35 @@ impl Tables {
         )
     }
 
+    /// The NLL, `None` where a populated cell's probability is below
+    /// [`CELL_NOISE`] and the NLL mostly rounding (issue #8).
+    pub fn bound_nll(&self, rho: f64) -> Option<f64> {
+        let (nll, least) = self.nll_and_least(rho);
+        (least >= CELL_NOISE).then_some(nll)
+    }
+
     pub fn nll(&self, rho: f64) -> f64 {
+        self.nll_and_least(rho).0
+    }
+
+    /// The NLL, and the least probability of a populated cell.
+    fn nll_and_least(&self, rho: f64) -> (f64, f64) {
         let mut nll = 0.0;
+        let mut least = f64::INFINITY;
         for &combo in &self.combos {
             let cdf = self.grid(combo, |h, k| bvn::cdf(h, k, rho));
             for i in 0..self.n.k_m {
                 for j in 0..self.n.k_f {
                     let count = self.n.at(combo.0, combo.1, i, j);
                     if count > 0.0 {
-                        nll += count * corner(&cdf, i, j).max(TINY).ln();
+                        let pi = corner(&cdf, i, j).max(TINY);
+                        least = least.min(pi);
+                        nll += count * pi.ln();
                     }
                 }
             }
         }
-        -nll
+        (-nll, least)
     }
 }
 
@@ -281,6 +296,7 @@ pub(crate) fn polychoric(
     Ok(newton_rho(
         |r| tables.terms(r),
         |r| tables.nll(r),
+        |r| tables.bound_nll(r),
         start.unwrap_or(0.0),
     ))
 }
@@ -397,6 +413,7 @@ pub(crate) fn polyserial(serial: Serial<'_>, w: &[f64], start: Option<f64>) -> F
     Ok(newton_rho(
         |r| kernel.terms(r, true),
         |r| kernel.terms(r, true).nll,
+        |r| Some(kernel.terms(r, true).nll),
         start,
     ))
 }
@@ -455,5 +472,33 @@ fn primary(stratified: bool, pairs: &CellPairs, w: &[f64], start: Option<f64>) -
         Sides::Continuous => closed(pearson(&pairs.m, &pairs.f, w, true)),
         Sides::Tables { m, f } => polychoric(pairs, m, f, w, start),
         Sides::Serial(serial) => polyserial(serial, w, start),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assortative::kernels::LATENT_BOUND;
+
+    fn tables(counts: [f64; 4]) -> Tables {
+        let mut n = Table::zeros(1, 1, 2, 2);
+        n.data = counts.to_vec();
+        let both = Grid {
+            rows: 1,
+            cols: 2,
+            data: vec![true, true],
+        };
+        Tables::from_counts(n, &both, &both).unwrap()
+    }
+
+    #[test]
+    fn the_bound_nll_is_withheld_where_a_populated_cell_is_rounding() {
+        // Issue #8: the one-pair cell is rounding at the bound.
+        let t = tables([14045855.0, 3530593.0, 1.0, 6012126.0]);
+        assert_eq!(t.bound_nll(LATENT_BOUND), None);
+        assert_eq!(t.bound_nll(0.99), Some(t.nll(0.99)));
+        // An empty corner is no term of the NLL, so a bound it vanishes at is resolved.
+        let t = tables([10.0, 0.0, 0.0, 10.0]);
+        assert_eq!(t.bound_nll(LATENT_BOUND), Some(t.nll(LATENT_BOUND)));
     }
 }

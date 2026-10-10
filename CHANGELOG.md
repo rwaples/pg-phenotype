@@ -100,6 +100,16 @@ unchanged.
   about 140,000 random tables with near-empty cells, none now misses its
   maximum, against about 1 in 1,000 before.  This departs from pedsum,
   which has the same flaw (ADR 0005).
+- A tetrachoric or polychoric fit with an interior maximum is no longer
+  flagged as a boundary because the NLL at the bound is rounding (#8).  The
+  plateau test compares the NLL at the bound with the optimum's.  When a
+  populated cell's probability there is below 1e-12 it is rounding noise,
+  so the bound looked far better than it is: `[[14045855, 3530593],
+  [1, 6012126]]` came out 18.8 nats above the optimum, within the 22-nat
+  tolerance at n = 2.4e7, and its SE was withheld.  The true gap is
+  673 nats.  Such a bound now counts as no plateau.  On 100,000 random
+  tables no other flag or estimate changed.  This departs from pedsum
+  (ADR 0005).
 
 ## v0.2.0
 

@@ -120,9 +120,12 @@ pub(crate) fn minimize_bounded(
 }
 
 /// `rho` with pedsum's boundary flag: at a bound, or on a plateau reaching one.
-fn flag_boundary(nll: &mut impl FnMut(f64) -> f64, rho: f64, best: f64) -> Point {
+/// `bound_nll` is the NLL at the bound, `None` where it is mostly rounding:
+/// that is no plateau, since the bound gives the data a probability of about 0.
+fn flag_boundary(bound_nll: impl FnOnce(f64) -> Option<f64>, rho: f64, best: f64) -> Point {
     let at_bound = rho.abs() >= LATENT_BOUND - BOUNDARY_MARGIN;
-    let plateau = nll(LATENT_BOUND.copysign(rho)) - best <= BOUNDARY_NLL_TOL * best.abs().max(1.0);
+    let plateau = bound_nll(LATENT_BOUND.copysign(rho))
+        .is_some_and(|at| at - best <= BOUNDARY_NLL_TOL * best.abs().max(1.0));
     Point {
         value: rho,
         boundary: Some(at_bound || plateau),
@@ -130,9 +133,12 @@ fn flag_boundary(nll: &mut impl FnMut(f64) -> f64, rho: f64, best: f64) -> Point
 }
 
 /// ρ̂ on `(-LATENT_BOUND, LATENT_BOUND)` by bounded Brent.
-pub(crate) fn maximise_rho(mut nll: impl FnMut(f64) -> f64) -> Point {
-    let (rho, best) = minimize_bounded(&mut nll, -LATENT_BOUND, LATENT_BOUND, BRENT_XATOL);
-    flag_boundary(&mut nll, rho, best)
+pub(crate) fn maximise_rho(
+    nll: impl FnMut(f64) -> f64,
+    bound_nll: impl FnOnce(f64) -> Option<f64>,
+) -> Point {
+    let (rho, best) = minimize_bounded(nll, -LATENT_BOUND, LATENT_BOUND, BRENT_XATOL);
+    flag_boundary(bound_nll, rho, best)
 }
 
 /// A negative log-likelihood in ρ and its first two ρ-derivatives.
@@ -146,10 +152,11 @@ pub(crate) struct Terms {
 /// ρ̂ by Newton on the analytic score from `start`, `terms(ρ)` giving the
 /// NLL and its derivatives.  Hands over to [`maximise_rho`] when the
 /// Hessian is not positive, a step leaves the bound, or 12 steps do not
-/// converge.
+/// converge.  `bound_nll` is as [`flag_boundary`] takes it.
 pub(crate) fn newton_rho(
     mut terms: impl FnMut(f64) -> Terms,
-    mut nll: impl FnMut(f64) -> f64,
+    nll: impl FnMut(f64) -> f64,
+    bound_nll: impl FnOnce(f64) -> Option<f64>,
     start: f64,
 ) -> Point {
     let mut rho = start.clamp(-START_CLIP, START_CLIP);
@@ -160,18 +167,18 @@ pub(crate) fn newton_rho(
             hess,
         } = terms(rho);
         if !(hess > 0.0) {
-            return maximise_rho(nll);
+            return maximise_rho(nll, bound_nll);
         }
         let step = -grad / hess;
         rho += step;
         if !(-LATENT_BOUND < rho && rho < LATENT_BOUND) {
-            return maximise_rho(nll);
+            return maximise_rho(nll, bound_nll);
         }
         if step.abs() < NEWTON_TOL {
-            return flag_boundary(&mut nll, rho, best);
+            return flag_boundary(bound_nll, rho, best);
         }
     }
-    maximise_rho(nll)
+    maximise_rho(nll, bound_nll)
 }
 
 #[cfg(test)]
@@ -194,6 +201,7 @@ mod tests {
                 hess: 0.0,
             },
             nll,
+            |r| Some(nll(r)),
             0.0,
         );
         assert!(fit.value > LATENT_BOUND - BOUNDARY_MARGIN);
@@ -206,9 +214,23 @@ mod tests {
                 hess: 2.0,
             },
             q,
+            |r| Some(q(r)),
             0.0,
         );
         assert!((fit.value - 0.2).abs() < 1e-12);
         assert_eq!(fit.boundary, Some(false));
+    }
+
+    #[test]
+    fn a_plateau_needs_a_resolved_nll_at_the_bound() {
+        // Flat from 0.5 to the bound: a plateau, unless the bound's NLL is rounding.
+        let nll = |r: f64| (r - 0.5).min(0.0).powi(2);
+        assert_eq!(
+            flag_boundary(|r| Some(nll(r)), 0.5, 0.0).boundary,
+            Some(true)
+        );
+        assert_eq!(flag_boundary(|_| None, 0.5, 0.0).boundary, Some(false));
+        let at_bound = LATENT_BOUND - BOUNDARY_MARGIN / 2.0;
+        assert_eq!(flag_boundary(|_| None, at_bound, 0.0).boundary, Some(true));
     }
 }
