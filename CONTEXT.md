@@ -107,3 +107,35 @@ The ordinary least-squares line of a child's trait on a parent value: the
 A child is analysed when the parents its line needs are pedigree rows and
 its own and their values are observed.  The slope is reported raw.
 _Avoid_: PO correlation, heritability regression
+
+**Relationship Category**:
+pedigree-graph's class of a pair of rows by their closest relationship (MZ,
+FS, MHS, PHS, MO, FO, 1C, GP, Av, ...).  A symmetric category's two members
+play the same role; a directed one names its roles, junior first (offspring
+then parent, niece or nephew then aunt or uncle).
+_Avoid_: relationship type, relationship code
+
+**Category Group**:
+Several Relationship Categories given one name and analysed as one, such as
+PO for MO and FO.  Its categories are all symmetric, or all directed with
+the same roles once mother and father both count as parent: PO's roles are
+offspring and parent.
+
+**Relative Pair**:
+Two rows in one Relationship Category.  A pair in a symmetric category
+enters in both orders; a pair in a directed category enters once, in its
+roles' order.
+_Avoid_: relative (PA-FGRS's term), dyad, relationship pair
+
+**Relative-Pair Correlation**:
+The correlation of one trait between the members of a category's (or a
+Category Group's) Relative Pairs, by the estimator the trait's kind calls
+for: Pearson for a continuous trait, tetrachoric and phi for a binary one.
+In both orders a symmetric category's correlation is intraclass: one mean
+and spread, or one threshold, for both members.
+_Avoid_: relative correlation, familial correlation
+
+**Concordance**:
+A symmetric category's binary Relative Pairs counted unordered: both
+unaffected, discordant, both affected.  A directed category counts its
+pairs in a 2 x 2 table in its roles' order instead.
