@@ -14,13 +14,11 @@ import pg_phenotype as pgp
 from pg_phenotype.regression import parent_offspring
 from tests.oracle.po_regression_reference import PARENTS, regress
 from tests.pedigrees import random_pedigree
-from tests.po_regression_golden import comparisons, gaps, load, simace_validate_float32, tolerance
+from tests.po_regression_golden import REL, comparisons, gaps, load, simace_validate_float32, tolerance
 
 if TYPE_CHECKING:
     from pg_phenotype.regression import Fit
     from tests.oracle.po_regression_reference import Reference
-
-REL = 1e-10
 
 
 def _close(a: float | None, b: float | None, scale: float = 1.0) -> None:
@@ -184,7 +182,11 @@ def test_gate_defined_lines_agree() -> None:
     for c in comparisons():
         if c.outcome != "both":
             continue
-        assert max(gaps(c).values()) <= tolerance(c), (c.scenario, c.label, gaps(c))
+        if tolerance(c) == REL:
+            # simACE's float64 paths: bit for bit, as the gate report says.
+            assert set(gaps(c).values()) == {0.0}, (c.scenario, c.label, gaps(c))
+        else:
+            assert max(gaps(c).values()) <= tolerance(c), (c.scenario, c.label, gaps(c))
         if "n_pairs" in c.simace:
             assert c.pg.n == c.simace["n_pairs"]
 
@@ -197,6 +199,10 @@ def test_gate_simace_undefined_cases_are_its_rules() -> None:
             # pg-phenotype estimates the same slope as the unscaled A1 line.
             unscaled = next(d for d in comparisons() if d.scenario == c.scenario and d.label == "validate.A1")
             assert c.pg.slope == pytest.approx(unscaled.pg.slope, rel=1e-6)
+        elif c.outcome == "simace_min_100":
+            n_mothered, n_trios = c.validation_counts
+            assert min(n_mothered, n_trios) <= 100
+            assert c.pg.n == n_trios
         elif c.outcome == "both_undefined":
             assert c.pg.reason == "constant_parent_value"
 

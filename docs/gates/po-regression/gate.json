@@ -1,6 +1,6 @@
 {
  "simace_rev": "6355ffa6aebe37238cb2724dfcde288830fdcb6c",
- "pg_phenotype_base_rev": "e2bded7b1fa25b369f53bb02e352abcce3b94b57",
+ "pg_phenotype_base_rev": "b5ca06fc4ac3da94e1c135aa5879cb1dface9258",
  "tolerance": {
   "relative": 1e-10,
   "relative_float32_validation": 1e-06

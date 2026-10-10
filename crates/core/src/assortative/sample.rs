@@ -103,22 +103,9 @@ pub(crate) fn network_summary(labels: &[usize]) -> (u64, Option<f64>) {
 /// distinct label, unknown ranked first (pedsum's `-1`).  `None` is the
 /// unknown code itself.
 pub(crate) fn stratum_codes(strata: Strata<'_>) -> Vec<Option<usize>> {
-    let mut known: Vec<i64> = strata
-        .labels
-        .iter()
-        .zip(strata.known)
-        .filter(|(_, &k)| k)
-        .map(|(&l, _)| l)
-        .collect();
-    known.sort_unstable();
-    known.dedup();
     let offset = usize::from(strata.known.iter().any(|&k| !k));
-    strata
-        .labels
-        .iter()
-        .zip(strata.known)
-        .map(|(l, &k)| k.then(|| offset + known.binary_search(l).unwrap_or(0)))
-        .collect()
+    let (codes, _) = strata.codes();
+    codes.into_iter().map(|c| c.map(|c| offset + c)).collect()
 }
 
 /// One cell's analysed pairs: values and each mate's stratum code, with the

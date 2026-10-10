@@ -46,7 +46,10 @@ clusters by.
   networks when strata drop pairs (ADR 0006).  Keeping whole-pedigree links
   is conservative: a parent missing the trait still joins two sibships.
 - `se` is exactly 0 when every network's score sum is within its rounding
-  bound, `n eps sum |x_i - xbar| (|y_i| + |slope x_i| + |intercept|) / Sxx`.
+  bound, `n eps sum |x_i - xbar| (|y_i - ybar| + |slope (x_i - xbar)|) / Sxx`.
+  The sandwich's residuals are centred, `(y_i - ybar) - slope (x_i - xbar)`,
+  so a shift of the trait leaves both the sums and the bound alone.
+  `se_ols` keeps simACE's residuals `y_i - (slope x_i + intercept)`.
   A constant child value fits exactly (slope 0, both SEs 0).  A zero `se`
   has no Wald test: `p` and `ci` are `None` with `zero_se`.
 

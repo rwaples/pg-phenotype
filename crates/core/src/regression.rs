@@ -10,7 +10,7 @@
 use crate::assortative::sandwich::cluster_se;
 use crate::assortative::{check_strata, Strata, CI_LEVEL, WALD_Z};
 use crate::error::Error;
-use crate::input::{Trait, TraitKind};
+use crate::input::{Trait, ValueRule};
 use crate::normal;
 use crate::pedigree::{Pedigree, PedigreeArg};
 use crate::value::Value;
@@ -186,7 +186,7 @@ pub fn parent_offspring(
         check_strata(s, n_rows)?;
     }
     let networks = row_networks(&pedigree);
-    let (codes, labels) = strata.map(stratum_codes).unzip();
+    let (codes, labels) = strata.map(Strata::codes).unzip();
     let n_strata = labels.as_ref().map_or(0, Vec::len);
     let mut scratch = Relabel::new(networks.n_keys);
     // Per parent, one fit per subset: pooled first, then each stratum.
@@ -229,39 +229,10 @@ pub fn parent_offspring(
 /// The trait's values, after the checks this method needs.  An all-missing
 /// or constant trait is not an error here: its fits carry a reason.
 fn check_trait<'a>(t: Trait<'a>, n_rows: usize) -> Result<&'a [f64], Error> {
-    if t.values.len() != n_rows {
-        return Err(Error::TraitLength {
-            field: FIELD,
-            expected_length: n_rows,
-            actual_length: t.values.len(),
-        });
-    }
-    let ceiling = match t.kind {
-        TraitKind::Categorical => {
-            return Err(Error::UnsupportedTraitKind {
-                field: FIELD,
-                kind: t.kind,
-            })
-        }
-        TraitKind::Continuous => None,
-        TraitKind::Binary => Some(t.n_levels.map_or(2, |k| k.min(2)) as f64),
-        TraitKind::Ordinal => Some(t.n_levels.map_or(f64::INFINITY, |k| k as f64)),
-    };
+    let rule = ValueRule::of(&t, FIELD, n_rows)?;
     for (position, &value) in t.values.iter().enumerate() {
-        if value.is_nan() {
-            continue;
-        }
-        let valid = match ceiling {
-            None => value.is_finite(),
-            Some(ceiling) => value >= 0.0 && value < ceiling && value.fract() == 0.0,
-        };
-        if !valid {
-            return Err(Error::InvalidTraitCode {
-                field: FIELD,
-                kind: t.kind,
-                position,
-                value,
-            });
+        if !value.is_nan() {
+            rule.check(position, value)?;
         }
     }
     Ok(t.values)
@@ -300,27 +271,6 @@ fn row_networks(pedigree: &Pedigree) -> RowNetworks {
         n_networks,
         n_keys: n_networks + pedigree.len(),
     }
-}
-
-/// Each row's stratum code (an index into the ascending known labels),
-/// `None` where unknown, and those labels.
-fn stratum_codes(strata: Strata<'_>) -> (Vec<Option<usize>>, Vec<i64>) {
-    let mut labels: Vec<i64> = strata
-        .labels
-        .iter()
-        .zip(strata.known)
-        .filter(|(_, &k)| k)
-        .map(|(&l, _)| l)
-        .collect();
-    labels.sort_unstable();
-    labels.dedup();
-    let codes = strata
-        .labels
-        .iter()
-        .zip(strata.known)
-        .map(|(l, &k)| k.then(|| labels.binary_search(l).unwrap_or(0)))
-        .collect();
-    (codes, labels)
 }
 
 /// One row as a child in one regression.
@@ -435,11 +385,13 @@ impl Relabel {
 
 /// The OLS line of `y` on `x` with both SEs, or why there is none.
 ///
-/// Sums are two-pass and centred, as simACE's `_linregress_core`.  A
-/// constant child value fits exactly: the residuals are set to zero, so both
-/// SEs are 0.  The sandwich SE is also 0 when every network's score sum is
-/// within its rounding bound (see [`sandwich_se`]).  A zero SE has no Wald
-/// test ([`Reason::ZeroSe`]).
+/// Sums are two-pass and centred, as simACE's `_linregress_core`, and
+/// `se_ols` uses its residuals `y - (slope x + intercept)`.  A parent value
+/// whose centred squares sum to 0 (equal, or differences that underflow) has
+/// no line.  A constant child value fits exactly: slope 0, both SEs 0.  The
+/// sandwich SE is also 0 when every network's score sum is within its
+/// rounding bound (see [`sandwich_se`]).  A zero SE has no Wald test
+/// ([`Reason::ZeroSe`]).
 fn line(x: &[f64], y: &[f64], labels: &[usize], n_networks: usize) -> Result<Line, Reason> {
     let n = x.len();
     let Some(&x0) = x.first() else {
@@ -457,41 +409,42 @@ fn line(x: &[f64], y: &[f64], labels: &[usize], n_networks: usize) -> Result<Lin
         syy += dy * dy;
         sxy += dx * dy;
     }
-    let constant_child = y.iter().all(|&v| v == y[0]);
+    if sxx == 0.0 {
+        return Err(Reason::ConstantParentValue);
+    }
+    let constant_child = syy == 0.0 || y.iter().all(|&v| v == y[0]);
     let (slope, intercept, r) = if constant_child {
         (0.0, y[0], Err(Reason::ConstantChildValue))
     } else {
         let slope = sxy / sxx;
-        (slope, my - slope * mx, Ok(sxy / (sxx * syy).sqrt()))
+        // simACE's sqrt(Sxx Syy), split only when the product underflows.
+        let product = (sxx * syy).sqrt();
+        let denominator = if product > 0.0 {
+            product
+        } else {
+            sxx.sqrt() * syy.sqrt()
+        };
+        let r = (sxy / denominator).clamp(-1.0, 1.0);
+        (slope, my - slope * mx, Ok(r))
     };
-    let residuals: Vec<f64> = x
-        .iter()
-        .zip(y)
-        .map(|(&xi, &yi)| {
-            if constant_child {
-                0.0
-            } else {
-                yi - (slope * xi + intercept)
-            }
-        })
-        .collect();
     let se_ols = if n < 3 {
         Err(Reason::TooFewChildren)
+    } else if constant_child {
+        Ok(0.0)
     } else {
-        let ss_res: f64 = residuals.iter().map(|e| e * e).sum();
+        let ss_res: f64 = x
+            .iter()
+            .zip(y)
+            .map(|(&xi, &yi)| (yi - (slope * xi + intercept)).powi(2))
+            .sum();
         Ok((ss_res / (n - 2) as f64 / sxx).sqrt())
     };
     let se = if n_networks < 2 {
         Err(Reason::SingleMateNetwork)
+    } else if constant_child {
+        Ok(0.0)
     } else {
-        sandwich_se(
-            x,
-            y,
-            &residuals,
-            labels,
-            n_networks,
-            [mx, sxx, slope, intercept],
-        )
+        sandwich_se(x, y, labels, n_networks, [mx, my, sxx, slope])
     };
     let wald = match se {
         Err(reason) => Err(reason),
@@ -514,8 +467,10 @@ fn line(x: &[f64], y: &[f64], labels: &[usize], n_networks: usize) -> Result<Lin
 /// The Mate Network sandwich SE of the slope, exactly 0 when no network's
 /// score sum is distinguishable from rounding.
 ///
-/// Network g's sum `s_g = sum (x_i - mx) e_i / Sxx` is within rounding when
-/// `|s_g| <= n eps sum |x_i - mx| (|y_i| + |slope x_i| + |intercept|) / Sxx`,
+/// Residuals are centred, `e_i = (y_i - my) - slope (x_i - mx)`, so shifting
+/// the trait by a constant changes nothing.  Network g's sum
+/// `s_g = sum (x_i - mx) e_i / Sxx` is within rounding when
+/// `|s_g| <= n eps sum |x_i - mx| (|y_i - my| + |slope (x_i - mx)|) / Sxx`,
 /// the worst-case bound on summing its n terms and on each residual.  This
 /// happens for a perfect fit, and when each network has one parent value and
 /// there are two networks: the line then passes through both networks'
@@ -523,22 +478,19 @@ fn line(x: &[f64], y: &[f64], labels: &[usize], n_networks: usize) -> Result<Lin
 fn sandwich_se(
     x: &[f64],
     y: &[f64],
-    residuals: &[f64],
     labels: &[usize],
     n_networks: usize,
-    [mx, sxx, slope, intercept]: [f64; 4],
+    [mx, my, sxx, slope]: [f64; 4],
 ) -> Result<f64, Reason> {
-    let influence: Vec<f64> = x
-        .iter()
-        .zip(residuals)
-        .map(|(&xi, &e)| (xi - mx) * e / sxx)
-        .collect();
+    let mut influence = Vec::with_capacity(x.len());
     let mut sums = vec![0.0; n_networks];
     let mut bounds = vec![0.0; n_networks];
-    for (i, &l) in labels.iter().enumerate() {
-        sums[l] += influence[i];
-        bounds[l] +=
-            (x[i] - mx).abs() * (y[i].abs() + (slope * x[i]).abs() + intercept.abs()) / sxx;
+    for ((&xi, &yi), &l) in x.iter().zip(y).zip(labels) {
+        let (dx, dy) = (xi - mx, yi - my);
+        let term = dx * (dy - slope * dx) / sxx;
+        influence.push(term);
+        sums[l] += term;
+        bounds[l] += dx.abs() * (dy.abs() + (slope * dx).abs()) / sxx;
     }
     let tolerance = x.len() as f64 * f64::EPSILON;
     if sums
@@ -603,14 +555,12 @@ impl Fit {
         );
         let wald = line.and_then(|l| l.wald);
         either(&mut out, "p", "p_unavailable_reason", wald.map(|w| w.p));
-        let ci = wald.map(|w| Value::Floats(w.ci.to_vec()));
-        match ci {
-            Ok(ci) => out.extend([("ci", ci), ("ci_unavailable_reason", Value::Null)]),
-            Err(r) => out.extend([
-                ("ci", Value::Null),
-                ("ci_unavailable_reason", r.name().into()),
-            ]),
-        }
+        either(
+            &mut out,
+            "ci",
+            "ci_unavailable_reason",
+            wald.map(|w| Value::Floats(w.ci.to_vec())),
+        );
         Value::Map(out)
     }
 }
@@ -655,7 +605,7 @@ impl ParentOffspring {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::PedigreeInput;
+    use crate::input::{PedigreeInput, TraitKind};
 
     const NA: f64 = f64::NAN;
 
@@ -883,6 +833,65 @@ mod tests {
         assert_eq!(line.se, Ok(0.0));
         assert_eq!(line.wald, Err(Reason::ZeroSe));
         assert!(line.se_ols.unwrap() > 0.1);
+    }
+
+    #[test]
+    fn shifting_the_trait_leaves_the_sandwich_se_alone() {
+        // 10^6 children in 4 networks on a 1/1024 grid, so a shift of 2^27
+        // is exact.  It grows |y| but not the residuals: the SE must match
+        // the unshifted one, not fall to zero_se.
+        let n = 1_000_000;
+        let mut state: u64 = 12345;
+        let mut draw = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 54) as f64 / 1024.0
+        };
+        let x: Vec<f64> = (0..n).map(|_| draw()).collect();
+        let y: Vec<f64> = x.iter().map(|&xi| 0.5 * xi + draw()).collect();
+        let labels: Vec<usize> = (0..n).map(|i| i % 4).collect();
+        let shift = |v: &[f64]| v.iter().map(|a| a + 2f64.powi(27)).collect::<Vec<_>>();
+        let base = line(&x, &y, &labels, 4).unwrap();
+        let shifted = line(&shift(&x), &shift(&y), &labels, 4).unwrap();
+        let (a, b) = (base.se.unwrap(), shifted.se.unwrap());
+        // The shifted means carry about sqrt(n) eps 2^27 of rounding, which
+        // moves the slope and SE by about 1e-5: precision, not a zero SE.
+        assert!(a > 0.0 && (a - b).abs() <= 1e-4 * a, "{a} vs {b}");
+        assert!(shifted.wald.is_ok(), "{:?}", shifted.wald);
+        assert!((base.slope - shifted.slope).abs() <= 1e-4 * base.slope);
+    }
+
+    #[test]
+    fn exact_lines_keep_r_within_one() {
+        // y = 2x + 1 on non-dyadic x: rounding can put sxy / sqrt(sxx syy)
+        // just past 1.
+        let mut worst: f64 = 0.0;
+        for k in 3..400 {
+            let x: Vec<f64> = (0..k).map(|i| (i as f64 * 0.1).sin() / 3.0).collect();
+            let y: Vec<f64> = x.iter().map(|v| 2.0 * v + 1.0).collect();
+            let r = line(&x, &y, &vec![0; k], 1).unwrap().r.unwrap();
+            worst = worst.max(r);
+            assert!(r <= 1.0, "k = {k}: r = {r}");
+        }
+        assert_eq!(worst, 1.0);
+    }
+
+    #[test]
+    fn parent_differences_that_underflow_have_no_line() {
+        let x = [0.0, 1e-170, 2e-170];
+        let y = [0.1, 0.4, 0.2];
+        assert_eq!(
+            line(&x, &y, &[0, 1, 2], 3),
+            Err(Reason::ConstantParentValue)
+        );
+        // Sxx Syy underflows though neither factor does: r still comes out
+        // (NumPy's corrcoef of the unscaled values), to the few digits a
+        // subnormal Syy (2e-320) keeps.
+        let x = [0.0, 1e-150, 3e-150];
+        let y = [0.0, 1e-160, 2e-160];
+        let r = line(&x, &y, &[0, 1, 2], 3).unwrap().r.unwrap();
+        assert!((r - 0.9819805060619656).abs() < 1e-4, "{r}");
     }
 
     #[test]

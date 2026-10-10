@@ -12,7 +12,8 @@ fit it computes:
 Each comparison's ``outcome`` says how the two line up: ``both`` defined,
 ``both_undefined``, or the side that alone has an estimate with simACE's
 rule that withheld it (``simace_min_10``: fewer than 10 trios;
-``simace_min_100``: the validation's 100-offspring floor;
+``simace_min_100``: the validation's floors, more than 100 children with a
+mother and more than 100 with both parents in the pedigree;
 ``simace_sd_floor``: parent SD under ``safe_linregress``'s 1e-10).
 """
 
@@ -48,6 +49,9 @@ class Comparison:
     simace: dict
     pg: Fit
     outcome: str
+    #: Children with a mother, and with both parents in the pedigree: what
+    #: simACE's validation counts against its floors of 100.
+    validation_counts: tuple[int, int]
 
 
 @cache
@@ -55,7 +59,7 @@ def load() -> dict:
     return json.loads(GOLDEN.read_text())
 
 
-def _outcome(label: str, simace: dict, pg: Fit, n_nonfounders: int) -> str:
+def _outcome(label: str, simace: dict, pg: Fit, validation_counts: tuple[int, int]) -> str:
     s_defined = simace.get("slope") is not None
     p_defined = pg.slope is not None
     if s_defined and p_defined:
@@ -67,8 +71,15 @@ def _outcome(label: str, simace: dict, pg: Fit, n_nonfounders: int) -> str:
     if label.startswith("validate_tiny"):
         return "simace_sd_floor"
     if label.startswith("validate"):
-        return "simace_min_100" if n_nonfounders <= 100 else "unexplained"
+        return "simace_min_100" if min(validation_counts) <= 100 else "unexplained"
     return "simace_min_10" if simace["n_pairs"] < 10 else "unexplained"
+
+
+def _validation_counts(pedigree: dict) -> tuple[int, int]:
+    """simACE's ``_validate_parent_offspring`` counts: rows with a mother, then those with both parents as rows."""
+    ids = set(pedigree["id"])
+    mothered = [(m, f) for m, f in zip(pedigree["mother"], pedigree["father"], strict=True) if m != -1]
+    return len(mothered), sum(m in ids and f in ids for m, f in mothered)
 
 
 def comparisons() -> list[Comparison]:
@@ -78,7 +89,7 @@ def comparisons() -> list[Comparison]:
         gen = np.asarray(sc["pedigree"]["generation"])
         sex = np.asarray(sc["pedigree"]["sex"])
         values = {k: np.asarray(v, dtype=float) for k, v in sc["values"].items()}
-        n_nonfounders = int((np.asarray(sc["pedigree"]["mother"]) >= 0).sum())
+        validation_counts = _validation_counts(sc["pedigree"])
         liability = pgp.Trait(values["liability1"], kind="continuous")
         by_gen = parent_offspring(ped, liability, stratum=gen)
         by_sex = parent_offspring(ped, liability, stratum=2 * gen + sex)
@@ -107,7 +118,7 @@ def comparisons() -> list[Comparison]:
             ("validate_tiny.A1", s["validate_tiny"]["A1"], pooled["validate_tiny.A1"].pooled.midparent),
         ]
         out += [
-            Comparison(sc["name"], label, entry, fit, _outcome(label, entry, fit, n_nonfounders))
+            Comparison(sc["name"], label, entry, fit, _outcome(label, entry, fit, validation_counts), validation_counts)
             for label, entry, fit in pairs
         ]
     return out

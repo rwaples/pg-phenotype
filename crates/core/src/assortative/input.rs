@@ -1,7 +1,7 @@
 //! The input boundary: traits, strata and settings checked once, then trusted.
 
 use crate::error::Error;
-use crate::input::{Trait, TraitKind};
+use crate::input::{Trait, TraitKind, ValueRule};
 
 /// Field names of the traits, as errors report them.
 const FIELDS: [&str; 2] = ["traits[0]", "traits[1]"];
@@ -13,6 +13,29 @@ pub struct Strata<'a> {
     pub labels: &'a [i64],
     /// `false` where the label is unknown; the label there is ignored.
     pub known: &'a [bool],
+}
+
+impl Strata<'_> {
+    /// Each row's code, the rank of its label among the distinct known
+    /// labels (`None` where unknown), and those labels ascending.
+    pub(crate) fn codes(self) -> (Vec<Option<usize>>, Vec<i64>) {
+        let mut labels: Vec<i64> = self
+            .labels
+            .iter()
+            .zip(self.known)
+            .filter(|(_, &k)| k)
+            .map(|(&l, _)| l)
+            .collect();
+        labels.sort_unstable();
+        labels.dedup();
+        let codes = self
+            .labels
+            .iter()
+            .zip(self.known)
+            .map(|(l, &k)| k.then(|| labels.binary_search(l).unwrap_or(0)))
+            .collect();
+        (codes, labels)
+    }
 }
 
 /// Father permutations per primary estimate when inference is on and none
@@ -163,26 +186,10 @@ pub(crate) fn check_traits<'a>(
 }
 
 fn check_trait<'a>(t: Trait<'a>, field: &'static str, n_rows: usize) -> Result<Column<'a>, Error> {
-    if t.values.len() != n_rows {
-        return Err(Error::TraitLength {
-            field,
-            expected_length: n_rows,
-            actual_length: t.values.len(),
-        });
-    }
+    let rule = ValueRule::of(&t, field, n_rows)?;
     let declared = match t.kind {
-        TraitKind::Categorical => {
-            return Err(Error::UnsupportedTraitKind {
-                field,
-                kind: t.kind,
-            })
-        }
         TraitKind::Continuous => None,
-        TraitKind::Binary | TraitKind::Ordinal => t.n_levels,
-    };
-    let ceiling = match t.kind {
-        TraitKind::Binary => 2.0_f64.min(declared.map_or(2.0, |k| k as f64)),
-        _ => declared.map_or(f64::INFINITY, |k| k as f64),
+        _ => t.n_levels,
     };
     let mut first: Option<f64> = None;
     let mut constant = true;
@@ -193,18 +200,7 @@ fn check_trait<'a>(t: Trait<'a>, field: &'static str, n_rows: usize) -> Result<C
             continue;
         }
         n_present += 1;
-        let valid = match t.kind {
-            TraitKind::Continuous => value.is_finite(),
-            _ => value >= 0.0 && value < ceiling && value.fract() == 0.0,
-        };
-        if !valid {
-            return Err(Error::InvalidTraitCode {
-                field,
-                kind: t.kind,
-                position,
-                value,
-            });
-        }
+        rule.check(position, value)?;
         match first {
             None => first = Some(value),
             Some(f) => constant &= f == value,
