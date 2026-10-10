@@ -3,7 +3,8 @@
 Each method is a submodule: :mod:`pg_phenotype.pafgrs` for PA-FGRS,
 :mod:`pg_phenotype.assortative` for assortative mating,
 :mod:`pg_phenotype.correlation` for correlation estimators on their own, and
-:mod:`pg_phenotype.regression` for parent-offspring regression.  The
+:mod:`pg_phenotype.regression` for parent-offspring regression, and
+:mod:`pg_phenotype.relative_pairs` for correlations between relatives.  The
 :class:`Pedigree` and :class:`Trait` inputs, the errors, and the thread
 budget are shared.
 """
@@ -12,7 +13,7 @@ from __future__ import annotations
 
 from importlib.metadata import version as _dist_version
 
-from pg_phenotype import _native, assortative, correlation, pafgrs, regression
+from pg_phenotype import _native, assortative, correlation, pafgrs, regression, relative_pairs
 from pg_phenotype._errors import ParameterError, PgPhenotypeError, ResourceError, ValidationError
 from pg_phenotype._pedigree import Pedigree
 from pg_phenotype._threads import configure_threads, thread_budget
@@ -32,6 +33,7 @@ __all__ = [
     "pafgrs",
     "pg_core_rev",
     "regression",
+    "relative_pairs",
     "thread_budget",
 ]
 

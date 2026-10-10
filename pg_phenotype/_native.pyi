@@ -108,3 +108,14 @@ def parent_offspring(
     *,
     threads: int,
 ) -> dict[str, Any]: ...
+def relative_pairs_correlation(
+    pedigree: Pedigree | _Columns,
+    values: np.ndarray,
+    kind: str,
+    n_levels: int | None,
+    categories: list[tuple[str, list[str] | None]] | None,
+    memory_budget_bytes: int,
+    /,
+    *,
+    threads: int,
+) -> dict[str, Any]: ...

@@ -48,3 +48,14 @@ def test_parent_offspring_releases_free_memory_first(monkeypatch):
     pedigree = {"id": np.arange(1, 7), "mother": [-1, -1, -1, -1, 1, 2], "father": [-1, -1, -1, -1, 3, 4]}
     regression.parent_offspring(pedigree, Trait([0.1, 0.9, 0.4, 0.2, 0.3, 0.6]))
     assert calls == [1]
+
+
+def test_relative_pairs_correlation_releases_free_memory_first(monkeypatch):
+    """``relative_pairs.correlation`` hands free memory back once, before the native call."""
+    from pg_phenotype import relative_pairs
+
+    calls = []
+    monkeypatch.setattr(relative_pairs, "release_free_memory", lambda: calls.append(1))
+    pedigree = {"id": np.arange(1, 7), "mother": [-1, -1, -1, -1, 1, 1], "father": [-1, -1, -1, -1, 3, 3]}
+    relative_pairs.correlation(pedigree, Trait([0.1, 0.9, 0.4, 0.2, 0.3, 0.6]))
+    assert calls == [1]
