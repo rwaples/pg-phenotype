@@ -13,6 +13,7 @@ mod input;
 mod pafgrs;
 mod pedigree;
 mod regression;
+mod relative_pairs;
 mod test_hooks;
 mod threads;
 
@@ -58,6 +59,7 @@ extendr_module! {
     use pafgrs;
     use pedigree;
     use regression;
+    use relative_pairs;
     use test_hooks;
     fn pgphenotype_version;
     fn pg_core_rev;

@@ -38,3 +38,8 @@
                                                 stratum) {
   .Call(wrap__regression_parent_offspring, pedigree, id, mother, father, twin, sex, values, kind, n_levels, stratum)
 }
+.native_relative_pairs_correlation <- function(pedigree, id, mother, father, twin, sex, values, kind, n_levels,
+                                               names, members, memory_budget_bytes) {
+  .Call(wrap__relative_pairs_correlation, pedigree, id, mother, father, twin, sex, values, kind, n_levels,
+        names, members, memory_budget_bytes)
+}
