@@ -26,7 +26,7 @@ use pedigree_graph_core::kinship::ancestry::AncestorSignatures;
 use pedigree_graph_core::kinship::pairwise::Walker;
 use pedigree_graph_core::kinship::KinshipPedigree;
 use pedigree_graph_core::relationships::{
-    pair_blocks, CategorySet, Execution, MaxDegree, Pedigree, Progress, Receiver,
+    pair_blocks, CategorySet, Execution, MaxDegree, Progress, Receiver,
 };
 use pedigree_graph_core::topology;
 use rayon::prelude::*;
@@ -321,13 +321,7 @@ impl Candidates {
 }
 
 fn candidates(built: &Validated, probands: &[u32], ndegree: u8) -> Result<Candidates, Error> {
-    let ped = Pedigree::try_new(
-        built.mother_rows(),
-        built.father_rows(),
-        built.twin_rows(),
-        built.mother_ids(),
-        built.father_ids(),
-    )?;
+    let ped = built.relationships()?;
     let blocks = pair_blocks(
         &ped,
         MaxDegree::try_new(ndegree)?,

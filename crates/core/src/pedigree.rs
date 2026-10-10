@@ -5,6 +5,7 @@ use crate::assortative::{mate_networks, mating_pairs, MatingPairs};
 use crate::error::Error;
 use crate::input::PedigreeInput;
 use pedigree_graph_core::graph::{self, Columns, IdIndex, Limits, SexEncoding};
+use pedigree_graph_core::relationships;
 use std::borrow::Cow;
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock};
@@ -151,14 +152,20 @@ impl Pedigree {
         &self.twin_rows
     }
 
-    /// Mother id per row, `-1` when missing.
-    pub(crate) fn mother_ids(&self) -> &[i64] {
-        &self.mother_ids
-    }
-
-    /// Father id per row, `-1` when missing.
-    pub(crate) fn father_ids(&self) -> &[i64] {
-        &self.father_ids
+    /// The pedigree as pedigree-graph-core's relationship engine reads it.
+    ///
+    /// # Errors
+    ///
+    /// None for a validated pedigree; pedigree-graph-core's column checks
+    /// pass through.
+    pub(crate) fn relationships(&self) -> Result<relationships::Pedigree<'_>, Error> {
+        Ok(relationships::Pedigree::try_new(
+            &self.mother_rows,
+            &self.father_rows,
+            &self.twin_rows,
+            &self.mother_ids,
+            &self.father_ids,
+        )?)
     }
 
     /// Every Mating Pair, built on first use.
@@ -278,7 +285,7 @@ mod tests {
         assert!(!ped.is_empty());
         assert_eq!(ped.ids(), &ids);
         assert_eq!(ped.mother_rows(), &[1, -1, 1, -1]);
-        assert_eq!(ped.father_ids(), &father);
+        assert_eq!(ped.father_ids, father);
     }
 
     #[test]
