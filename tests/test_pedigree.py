@@ -16,6 +16,8 @@ import threading
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+import polars as pl
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -244,3 +246,57 @@ def test_inputs_are_checked_against_the_pedigree_rows():
     with pytest.raises(ValidationError) as err:
         pafgrs.score_univariate(prep, full.trait, age=full.age[:-1], cip=full.cip, h2=0.4)
     assert err.value.code == "trait_length_mismatch"
+
+
+@settings(deadline=None, max_examples=30)
+@given(seed=st.integers(0, 10_000), keep=st.floats(0.0, 1.0))
+def test_align_moves_values_to_the_rows_their_ids_name(seed, keep):
+    ped = random_pedigree(seed)
+    built = Pedigree(ped)
+    rng = np.random.default_rng(seed)
+    rows = rng.permutation(ped["id"].size)[: round(keep * ped["id"].size)]
+    ids = ped["id"][rows]
+    values = rng.normal(size=rows.size)
+    values[rng.random(rows.size) < 0.2] = np.nan
+    want = np.full(ped["id"].size, np.nan)
+    want[rows] = values
+    assert np.array_equal(built.rows(ids), rows)
+    assert built.rows(ids).dtype == np.int64
+    got = built.align(ids, values)
+    assert got.dtype == np.float64
+    np.testing.assert_array_equal(got, want)
+
+
+def test_align_takes_frame_columns_and_matches_a_reindex():
+    ped = random_pedigree(3)
+    built = Pedigree(ped)
+    ids = ped["id"][::-2]
+    pheno = pd.DataFrame({"id": ids, "dx": pd.array([(1, None, 0)[i % 3] for i in range(ids.size)], dtype="Int64")})
+    want = pheno.set_index("id").reindex(built.ids)["dx"].to_numpy(dtype=np.float64, na_value=np.nan)
+    np.testing.assert_array_equal(built.align(pheno["id"], pheno["dx"]), want)
+    frame = pl.DataFrame({"id": ids, "dx": [(1, None, 0)[i % 3] for i in range(ids.size)]})
+    np.testing.assert_array_equal(built.align(frame["id"], frame["dx"]), want)
+    assert built.align([], []).size == len(built)
+
+
+def test_rows_and_align_reject_unknown_repeated_and_missing_ids():
+    ped = random_pedigree(4)
+    built = Pedigree(ped)
+    absent = int(ped["id"].max()) + 1
+    with pytest.raises(ValidationError) as err:
+        built.rows([ped["id"][0], absent])
+    assert err.value.code == "unknown_id"
+    assert dict(err.value.fields) == {"id": absent, "position": 1}
+    with pytest.raises(ValidationError) as err:
+        built.align([ped["id"][2], ped["id"][1], ped["id"][2]], [1.0, 2.0, 3.0])
+    assert err.value.code == "duplicate_lookup_id"
+    assert dict(err.value.fields) == {"id": int(ped["id"][2]), "positions": (0, 2)}
+    with pytest.raises(ValidationError) as err:
+        built.align(ped["id"][:3], [1.0, 2.0])
+    assert err.value.code == "pair_length_mismatch"
+    assert "values must have one entry per entry of ids (3), got 2" in str(err.value)
+    assert dict(err.value.fields) == {"columns": ("ids", "values"), "expected_length": 3, "actual_length": 2}
+    with pytest.raises(ValidationError) as err:
+        built.rows([float(ped["id"][0]), np.nan])
+    assert err.value.code == "invalid_integer_value"
+    assert dict(err.value.fields) == {"field": "ids", "position": 1, "value": None}

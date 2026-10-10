@@ -21,8 +21,7 @@
 use super::triangle::Triangle;
 use crate::error::Error;
 use crate::lineage::Terminals;
-use crate::pedigree::{Pedigree as Validated, PedigreeArg};
-use pedigree_graph_core::graph::IdIndex;
+use crate::pedigree::{checked_rows, Pedigree as Validated, PedigreeArg};
 use pedigree_graph_core::kinship::ancestry::AncestorSignatures;
 use pedigree_graph_core::kinship::pairwise::Walker;
 use pedigree_graph_core::kinship::KinshipPedigree;
@@ -255,7 +254,7 @@ pub fn prepare(
         }
     };
     let built = pedigree.resolve()?;
-    let probands = proband_rows(built.ids(), probands)?;
+    let probands = proband_rows(&built, probands)?;
     let candidates = candidates(&built, &probands, ndegree)?;
     let groups = sibship_groups(&built, &probands);
 
@@ -291,28 +290,19 @@ pub fn prepare(
 }
 
 /// The proband rows, ascending: every row, or the rows of `ids`.
-fn proband_rows(pedigree_ids: &[i64], ids: Option<&[i64]>) -> Result<Vec<u32>, Error> {
+fn proband_rows(pedigree: &Validated, ids: Option<&[i64]>) -> Result<Vec<u32>, Error> {
     let Some(ids) = ids else {
-        return Ok((0..pedigree_ids.len() as u32).collect());
+        return Ok((0..pedigree.len() as u32).collect());
     };
-    let index = IdIndex::build(pedigree_ids);
-    let mut seen = vec![usize::MAX; pedigree_ids.len()];
-    let mut rows = Vec::with_capacity(ids.len());
-    for (position, &id) in ids.iter().enumerate() {
-        let row = index.row(id);
-        if row < 0 {
-            return Err(Error::UnknownProband { id, position });
-        }
-        let row = row as usize;
-        if seen[row] != usize::MAX {
-            return Err(Error::DuplicateProband {
-                id,
-                positions: [seen[row], position],
-            });
-        }
-        seen[row] = position;
-        rows.push(row as u32);
-    }
+    // An index built here is dropped before the walk, the call's peak.
+    let rows = checked_rows(
+        &pedigree.index_or_build(),
+        pedigree.len(),
+        ids,
+        |id, position| Error::UnknownProband { id, position },
+        |id, positions| Error::DuplicateProband { id, positions },
+    )?;
+    let mut rows: Vec<u32> = rows.into_iter().map(|row| row as u32).collect();
     rows.sort_unstable();
     Ok(rows)
 }
@@ -762,6 +752,31 @@ mod tests {
                 positions: [0, 2]
             }
         );
+    }
+
+    #[test]
+    fn probands_reuse_an_id_index_but_never_cache_one() {
+        let (ids, mother, father) = family();
+        let input = PedigreeInput {
+            ids: &ids,
+            mother: &mother,
+            father: &father,
+            twin: None,
+            sex: None,
+        };
+        let ped = Validated::new(input).unwrap();
+        let built = || PedigreeArg::Built(&ped);
+        prepare(built(), 2, Some(&[14, 12])).unwrap();
+        assert!(ped.cached_index().is_none());
+        ped.rows(&[10]).unwrap();
+        assert_eq!(
+            prepare(built(), 2, Some(&[14, 12])).unwrap().probands(),
+            &[2, 4]
+        );
+        let err = prepare(built(), 2, Some(&[12, 77])).unwrap_err();
+        assert_eq!(err.code(), "unknown_proband");
+        let err = prepare(built(), 2, Some(&[12, 13, 12])).unwrap_err();
+        assert_eq!(err.code(), "duplicate_proband");
     }
 
     #[test]

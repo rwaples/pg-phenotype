@@ -3,6 +3,12 @@
 .native_pedigree_new <- function(id, mother, father, twin, sex) {
   .Call(wrap__pedigree_new, id, mother, father, twin, sex)
 }
+.native_pedigree_rows <- function(ptr, ids) {
+  .Call(wrap__pedigree_rows, ptr, ids)
+}
+.native_pedigree_align <- function(ptr, ids, values) {
+  .Call(wrap__pedigree_align, ptr, ids, values)
+}
 .native_pafgrs_prepare <- function(pedigree, id, mother, father, twin, sex, ndegree, probands) {
   .Call(wrap__pafgrs_prepare, pedigree, id, mother, father, twin, sex, ndegree, probands)
 }

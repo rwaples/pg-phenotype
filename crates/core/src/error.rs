@@ -110,6 +110,10 @@ pub enum Error {
     UnknownProband { id: i64, position: usize },
     /// A proband id is listed twice.
     DuplicateProband { id: i64, positions: [usize; 2] },
+    /// An id looked up on a Pedigree names no row.
+    UnknownId { id: i64, position: usize },
+    /// An id looked up on a Pedigree is listed twice.
+    DuplicateLookupId { id: i64, positions: [usize; 2] },
     /// A trait column is not one entry per pedigree row.
     TraitLength {
         field: &'static str,
@@ -177,6 +181,8 @@ pub enum Error {
     },
     /// The second of two paired columns is not the first's length.
     PairLength {
+        /// The two columns' names, first then second.
+        columns: [&'static str; 2],
         expected_length: usize,
         actual_length: usize,
     },
@@ -221,6 +227,8 @@ impl Error {
             Error::DegreeOutOfRange { .. } => (Validation, "degree_out_of_range"),
             Error::UnknownProband { .. } => (Validation, "unknown_proband"),
             Error::DuplicateProband { .. } => (Validation, "duplicate_proband"),
+            Error::UnknownId { .. } => (Validation, "unknown_id"),
+            Error::DuplicateLookupId { .. } => (Validation, "duplicate_lookup_id"),
             Error::TraitLength { .. } => (Validation, "trait_length_mismatch"),
             Error::TraitKindMismatch { .. } => (Validation, "trait_kind_mismatch"),
             Error::InvalidAge { .. } => (Validation, "invalid_age"),
@@ -266,10 +274,11 @@ impl Error {
                 ("minimum", Int(*minimum)),
                 ("maximum", Int(*maximum)),
             ],
-            Error::UnknownProband { id, position } => {
+            Error::UnknownProband { id, position } | Error::UnknownId { id, position } => {
                 vec![("id", Int(*id)), ("position", int(*position))]
             }
-            Error::DuplicateProband { id, positions } => vec![
+            Error::DuplicateProband { id, positions }
+            | Error::DuplicateLookupId { id, positions } => vec![
                 ("id", Int(*id)),
                 (
                     "positions",
@@ -358,11 +367,16 @@ impl Error {
             Error::StratumLength {
                 expected_length,
                 actual_length,
-            }
-            | Error::PairLength {
+            } => vec![
+                ("expected_length", int(*expected_length)),
+                ("actual_length", int(*actual_length)),
+            ],
+            Error::PairLength {
+                columns,
                 expected_length,
                 actual_length,
             } => vec![
+                ("columns", FieldValue::Strs(columns.to_vec())),
                 ("expected_length", int(*expected_length)),
                 ("actual_length", int(*actual_length)),
             ],
@@ -383,6 +397,14 @@ impl fmt::Display for Error {
             Error::DuplicateProband { id, positions } => write!(
                 f,
                 "proband id {id} is listed at positions {} and {}",
+                positions[0], positions[1]
+            ),
+            Error::UnknownId { id, position } => {
+                write!(f, "ids[{position}] = {id} is not a pedigree id")
+            }
+            Error::DuplicateLookupId { id, positions } => write!(
+                f,
+                "id {id} is listed at positions {} and {}",
                 positions[0], positions[1]
             ),
             Error::TraitLength { field, expected_length, actual_length } => write!(
@@ -436,9 +458,9 @@ impl fmt::Display for Error {
                 f,
                 "stratum must have one label per pedigree row ({expected_length}), got {actual_length}"
             ),
-            Error::PairLength { expected_length, actual_length } => write!(
+            Error::PairLength { columns: [first, second], expected_length, actual_length } => write!(
                 f,
-                "y must have one entry per entry of x ({expected_length}), got {actual_length}"
+                "{second} must have one entry per entry of {first} ({expected_length}), got {actual_length}"
             ),
         }
     }

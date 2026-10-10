@@ -240,6 +240,33 @@ impl Pedigree {
     fn ids<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i64>> {
         PyArray1::from_slice(py, self.inner.ids())
     }
+
+    /// The row of each of `ids`, with the GIL released.
+    fn rows<'py>(&self, py: Python<'py>, ids: Column<'py>) -> PyResult<Bound<'py, PyArray1<i64>>> {
+        let ids = ids.as_slice()?;
+        let rows = py
+            .detach(|| self.inner.rows(ids))
+            .map_err(|e| to_pyerr(py, e))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| row as i64)
+            .collect::<Vec<_>>()
+            .into_pyarray(py))
+    }
+
+    /// `values` per `ids` on the rows, NaN elsewhere, with the GIL released.
+    fn align<'py>(
+        &self,
+        py: Python<'py>,
+        ids: Column<'py>,
+        values: PyReadonlyArray1<'py, f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let (ids, values) = (ids.as_slice()?, values.as_slice()?);
+        let aligned = py
+            .detach(|| self.inner.align(ids, values, f64::NAN))
+            .map_err(|e| to_pyerr(py, e))?;
+        Ok(f64_array(py, aligned))
+    }
 }
 
 /// What a method takes: a [`Pedigree`] or its columns.

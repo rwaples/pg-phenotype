@@ -77,3 +77,36 @@ test_that("a prep outlives its pedigree, and a dropped pedigree is freed", {
   expect_identical(.Call(dropped), before + 1)
   expect_identical(score_small(prep), want)
 })
+
+test_that("pedigree_align() moves values to the rows their ids name, as match() does", {
+  ped <- small_pedigree()
+  built <- pedigree(ped)
+  pheno <- data.frame(id = c(16L, 12L, 10L, 13L), dx = c(1, NaN, 0, NA))
+  for (ids in list(pheno$id, as.double(pheno$id), as_integer64(pheno$id))) {
+    expect_identical(pedigree_rows(built, ids), c(7L, 3L, 1L, 4L))
+    expect_identical(pedigree_align(built, ids, pheno$dx), pheno$dx[match(ped$id, pheno$id)])
+  }
+  aligned <- pedigree_align(built, pheno$id, pheno$dx)
+  expect_true(is.na(aligned[2]) && !is.nan(aligned[2]))
+  expect_true(is.nan(aligned[3]))
+  expect_identical(pedigree_align(built, pheno$id, c(TRUE, FALSE, TRUE, NA)), c(TRUE, NA, FALSE, NA, NA, NA, TRUE) + 0)
+  expect_identical(pedigree_rows(built, integer()), integer())
+})
+
+test_that("pedigree_rows() and pedigree_align() report bad ids with 1-based positions", {
+  built <- pedigree(small_pedigree())
+  err <- expect_pgp_error(pedigree_rows(built, c(10, 99)), "validation", "unknown_id")
+  expect_identical(err$fields, list(id = 99, position = 2))
+  expect_match(conditionMessage(err), "ids[2] = 99", fixed = TRUE)
+  err <- expect_pgp_error(pedigree_align(built, c(12, 10, 12), c(1, 2, 3)), "validation", "duplicate_lookup_id")
+  expect_identical(err$fields, list(id = 12, positions = c(1, 3)))
+  err <- expect_pgp_error(pedigree_align(built, c(10, 11), 1), "validation", "pair_length_mismatch")
+  expect_identical(err$fields, list(columns = c("ids", "values"), expected_length = 2, actual_length = 1))
+  expect_pgp_error(pedigree_rows(built, c(10, NA)), "validation", "invalid_integer_value")
+  expect_pgp_error(pedigree_align(built, 10, "a"), "usage")
+  expect_pgp_error(pedigree_rows(small_pedigree(), 10), "usage")
+  path <- tempfile(fileext = ".rds")
+  on.exit(unlink(path))
+  saveRDS(built, path)
+  expect_pgp_error(pedigree_rows(readRDS(path), 10), "usage")
+})

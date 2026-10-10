@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+`Pedigree.align(ids, values)` (R: `pedigree_align()`, Rust:
+`Pedigree::align`) moves values given per id onto a Pedigree's rows, NaN
+(R: `NA`) where no id names a row, and `Pedigree.rows(ids)` (R:
+`pedigree_rows()`, 1-based) gives the row of each id (#9).  An id that is
+not a row's is an `unknown_id` error and one listed twice a
+`duplicate_lookup_id` error, each with the id and its positions; `align`
+raises `pair_length_mismatch` when `values` is not `ids`'s length.  The
+first call builds an id index the Pedigree keeps, 12 bytes per row
+([ADR 0008](docs/adr/0008-a-pedigree-looks-up-rows-by-id.md)).
+`pafgrs.prepare` on such a Pedigree reuses it for the probands; otherwise
+it builds one for the call, as before.
+
+- `pair_length_mismatch` names its two columns in a `columns` field and in
+  its message (`x`, `y` from `tetrachoric`; `ids`, `values` from `align`).
+
 Parent-offspring regression (#3): `pg_phenotype.regression.parent_offspring`
 (R: `regression_parent_offspring()`, Rust: `regression::parent_offspring`)
 fits the OLS line of each child's trait on its midparent's, its mother's and

@@ -110,17 +110,23 @@ single-parent slope h2/2.  The sandwich SE needs many networks
 
 A Pedigree keeps its input's row order: row *i* of the Pedigree is row *i*
 of the columns it was built from.  Traits, ages, strata and probands are
-matched to it by position, and the caller aligns them.  Align values from
-another table with the Pedigree's ids:
+matched to it by position, and the caller aligns them.  Move values from
+another table onto the Pedigree's rows with `align`:
 
 ```python
-pheno = pheno.set_index("id").reindex(ped.ids)  # NaN where a row has no value
-trait = pgp.Trait(pheno["dx"], kind="binary")
+dx = ped.align(pheno["id"], pheno["dx"])  # NaN where a row has no value
+trait = pgp.Trait(dx, kind="binary")
+rows = ped.rows(pheno["id"])  # the row of each id, for values align does not take
 ```
 
 ```r
-pheno <- pheno[match(ped$ids, pheno$id), ]  # NA where a row has no value
+dx <- pedigree_align(ped, pheno$id, pheno$dx)  # NA where a row has no value
+rows <- pedigree_rows(ped, pheno$id)  # 1-based
 ```
+
+Each id must be a Pedigree row's (`unknown_id`) and appear once
+(`duplicate_lookup_id`).  The first call builds an id index that the
+Pedigree keeps: 12 bytes per row.
 
 > **Warning:** Validation proves that the pedigree is well formed, not that
 > a trait belongs to its rows.  A trait shuffled by a sort or a join passes

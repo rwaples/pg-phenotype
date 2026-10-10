@@ -133,6 +133,14 @@ fn one_based(err: Error) -> Error {
             id,
             positions: positions.map(|p| p + 1),
         },
+        Error::UnknownId { id, position } => Error::UnknownId {
+            id,
+            position: position + 1,
+        },
+        Error::DuplicateLookupId { id, positions } => Error::DuplicateLookupId {
+            id,
+            positions: positions.map(|p| p + 1),
+        },
         Error::InvalidAge {
             field,
             position,

@@ -78,6 +78,7 @@ pub fn tetrachoric(table: [[u64; 2]; 2]) -> Result<Tetrachoric, Error> {
 pub fn tetrachoric_pairs(x: &[f64], y: &[f64]) -> Result<Tetrachoric, Error> {
     if x.len() != y.len() {
         return Err(Error::PairLength {
+            columns: ["x", "y"],
             expected_length: x.len(),
             actual_length: y.len(),
         });

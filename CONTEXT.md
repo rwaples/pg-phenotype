@@ -13,7 +13,8 @@ The rows of one pedigree (id, mother, father, and optional twin and sex)
 checked once by pedigree-graph's rules, in the order they were given.
 Traits, ages, strata and probands are matched to its rows by position;
 lining them up is the caller's job, since a valid Pedigree says nothing
-about whether a trait belongs to it.  A method given pedigree columns
+about whether a trait belongs to it.  Its `align` and `rows` look ids up
+and reject an id that is not a row's or is listed twice.  A method given pedigree columns
 instead checks them into a Pedigree for that call alone.
 _Avoid_: graph, pedigree frame
 

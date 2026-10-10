@@ -4,13 +4,14 @@
 use crate::assortative::{mate_networks, mating_pairs, MatingPairs};
 use crate::error::Error;
 use crate::input::PedigreeInput;
-use pedigree_graph_core::graph::{self, Columns, Limits, SexEncoding};
+use pedigree_graph_core::graph::{self, Columns, IdIndex, Limits, SexEncoding};
+use std::borrow::Cow;
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock};
 
 /// A pedigree pedigree-graph-core's validator accepted, in its input's row
-/// order, with the Mating Pairs it finds once used and the Mate Networks
-/// once a call with inference needs them.
+/// order, with the Mating Pairs it finds once used, the Mate Networks once a
+/// call with inference needs them, and an id index once ids are looked up.
 ///
 /// It keeps only what no method parameter changes.  The caches are filled
 /// serially: a Rayon worker waiting on one must not steal a job that waits
@@ -27,6 +28,7 @@ pub struct Pedigree {
     pairs: OnceLock<MatingPairs>,
     /// The Mate Network of each of `pairs`.
     networks: OnceLock<Vec<usize>>,
+    index: OnceLock<IdIndex>,
 }
 
 impl Pedigree {
@@ -58,6 +60,7 @@ impl Pedigree {
             twin_rows: built.twin_rows,
             pairs: OnceLock::new(),
             networks: OnceLock::new(),
+            index: OnceLock::new(),
         })
     }
 
@@ -74,6 +77,59 @@ impl Pedigree {
     /// Row ids, in input order.
     pub fn ids(&self) -> &[i64] {
         &self.ids
+    }
+
+    /// The row of each of `ids`.
+    ///
+    /// # Errors
+    ///
+    /// At the first id that is not a row's, [`Error::UnknownId`], or that
+    /// repeats an earlier one, [`Error::DuplicateLookupId`].
+    pub fn rows(&self, ids: &[i64]) -> Result<Vec<usize>, Error> {
+        let index = self.index.get_or_init(|| IdIndex::build(&self.ids));
+        checked_rows(
+            index,
+            self.len(),
+            ids,
+            |id, position| Error::UnknownId { id, position },
+            |id, positions| Error::DuplicateLookupId { id, positions },
+        )
+    }
+
+    /// `values`, one per entry of `ids`, moved to the rows those ids name;
+    /// a row no id names gets `missing`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::PairLength`] when `values` is not `ids`'s length, then the
+    /// errors of [`Pedigree::rows`].
+    pub fn align(&self, ids: &[i64], values: &[f64], missing: f64) -> Result<Vec<f64>, Error> {
+        if values.len() != ids.len() {
+            return Err(Error::PairLength {
+                columns: ["ids", "values"],
+                expected_length: ids.len(),
+                actual_length: values.len(),
+            });
+        }
+        let mut out = vec![missing; self.len()];
+        for (row, &value) in self.rows(ids)?.into_iter().zip(values) {
+            out[row] = value;
+        }
+        Ok(out)
+    }
+
+    /// The id index a lookup built and kept, or one for the caller alone,
+    /// which never enters the Pedigree.
+    pub(crate) fn index_or_build(&self) -> Cow<'_, IdIndex> {
+        match self.index.get() {
+            Some(index) => Cow::Borrowed(index),
+            None => Cow::Owned(IdIndex::build(&self.ids)),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_index(&self) -> Option<&IdIndex> {
+        self.index.get()
     }
 
     pub(crate) fn shared_ids(&self) -> Arc<Vec<i64>> {
@@ -119,6 +175,33 @@ impl Pedigree {
             mate_networks(&pairs.mothers, &pairs.fathers)
         })
     }
+}
+
+/// The row of each of `ids` in `index` over `n` rows, with the caller's
+/// errors for an id that is not a row's and one listed twice.
+pub(crate) fn checked_rows(
+    index: &IdIndex,
+    n: usize,
+    ids: &[i64],
+    unknown: impl Fn(i64, usize) -> Error,
+    duplicate: impl Fn(i64, [usize; 2]) -> Error,
+) -> Result<Vec<usize>, Error> {
+    // Each stored position names a distinct row, so it is below n.
+    let mut seen = vec![u32::MAX; n];
+    let mut rows = Vec::with_capacity(ids.len());
+    for (position, &id) in ids.iter().enumerate() {
+        let row = index.row(id);
+        if row < 0 {
+            return Err(unknown(id, position));
+        }
+        let row = row as usize;
+        if seen[row] != u32::MAX {
+            return Err(duplicate(id, [seen[row] as usize, position]));
+        }
+        seen[row] = position as u32;
+        rows.push(row);
+    }
+    Ok(rows)
 }
 
 /// What a method takes: a built [`Pedigree`], or columns it validates for
@@ -211,6 +294,54 @@ mod tests {
         let networks = ped.networks();
         assert_eq!(networks, &[0]);
         assert!(std::ptr::eq(networks, ped.networks()));
+    }
+
+    #[test]
+    fn rows_and_align_follow_the_ids() {
+        let (ids, mother, father) = columns();
+        let ped = built(&ids, &mother, &father).unwrap();
+        assert_eq!(ped.rows(&[31, 10]).unwrap(), vec![3, 0]);
+        assert_eq!(ped.rows(&[]).unwrap(), Vec::<usize>::new());
+        let index: *const IdIndex = ped.index.get().unwrap();
+        let aligned = ped.align(&[11, 30], &[1.5, f64::NAN], -9.0).unwrap();
+        let bits: Vec<u64> = aligned.iter().map(|v| v.to_bits()).collect();
+        let want: Vec<u64> = [-9.0, f64::NAN, 1.5, -9.0]
+            .iter()
+            .map(|v| v.to_bits())
+            .collect();
+        assert_eq!(bits, want);
+        assert!(std::ptr::eq(index, ped.index.get().unwrap()));
+    }
+
+    #[test]
+    fn rows_and_align_reject_unknown_and_repeated_ids() {
+        let (ids, mother, father) = columns();
+        let ped = built(&ids, &mother, &father).unwrap();
+        assert_eq!(
+            ped.rows(&[10, 99]).unwrap_err(),
+            Error::UnknownId {
+                id: 99,
+                position: 1
+            }
+        );
+        assert_eq!(
+            ped.rows(&[-1]).unwrap_err(),
+            Error::UnknownId {
+                id: -1,
+                position: 0
+            }
+        );
+        assert_eq!(
+            ped.rows(&[31, 10, 31]).unwrap_err(),
+            Error::DuplicateLookupId {
+                id: 31,
+                positions: [0, 2]
+            }
+        );
+        let err = ped.align(&[10, 11], &[1.0], f64::NAN).unwrap_err();
+        assert_eq!(err.code(), "pair_length_mismatch");
+        let err = ped.align(&[10, 10], &[1.0, 2.0], f64::NAN).unwrap_err();
+        assert_eq!(err.code(), "duplicate_lookup_id");
     }
 
     #[test]

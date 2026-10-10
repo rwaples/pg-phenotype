@@ -158,6 +158,13 @@ def pedigree_arrays(pedigree: object) -> PedigreeArrays:
     return PedigreeArrays(required("id"), required("mother"), required("father"), read("twin"), read("sex"))
 
 
+def id_array(values: object, name: str) -> np.ndarray:
+    """*values* as a contiguous int64 array of ids, none missing."""
+    to_numpy = getattr(values, "to_numpy", None)
+    array = np.asarray(to_numpy() if to_numpy is not None else values)
+    return np.ascontiguousarray(_ids(array, name, missing_ok=False))
+
+
 def floats(values: object, name: str) -> np.ndarray:
     """*values* as a contiguous float64 array, NA/None as NaN."""
     to_numpy = getattr(values, "to_numpy", None)

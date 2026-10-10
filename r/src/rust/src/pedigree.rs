@@ -70,7 +70,40 @@ fn pedigree_new(id: Robj, mother: Robj, father: Robj, twin: Robj, sex: Robj) -> 
     finish(new_impl([id, mother, father, twin, sex]))
 }
 
+fn built(ptr: &Robj) -> HostResult<&Pedigree> {
+    Ok(&input::handle::<Handle>(ptr, "pedigree", "pedigree()")?.pedigree)
+}
+
+fn rows_impl(ptr: Robj, ids: Robj) -> HostResult<Robj> {
+    let pedigree = built(&ptr)?;
+    let ids = input::coerce_required("ids", &ids)?;
+    let rows = pedigree.rows(&ids.values)?;
+    Ok(Integers::from_values(rows.into_iter().map(|row| row as i32 + 1)).into_robj())
+}
+
+fn align_impl(ptr: Robj, ids: Robj, values: Robj) -> HostResult<Robj> {
+    let pedigree = built(&ptr)?;
+    let ids = input::coerce_required("ids", &ids)?;
+    let values = input::doubles("values", &values)?;
+    let aligned = pedigree.align(&ids.values, values, <f64 as CanBeNA>::na())?;
+    Ok(Doubles::from_values(aligned).into_robj())
+}
+
+/// The 1-based row of each id.
+#[extendr]
+fn pedigree_rows(ptr: Robj, ids: Robj) -> Robj {
+    finish(rows_impl(ptr, ids))
+}
+
+/// `values` per id on the rows, `NA` elsewhere.
+#[extendr]
+fn pedigree_align(ptr: Robj, ids: Robj, values: Robj) -> Robj {
+    finish(align_impl(ptr, ids, values))
+}
+
 extendr_module! {
     mod pedigree;
     fn pedigree_new;
+    fn pedigree_rows;
+    fn pedigree_align;
 }

@@ -7,8 +7,9 @@
 #' with inference builds, so a later call skips validation and finding them.
 #'
 #' Row *i* of the pedigree is row *i* of `x`.  Traits, ages, strata and
-#' probands are matched to it by position: align values from another table
-#' with `ped$ids` first.  A misaligned trait is not detected.
+#' probands are matched to it by position: move values from another table
+#' onto its rows with [pedigree_align()] (or [pedigree_rows()]) first.  A
+#' misaligned trait is not detected.
 #'
 #' @param x A data frame or a named list with columns `id`, `mother` and
 #'   `father`, and optionally `twin` (the MZ co-twin's id) and `sex` (0
@@ -37,6 +38,49 @@ pedigree <- function(x) {
     column("id"), column("mother"), column("father"), column("twin"), column("sex")
   ), call)
   structure(out, class = "pgphenotype_pedigree")
+}
+
+#' Rows of a pedigree by id
+#'
+#' `pedigree_rows()` gives the row of each id.  `pedigree_align()` moves
+#' values given per id onto the pedigree's rows, as traits, ages and strata
+#' take them.  The first call builds an id index the pedigree keeps (12 bytes
+#' per row).
+#'
+#' @param pedigree A [pedigree()].
+#' @param ids Pedigree ids, each at most once: integer, whole double or
+#'   `bit64::integer64`, with no `NA`.
+#' @param values A numeric or logical vector, one value per id.
+#' @return `pedigree_rows()`: an integer vector of 1-based rows, one per id.
+#'   `pedigree_align()`: a double vector with one value per pedigree row, `NA`
+#'   where no id names the row.
+#' @section Errors: `unknown_id` for an id that is not a pedigree row's,
+#'   `duplicate_lookup_id` for an id listed twice, `invalid_integer_value`
+#'   for an `NA` or non-integer id, and, from `pedigree_align()`,
+#'   `pair_length_mismatch` when `values` is not `ids`'s length.
+#' @examples
+#' ped <- pedigree(data.frame(
+#'   id = 1:6,
+#'   mother = c(NA, NA, 1, 1, NA, 3),
+#'   father = c(NA, NA, 2, 2, NA, 5)
+#' ))
+#' pheno <- data.frame(id = c(6, 3, 4), dx = c(1, 0, 1))
+#' pedigree_rows(ped, pheno$id)
+#' pedigree_align(ped, pheno$id, pheno$dx)
+#' @export
+pedigree_rows <- function(pedigree, ids) {
+  call <- sys.call()
+  .pgp_check_class(pedigree, "pgphenotype_pedigree", "pedigree", "pedigree()", call)
+  .pgp_call(.native_pedigree_rows(pedigree$ptr, ids), call)
+}
+
+#' @rdname pedigree_rows
+#' @export
+pedigree_align <- function(pedigree, ids, values) {
+  call <- sys.call()
+  .pgp_check_class(pedigree, "pgphenotype_pedigree", "pedigree", "pedigree()", call)
+  values <- .pgp_doubles(values, "values", call)
+  .pgp_call(.native_pedigree_align(pedigree$ptr, ids, values), call)
 }
 
 #' @export

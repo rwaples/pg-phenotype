@@ -27,8 +27,9 @@ with inference builds, so a later call skips validation and finding them.
 }
 \details{
 Row *i* of the pedigree is row *i* of `x`.  Traits, ages, strata and
-probands are matched to it by position: align values from another table
-with `ped$ids` first.  A misaligned trait is not detected.
+probands are matched to it by position: move values from another table
+onto its rows with [pedigree_align()] (or [pedigree_rows()]) first.  A
+misaligned trait is not detected.
 }
 \examples{
 ped <- pedigree(data.frame(

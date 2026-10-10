@@ -1,6 +1,6 @@
 # ADR 0006: A validated Pedigree is shared across methods
 
-**Status:** accepted
+**Status:** accepted; amended by ADR 0008 (a Pedigree looks up rows by id)
 **Date:** 2026-10-09
 **Context:** simACE `plans/pg-phenotype-pedigree-v2.md`; rwaples/pg-phenotype#7; amends ADR 0001
 
