@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
@@ -25,17 +26,32 @@ class PedigreeArrays(NamedTuple):
     sex: np.ndarray | None
 
 
-def _column(frame: object, name: str) -> np.ndarray | None:
+def _column(frame: object, name: str) -> object | None:
     """Column *name* of a polars/pandas frame or a mapping, or ``None``."""
     columns = getattr(frame, "columns", None)
     if columns is not None:
-        if name not in list(columns):
-            return None
-        series = frame[name]  # ty: ignore[not-subscriptable]
-        to_numpy = getattr(series, "to_numpy", None)
-        return np.asarray(to_numpy() if to_numpy is not None else series)
+        return frame[name] if name in list(columns) else None  # ty: ignore[not-subscriptable]
     mapping: Mapping[str, object] = frame  # ty: ignore[invalid-assignment]
-    return None if name not in mapping else np.asarray(mapping[name])
+    return mapping.get(name)
+
+
+def _array(values: object) -> np.ndarray:
+    """*values* as an array, through ``to_numpy`` for a polars or pandas series."""
+    to_numpy = getattr(values, "to_numpy", None)
+    return np.asarray(to_numpy() if to_numpy is not None else values)
+
+
+def _private(out: np.ndarray, source: object, raw: np.ndarray) -> np.ndarray:
+    """*out*, read from *source* as *raw*, copied while the caller can still write it.
+
+    Native calls read their inputs with the GIL released, so no other Python
+    thread may write one mid-call.  A new array, and the read-only views that
+    polars and copy-on-write pandas hand out, need no copy.
+    """
+    from_caller = raw is source or raw.base is not None
+    if from_caller and out.flags.writeable and np.may_share_memory(out, raw):
+        return out.copy()
+    return out
 
 
 _TWO_POW_63 = 2.0**63
@@ -143,12 +159,13 @@ def pedigree_arrays(pedigree: object) -> PedigreeArrays:
     """
 
     def read(name: str) -> np.ndarray | None:
-        values = _column(pedigree, name)
-        if values is None:
+        column = _column(pedigree, name)
+        if column is None:
             if name in REQUIRED:
                 raise ValidationError("missing_field", f"pedigree has no {name!r} column", field=name)
             return None
-        return np.ascontiguousarray(_ids(values, name, missing_ok=name != "id"))
+        raw = _array(column)
+        return _private(np.ascontiguousarray(_ids(raw, name, missing_ok=name != "id")), column, raw)
 
     def required(name: str) -> np.ndarray:
         values = read(name)
@@ -160,9 +177,8 @@ def pedigree_arrays(pedigree: object) -> PedigreeArrays:
 
 def id_array(values: object, name: str) -> np.ndarray:
     """*values* as a contiguous int64 array of ids, none missing."""
-    to_numpy = getattr(values, "to_numpy", None)
-    array = np.asarray(to_numpy() if to_numpy is not None else values)
-    return np.ascontiguousarray(_ids(array, name, missing_ok=False))
+    raw = _array(values)
+    return _private(np.ascontiguousarray(_ids(raw, name, missing_ok=False)), values, raw)
 
 
 def floats(values: object, name: str) -> np.ndarray:
@@ -171,23 +187,22 @@ def floats(values: object, name: str) -> np.ndarray:
     Raises:
         TypeError: *values* holds text, which numpy would parse.
     """
-    to_numpy = getattr(values, "to_numpy", None)
-    raw = np.asarray(to_numpy() if to_numpy is not None else values)
+    raw = _array(values)
     if raw.dtype.kind in "USO" and any(isinstance(v, str | bytes) for v in raw.ravel()):
         raise TypeError(f"{name} must be numeric, not text")
+    to_numpy = getattr(values, "to_numpy", None)
     if to_numpy is not None:
-        try:
-            values = to_numpy(dtype=np.float64, na_value=np.nan)  # pandas
-        except TypeError:
-            values = to_numpy()  # polars: nulls become NaN for floats, None for objects
-    array = np.asarray(values)
-    if array.ndim != 1:
+        # pandas; polars takes no arguments, and its nulls are already NaN
+        # for floats, None for objects.
+        with contextlib.suppress(TypeError):
+            raw = np.asarray(to_numpy(dtype=np.float64, na_value=np.nan))
+    if raw.ndim != 1:
         raise ValidationError(
-            "invalid_shape", f"{name} must be one-dimensional", field=name, expected_ndim=1, actual_shape=array.shape
+            "invalid_shape", f"{name} must be one-dimensional", field=name, expected_ndim=1, actual_shape=raw.shape
         )
-    if array.dtype == object:
-        array = np.array([np.nan if _is_missing(v) else v for v in array], dtype=np.float64)
-    return np.ascontiguousarray(array, dtype=np.float64)
+    if raw.dtype == object:
+        return np.array([np.nan if _is_missing(v) else v for v in raw], dtype=np.float64)
+    return _private(np.ascontiguousarray(raw, dtype=np.float64), values, raw)
 
 
 def strata(stratum: object) -> tuple[np.ndarray, np.ndarray]:

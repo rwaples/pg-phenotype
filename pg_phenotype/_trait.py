@@ -37,7 +37,8 @@ class Trait:
             kind.
 
     Attributes:
-        values: float64, NaN where unknown (category codes for strings).
+        values: float64, NaN where unknown (category codes for strings);
+            read-only, since native calls read it with the GIL released.
         kind: The trait kind.
         levels: The category labels in code order, for string or
             categorical input.
@@ -82,6 +83,7 @@ class Trait:
                     position=position,
                     value=float(array[position]),
                 )
+        array.flags.writeable = False
         object.__setattr__(self, "values", array)
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "levels", levels)

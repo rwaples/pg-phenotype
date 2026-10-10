@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from pg_phenotype import _native
-from pg_phenotype._input import floats
+from pg_phenotype._input import floats, id_array
 from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._threads import thread_budget
 
@@ -55,7 +55,7 @@ def prepare(pedigree: object, *, ndegree: int = 2, probands: Sequence[int] | np.
         ResourceError: A capacity or allocation limit was reached.
     """
     native = native_pedigree(pedigree)
-    proband_ids = None if probands is None else np.ascontiguousarray(probands, dtype=np.int64)
+    proband_ids = None if probands is None else id_array(probands, "probands")
     return _native.prepare(
         native,
         ndegree=ndegree,

@@ -22,6 +22,17 @@ it builds one for the call, as before.
   where it raised `TypeError`.
 - `regression.parent_offspring` returns free heap to the system before its
   native call, as `mate_correlation` and `Pedigree` do.
+- Native calls read their inputs with the GIL released, so an input that
+  another Python thread could write mid-call is now copied first: a
+  writeable numpy array passed directly or in a mapping.  polars and
+  copy-on-write pandas columns are read-only views and are still read in
+  place.  A Pedigree built from a mapping of writeable int64 arrays holds a
+  copy of each column (8 bytes per row) while it validates.
+- `Trait.values` is read-only, and a Trait no longer shares a writeable
+  array with its caller.
+- `pafgrs.prepare` reads `probands` as it reads pedigree ids: a missing or
+  non-integer id is an `invalid_integer_value` error, where numpy's cast
+  used to truncate it.
 
 Parent-offspring regression (#3): `pg_phenotype.regression.parent_offspring`
 (R: `regression_parent_offspring()`, Rust: `regression::parent_offspring`)

@@ -120,6 +120,11 @@ def test_errors_carry_codes_and_fields():
     with pytest.raises(pg_phenotype.ValidationError) as err:
         pafgrs.prepare(ped, probands=[ped["id"][3], ped["id"][3]])
     assert err.value.code == "duplicate_proband"
+    for probands in ([float(ped["id"][0]) + 0.5], [float(ped["id"][0]), np.nan]):
+        with pytest.raises(pg_phenotype.ValidationError) as err:
+            pafgrs.prepare(ped, probands=probands)
+        assert err.value.code == "invalid_integer_value"
+        assert err.value.fields["field"] == "probands"
     cyc = {"id": [1, 2], "mother": [2, 1], "father": [-1, -1]}
     with pytest.raises(pg_phenotype.ValidationError) as err:
         pafgrs.prepare(cyc)
