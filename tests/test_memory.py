@@ -37,3 +37,14 @@ def test_pedigree_releases_free_memory_before_building(monkeypatch):
     monkeypatch.setattr(_pedigree, "release_free_memory", lambda: calls.append(1))
     Pedigree({"id": np.arange(1, 4), "mother": [-1, -1, 1], "father": [-1, -1, 2]})
     assert calls == [1]
+
+
+def test_parent_offspring_releases_free_memory_first(monkeypatch):
+    """``parent_offspring`` hands free memory back once, before the native call."""
+    from pg_phenotype import regression
+
+    calls = []
+    monkeypatch.setattr(regression, "release_free_memory", lambda: calls.append(1))
+    pedigree = {"id": np.arange(1, 7), "mother": [-1, -1, -1, -1, 1, 2], "father": [-1, -1, -1, -1, 3, 4]}
+    regression.parent_offspring(pedigree, Trait([0.1, 0.9, 0.4, 0.2, 0.3, 0.6]))
+    assert calls == [1]

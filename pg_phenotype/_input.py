@@ -166,8 +166,15 @@ def id_array(values: object, name: str) -> np.ndarray:
 
 
 def floats(values: object, name: str) -> np.ndarray:
-    """*values* as a contiguous float64 array, NA/None as NaN."""
+    """*values* as a contiguous float64 array, NA/None as NaN.
+
+    Raises:
+        TypeError: *values* holds text, which numpy would parse.
+    """
     to_numpy = getattr(values, "to_numpy", None)
+    raw = np.asarray(to_numpy() if to_numpy is not None else values)
+    if raw.dtype.kind in "USO" and any(isinstance(v, str | bytes) for v in raw.ravel()):
+        raise TypeError(f"{name} must be numeric, not text")
     if to_numpy is not None:
         try:
             values = to_numpy(dtype=np.float64, na_value=np.nan)  # pandas
@@ -179,7 +186,7 @@ def floats(values: object, name: str) -> np.ndarray:
             "invalid_shape", f"{name} must be one-dimensional", field=name, expected_ndim=1, actual_shape=array.shape
         )
     if array.dtype == object:
-        array = np.array([np.nan if v is None else v for v in array], dtype=np.float64)
+        array = np.array([np.nan if _is_missing(v) else v for v in array], dtype=np.float64)
     return np.ascontiguousarray(array, dtype=np.float64)
 
 

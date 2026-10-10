@@ -16,6 +16,12 @@ it builds one for the call, as before.
 
 - `pair_length_mismatch` names its two columns in a `columns` field and in
   its message (`x`, `y` from `tetrachoric`; `ids`, `values` from `align`).
+- A numeric input (a trait, ages, strata, `align`'s values, `tetrachoric`'s
+  `x` and `y`) given as text is a `TypeError`.  Before, numpy parsed
+  `["1", "2"]` as numbers.  `pd.NA` in a list or object array is missing,
+  where it raised `TypeError`.
+- `regression.parent_offspring` returns free heap to the system before its
+  native call, as `mate_correlation` and `Pedigree` do.
 
 Parent-offspring regression (#3): `pg_phenotype.regression.parent_offspring`
 (R: `regression_parent_offspring()`, Rust: `regression::parent_offspring`)

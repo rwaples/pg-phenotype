@@ -277,6 +277,14 @@ def test_align_takes_frame_columns_and_matches_a_reindex():
     frame = pl.DataFrame({"id": ids, "dx": [(1, None, 0)[i % 3] for i in range(ids.size)]})
     np.testing.assert_array_equal(built.align(frame["id"], frame["dx"]), want)
     assert built.align([], []).size == len(built)
+    np.testing.assert_array_equal(built.align(ids[:3], [1.0, pd.NA, None])[[-1, -3, -5]], [1.0, np.nan, np.nan])
+
+
+@pytest.mark.parametrize("values", [["1", "2"], np.array(["1", "2"]), [1.0, "x"], pd.Series(["1", "2"])])
+def test_align_rejects_text_values(values):
+    ped = random_pedigree(3)
+    with pytest.raises(TypeError, match="values must be numeric, not text"):
+        Pedigree(ped).align(ped["id"][:2], values)
 
 
 def test_rows_and_align_reject_unknown_repeated_and_missing_ids():

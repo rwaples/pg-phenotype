@@ -19,6 +19,7 @@ import numpy as np
 
 from pg_phenotype import _native
 from pg_phenotype._input import strata
+from pg_phenotype._memory import release_free_memory
 from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._threads import thread_budget
 from pg_phenotype._trait import Trait
@@ -151,6 +152,7 @@ def parent_offspring(pedigree: object, trait: Trait, *, stratum: object = None) 
         raise TypeError(f"trait must be a pg_phenotype.Trait, got {type(trait).__name__}")
     native = native_pedigree(pedigree)
     labels, known = (None, None) if stratum is None else strata(stratum)
+    release_free_memory()
     raw = _native.parent_offspring(
         native,
         np.ascontiguousarray(trait.values),
