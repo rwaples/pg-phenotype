@@ -58,8 +58,10 @@ Errors are `pg_phenotype.ValidationError`, `ParameterError` and
 the Aalen-Johansen estimator: `age` at onset, death or last observation,
 `status` 0 censored, 1 case, 2 death (a competing risk), and `entry` the
 age observation starts (late entry; `entry < t <= age` is at risk).  The
-table steps at each case age, and K is its last value.  For a CIP per sex,
-pass each sex's rows; scoring takes one CIP per trait
+result is a `Cip` with `interpolation="step"`: between case ages it holds
+the last estimate, where `Cip(ages, cip)` interpolates linearly.  K is its
+last value.  For a CIP per sex, pass each sex's rows; scoring takes one CIP
+per trait
 ([ADR 0010](docs/adr/0010-aalen-johansen-cip.md)).
 
 ### Assortative mating

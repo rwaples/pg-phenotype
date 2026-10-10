@@ -5,7 +5,7 @@ use crate::input::{self, IdType};
 use crate::pedigree::Source;
 use crate::threads;
 use extendr_api::prelude::*;
-use pg_phenotype_core::pafgrs::{self, BivParams, Cip, Prep};
+use pg_phenotype_core::pafgrs::{self, BivParams, Cip, Interpolation, Prep};
 use pg_phenotype_core::Trait;
 
 /// What a `pgphenotype_pafgrs_prep` external pointer owns.
@@ -82,17 +82,22 @@ fn pafgrs_prep_info(prep: Robj) -> Robj {
     }))
 }
 
-fn cip_of(ages: &Robj, cip: &Robj) -> HostResult<Cip> {
+/// A CIP table as R passes it: ages, values and the interpolation name.
+type CipArg<'a> = [&'a Robj; 3];
+
+fn cip_of([ages, cip, interpolation]: CipArg<'_>) -> HostResult<Cip> {
     let ages = input::doubles("ages", ages)?.to_vec();
     let cip = input::doubles("cip", cip)?.to_vec();
-    Ok(Cip::new(ages, cip)?)
+    let interpolation = Interpolation::from_name(interpolation.as_str().unwrap_or_default())
+        .ok_or_else(|| HostError::usage("a CIP must come from pafgrs_cip()".to_string()))?;
+    Ok(Cip::new(ages, cip, interpolation)?)
 }
 
 /// `list(prevalence, threshold)` of a valid CIP table.
 #[extendr]
-fn pafgrs_check_cip(ages: Robj, cip: Robj) -> Robj {
+fn pafgrs_check_cip(ages: Robj, cip: Robj, interpolation: Robj) -> Robj {
     finish(
-        cip_of(&ages, &cip)
+        cip_of([&ages, &cip, &interpolation])
             .map(|c| list!(prevalence = c.prevalence(), threshold = c.threshold()).into_robj()),
     )
 }
@@ -132,12 +137,12 @@ fn counts(values: &[u32]) -> Robj {
 fn score_univariate_impl(
     prep: &Robj,
     values: [&Robj; 3],
-    cip: [&Robj; 2],
+    cip: CipArg<'_>,
     h2: &Robj,
 ) -> HostResult<Robj> {
     let h = handle(prep)?;
     let h2 = input::number("h2", h2)?;
-    let cip = cip_of(cip[0], cip[1])?;
+    let cip = cip_of(cip)?;
     let [values, kind, age] = values;
     let values = trait_of(values, kind)?;
     let age = input::doubles("age", age)?;
@@ -164,12 +169,13 @@ fn pafgrs_score_univariate(
     age: Robj,
     cip_ages: Robj,
     cip_values: Robj,
+    cip_interpolation: Robj,
     h2: Robj,
 ) -> Robj {
     finish(score_univariate_impl(
         &prep,
         [&values, &kind, &age],
-        [&cip_ages, &cip_values],
+        [&cip_ages, &cip_values, &cip_interpolation],
         &h2,
     ))
 }
@@ -177,7 +183,7 @@ fn pafgrs_score_univariate(
 fn score_bivariate_impl(
     prep: &Robj,
     traits: [[&Robj; 3]; 2],
-    cips: [[&Robj; 2]; 2],
+    cips: [CipArg<'_>; 2],
     h2: &Robj,
     rg: &Robj,
     rho_within: &Robj,
@@ -193,10 +199,8 @@ fn score_bivariate_impl(
         false => Some(input::number("rho_within", rho_within)?),
     };
     let params = BivParams::new(h2, rg, rho_within)?;
-    let cip = [
-        cip_of(cips[0][0], cips[0][1])?,
-        cip_of(cips[1][0], cips[1][1])?,
-    ];
+    let [cip1, cip2] = cips;
+    let cip = [cip_of(cip1)?, cip_of(cip2)?];
     let [[values1, kind1, age1], [values2, kind2, age2]] = traits;
     let values = [trait_of(values1, kind1)?, trait_of(values2, kind2)?];
     let ages = [input::doubles("age1", age1)?, input::doubles("age2", age2)?];
@@ -236,8 +240,10 @@ fn pafgrs_score_bivariate(
     age2: Robj,
     cip1_ages: Robj,
     cip1_values: Robj,
+    cip1_interpolation: Robj,
     cip2_ages: Robj,
     cip2_values: Robj,
+    cip2_interpolation: Robj,
     h2: Robj,
     rg: Robj,
     rho_within: Robj,
@@ -245,7 +251,10 @@ fn pafgrs_score_bivariate(
     finish(score_bivariate_impl(
         &prep,
         [[&values1, &kind1, &age1], [&values2, &kind2, &age2]],
-        [[&cip1_ages, &cip1_values], [&cip2_ages, &cip2_values]],
+        [
+            [&cip1_ages, &cip1_values, &cip1_interpolation],
+            [&cip2_ages, &cip2_values, &cip2_interpolation],
+        ],
         &h2,
         &rg,
         &rho_within,

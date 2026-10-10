@@ -6,7 +6,7 @@
 
 use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
 use pg_phenotype_core::error::{Class, FieldValue};
-use pg_phenotype_core::pafgrs::{self, BivParams, Cip};
+use pg_phenotype_core::pafgrs::{self, BivParams, Cip, Interpolation};
 use pg_phenotype_core::{threads, Error, PedigreeArg, PedigreeInput, Trait, TraitKind};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -335,8 +335,16 @@ fn trait_kinds() -> Vec<&'static str> {
     TraitKind::ALL.map(TraitKind::name).to_vec()
 }
 
-fn checked_cip(py: Python<'_>, ages: Vec<f64>, cip: Vec<f64>) -> PyResult<Cip> {
-    Cip::new(ages, cip).map_err(|e| to_pyerr(py, e))
+/// A CIP table as Python passes it: ages, values and the interpolation name.
+type CipArg = (Vec<f64>, Vec<f64>, String);
+
+fn checked_cip(py: Python<'_>, (ages, cip, interpolation): CipArg) -> PyResult<Cip> {
+    let interpolation = Interpolation::from_name(&interpolation).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "interpolation must be 'linear' or 'step', got {interpolation:?}"
+        ))
+    })?;
+    Cip::new(ages, cip, interpolation).map_err(|e| to_pyerr(py, e))
 }
 
 fn f64_array<'py>(py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
@@ -345,8 +353,8 @@ fn f64_array<'py>(py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>
 
 /// Validate a CIP table and return its prevalence and threshold.
 #[pyfunction]
-fn check_cip(py: Python<'_>, ages: Vec<f64>, cip: Vec<f64>) -> PyResult<(f64, f64)> {
-    let cip = checked_cip(py, ages, cip)?;
+fn check_cip(py: Python<'_>, cip: CipArg) -> PyResult<(f64, f64)> {
+    let cip = checked_cip(py, cip)?;
     Ok((cip.prevalence(), cip.threshold()))
 }
 
@@ -369,7 +377,7 @@ fn cip_aalen_johansen<'py>(
 
 /// Univariate scores of every proband, in the pool.
 #[pyfunction]
-#[pyo3(signature = (prep, values, kind, age, cip_ages, cip_values, /, *, h2, threads))]
+#[pyo3(signature = (prep, values, kind, age, cip, /, *, h2, threads))]
 #[allow(clippy::too_many_arguments)]
 fn score_univariate<'py>(
     py: Python<'py>,
@@ -377,12 +385,11 @@ fn score_univariate<'py>(
     values: PyReadonlyArray1<'py, f64>,
     kind: &str,
     age: PyReadonlyArray1<'py, f64>,
-    cip_ages: Vec<f64>,
-    cip_values: Vec<f64>,
+    cip: CipArg,
     h2: f64,
     threads: usize,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let cip = checked_cip(py, cip_ages, cip_values)?;
+    let cip = checked_cip(py, cip)?;
     let values = Trait {
         values: values.as_slice()?,
         kind: trait_kind(kind)?,
@@ -416,16 +423,16 @@ fn score_bivariate<'py>(
     values2: PyReadonlyArray1<'py, f64>,
     kind2: &str,
     age2: PyReadonlyArray1<'py, f64>,
-    cip1: (Vec<f64>, Vec<f64>),
-    cip2: (Vec<f64>, Vec<f64>),
+    cip1: CipArg,
+    cip2: CipArg,
     h2: (f64, f64),
     rg: f64,
     rho_within: Option<f64>,
     threads: usize,
 ) -> PyResult<Bound<'py, PyDict>> {
     let params = BivParams::new([h2.0, h2.1], rg, rho_within).map_err(|e| to_pyerr(py, e))?;
-    let cip1 = checked_cip(py, cip1.0, cip1.1)?;
-    let cip2 = checked_cip(py, cip2.0, cip2.1)?;
+    let cip1 = checked_cip(py, cip1)?;
+    let cip2 = checked_cip(py, cip2)?;
     let values = [
         Trait {
             values: values1.as_slice()?,

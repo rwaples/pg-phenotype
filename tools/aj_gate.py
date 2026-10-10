@@ -5,7 +5,8 @@
 Reads the golden (``tools/make_simace_aj_golden.py``,
 ``tools/make_survival_aj_golden.py``), estimates each case with
 :meth:`pg_phenotype.pafgrs.Cip.from_aalen_johansen` (``tests/aj_golden.py``),
-and writes per case: the rows, cases and deaths, whether the step ages match
+and writes per case: the rows, cases and deaths, the steps, whether the step
+ages match
 each reference, the largest gap to simACE (absolute) and to survfit
 (relative), the gap to simACE with entries moved one ulp earlier (its
 ``entry <= t`` risk set), and ``K`` beside the cases-over-rows CIP fitACE's

@@ -9,7 +9,7 @@ are passed beside it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -70,37 +70,42 @@ class Cip:
 
     ``ages`` strictly increasing and finite; ``cip`` non-decreasing in
     ``[0, 1)`` with a positive last value, the lifetime prevalence ``K``.
-    CIP at an age is linear interpolation: 0 below the first age, ``K`` at
-    and above the last.
+    CIP at an age is 0 below the first age and ``K`` at and above the last.
+    Between ages, ``interpolation`` ``"linear"`` draws a straight line
+    (a smooth table) and ``"step"`` holds the value at the last age at or
+    below (an estimator's step function).
 
     Raises:
         ParameterError: ``invalid_cip`` naming the first offending position.
+        ValueError: An ``interpolation`` other than ``"linear"`` or ``"step"``.
     """
 
     ages: np.ndarray
     cip: np.ndarray
+    interpolation: Literal["linear", "step"] = "linear"
     prevalence: float = field(init=False)
     threshold: float = field(init=False)
 
     def __post_init__(self) -> None:
         ages = np.ascontiguousarray(self.ages, dtype=np.float64)
         cip = np.ascontiguousarray(self.cip, dtype=np.float64)
-        prevalence, threshold = _native.check_cip(ages.tolist(), cip.tolist())
+        prevalence, threshold = _native.check_cip((ages.tolist(), cip.tolist(), self.interpolation))
         object.__setattr__(self, "ages", ages)
         object.__setattr__(self, "cip", cip)
         object.__setattr__(self, "prevalence", prevalence)
         object.__setattr__(self, "threshold", threshold)
+
+    def _native(self) -> tuple[list[float], list[float], str]:
+        return self.ages.tolist(), self.cip.tolist(), self.interpolation
 
     @classmethod
     def from_aalen_johansen(cls, age: object, status: object, *, entry: object = None) -> Cip:
         """Estimate a CIP from ages and survival status by Aalen-Johansen.
 
         Death competes with the trait: a person who dies can no longer
-        become a case.  The table steps at each age where a case occurs,
-        to the estimated cumulative incidence there.  ``Cip`` interpolates
-        linearly between those ages, so between two steps it rises
-        gradually where the estimate is flat, and exceeds it by at most
-        the next step's height.
+        become a case.  The estimate is a step function, rising at each age
+        where a case occurs; the result is a ``"step"`` table holding it at
+        those ages.
 
         Args:
             age: Per person, the age at onset for a case, at death, or at
@@ -114,8 +119,8 @@ class Cip:
                 risk from birth, ``t <= age``.
 
         Returns:
-            The :class:`Cip`, its last value ``K`` the estimated lifetime
-            prevalence.
+            A ``"step"`` :class:`Cip`, its last value ``K`` the estimated
+            lifetime prevalence.
 
         Raises:
             ValidationError: ``pair_length_mismatch`` when *status* or
@@ -130,7 +135,7 @@ class Cip:
         """
         entry_values = None if entry is None else floats(entry, "entry")
         ages, cip = _native.cip_aalen_johansen(floats(age, "age"), floats(status, "status"), entry_values)
-        return cls(np.asarray(ages), np.asarray(cip))
+        return cls(np.asarray(ages), np.asarray(cip), interpolation="step")
 
 
 @dataclass(frozen=True)
@@ -208,8 +213,7 @@ def score_univariate(prep: _native.Prep, trait: Trait, *, age: object, cip: Cip,
         trait.values,
         trait.kind,
         floats(age, "age"),
-        cip.ages.tolist(),
-        cip.cip.tolist(),
+        cip._native(),
         h2=float(h2),
         threads=thread_budget(),
     )
@@ -267,8 +271,8 @@ def score_bivariate(
         t2.values,
         t2.kind,
         floats(age[1], "age2"),
-        (cip[0].ages.tolist(), cip[0].cip.tolist()),
-        (cip[1].ages.tolist(), cip[1].cip.tolist()),
+        cip[0]._native(),
+        cip[1]._native(),
         h2=(float(h2[0]), float(h2[1])),
         rg=float(rg),
         rho_within=None if rho_within is None else float(rho_within),

@@ -28,8 +28,15 @@ continuous trait is centred on its midrange before quantization, and
 `Cip.from_aalen_johansen(age, status, entry=None)` (R:
 `pafgrs_cip_aalen_johansen()`, Rust: `Cip::aalen_johansen`) estimates a
 PA-FGRS CIP from data (#4): status 0 censored, 1 case, 2 death as a
-competing risk, with optional late entry.  The table steps at each case age
-and K is its last value.  A person is at risk at `t` when
+competing risk, with optional late entry.  It returns the estimate at each
+case age as a step table, and K is its last value.  An opt-in smooth CIP is
+#12.
+
+`Cip` (R: `pafgrs_cip()`) takes `interpolation`: `"linear"`, the default
+and the behaviour so far, or `"step"`, which holds the value at the last
+age at or below.  Scoring reads it from the table.  The native
+`check_cip`, `score_univariate` and `score_bivariate` take the table as
+one `(ages, cip, interpolation)` tuple.  A person is at risk at `t` when
 `entry < t <= age`.  New validation codes: `invalid_status`,
 `entry_not_before_age`, and `cip_not_estimable` (`reason`
 `zero_prevalence` or `prevalence_one`)

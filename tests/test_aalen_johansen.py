@@ -9,7 +9,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from pg_phenotype import ValidationError
+from pg_phenotype import Trait, ValidationError, pafgrs
 from pg_phenotype.pafgrs import Cip
 from tests.aj_golden import load
 
@@ -28,6 +28,7 @@ def estimate(case: Case, *, entry: np.ndarray | None = None) -> Cip:
 @pytest.mark.parametrize("case", GOLDEN.cases, ids=lambda c: c.key)
 def test_matches_survfit(case):
     cip = estimate(case)
+    assert cip.interpolation == "step"
     np.testing.assert_array_equal(cip.ages, case.survfit_ages)
     np.testing.assert_allclose(cip.cip, case.survfit_cif, rtol=SURVFIT_RTOL, atol=0)
 
@@ -69,6 +70,7 @@ def test_corrects_the_naive_cip_under_late_entry():
 def test_hand_example():
     # t=1: Y=5, a case: 1/5.  t=2: a death.  t=4: Y=2: += 3/5 * 1/2.  t=5: Y=1: += 3/10.
     cip = Cip.from_aalen_johansen([1, 2, 3, 4, 5], [1, 2, 0, 1, 1])
+    assert cip.interpolation == "step"
     np.testing.assert_array_equal(cip.ages, [1.0, 4.0, 5.0])
     np.testing.assert_allclose(cip.cip, [0.2, 0.5, 0.8], rtol=1e-15)
     assert cip.prevalence == cip.cip[-1]
@@ -115,3 +117,26 @@ def test_a_censored_row_may_leave_at_its_entry_age():
     without = Cip.from_aalen_johansen([1, 2, 3, 4], [1, 0, 1, 0], entry=[0, 0, 0, 0])
     np.testing.assert_array_equal(with_row.ages, without.ages)
     np.testing.assert_array_equal(with_row.cip, without.cip)
+
+
+def test_a_step_table_scores_a_control_by_the_last_step():
+    """The mode reaches scoring: a control at 55 on a step table [20, 60] carries CIP(20)."""
+    pedigree = {"id": [1, 2, 3], "mother": [-1, -1, 1], "father": [-1, -1, 2]}
+    prep = pafgrs.prepare(pedigree, ndegree=1, probands=[3])
+    trait = Trait([0.0, 1.0, np.nan], kind="binary")
+    age = [55.0, 40.0, np.nan]
+
+    def est(cip: Cip) -> float:
+        return float(pafgrs.score_univariate(prep, trait, age=age, cip=cip, h2=0.5).est[0])
+
+    step = est(Cip([20.0, 60.0], [0.05, 0.1], interpolation="step"))
+    # A linear table flat from 20 to 55 gives the mother the same w (0.5) and K.
+    assert step == est(Cip([20.0, 55.0, 60.0], [0.05, 0.05, 0.1]))
+    # Linear between 20 and 60 gives her w = 0.9375.
+    assert step != est(Cip([20.0, 60.0], [0.05, 0.1]))
+
+
+def test_cip_interpolation_is_checked():
+    assert Cip([0.0, 1.0], [0.0, 0.1]).interpolation == "linear"
+    with pytest.raises(ValueError, match="interpolation"):
+        Cip([0.0, 1.0], [0.0, 0.1], interpolation="cubic")  # ty: ignore[invalid-argument-type]

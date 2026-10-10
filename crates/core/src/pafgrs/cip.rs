@@ -6,20 +6,46 @@ use crate::error::{CipProblem, Error};
 use crate::input::{Trait, TraitKind};
 use crate::normal;
 
+/// How a [`Cip`] reads between its ages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interpolation {
+    /// A straight line between neighbouring ages: a smooth table.
+    Linear,
+    /// The value at the last age at or below: an estimator's step function.
+    Step,
+}
+
+impl Interpolation {
+    pub const ALL: [Interpolation; 2] = [Interpolation::Linear, Interpolation::Step];
+
+    /// The name a host passes.
+    pub fn name(self) -> &'static str {
+        match self {
+            Interpolation::Linear => "linear",
+            Interpolation::Step => "step",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Interpolation> {
+        Interpolation::ALL.into_iter().find(|i| i.name() == name)
+    }
+}
+
 /// CIP by age: `ages` strictly increasing and finite, `cip` non-decreasing
 /// in `[0, 1)` with a positive last value, which is the lifetime
-/// prevalence `K`.
+/// prevalence `K`, read between ages by `interpolation`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cip {
     ages: Vec<f64>,
     cip: Vec<f64>,
+    interpolation: Interpolation,
 }
 
 impl Cip {
     /// # Errors
     ///
     /// [`Error::InvalidCip`] at the first position that breaks the contract.
-    pub fn new(ages: Vec<f64>, cip: Vec<f64>) -> Result<Cip, Error> {
+    pub fn new(ages: Vec<f64>, cip: Vec<f64>, interpolation: Interpolation) -> Result<Cip, Error> {
         let bad = |reason, position| Err(Error::InvalidCip { reason, position });
         if ages.is_empty() {
             return bad(CipProblem::Empty, 0);
@@ -44,7 +70,11 @@ impl Cip {
         if cip[cip.len() - 1] <= 0.0 {
             return bad(CipProblem::PrevalenceNotPositive, cip.len() - 1);
         }
-        Ok(Cip { ages, cip })
+        Ok(Cip {
+            ages,
+            cip,
+            interpolation,
+        })
     }
 
     /// The ages and the CIP at each.
@@ -62,8 +92,14 @@ impl Cip {
         normal::quantile(1.0 - self.prevalence())
     }
 
-    /// CIP at `age` by linear interpolation: 0 below the first age, `K` at
-    /// and above the last, as `numpy.interp(age, ages, cip, left=0, right=K)`.
+    pub fn interpolation(&self) -> Interpolation {
+        self.interpolation
+    }
+
+    /// CIP at `age`: 0 below the first age, `K` at and above the last.
+    /// Between ages, linear as `numpy.interp(age, ages, cip, left=0,
+    /// right=K)`, or the value at the last age at or below `age` for a step
+    /// table.
     pub fn at(&self, age: f64) -> f64 {
         let (ages, cip) = (&self.ages, &self.cip);
         let last = ages.len() - 1;
@@ -74,8 +110,13 @@ impl Cip {
             return cip[last];
         }
         let j = ages.partition_point(|&a| a <= age) - 1;
-        let slope = (cip[j + 1] - cip[j]) / (ages[j + 1] - ages[j]);
-        slope * (age - ages[j]) + cip[j]
+        match self.interpolation {
+            Interpolation::Step => cip[j],
+            Interpolation::Linear => {
+                let slope = (cip[j + 1] - cip[j]) / (ages[j + 1] - ages[j]);
+                slope * (age - ages[j]) + cip[j]
+            }
+        }
     }
 
     /// The proportion of lifetime risk a control observed by `age`.
@@ -195,7 +236,36 @@ mod tests {
     use super::*;
 
     fn cip() -> Cip {
-        Cip::new(vec![10.0, 20.0, 40.0], vec![0.0, 0.05, 0.1]).unwrap()
+        Cip::new(
+            vec![10.0, 20.0, 40.0],
+            vec![0.0, 0.05, 0.1],
+            Interpolation::Linear,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_step_table_holds_each_value_until_the_next_age() {
+        let c = Cip::new(
+            vec![10.0, 20.0, 40.0],
+            vec![0.01, 0.05, 0.1],
+            Interpolation::Step,
+        )
+        .unwrap();
+        let at: Vec<f64> = [5.0, 10.0, 15.0, 19.999, 20.0, 39.0, 40.0, 99.0]
+            .iter()
+            .map(|&a| c.at(a))
+            .collect();
+        assert_eq!(at, [0.0, 0.01, 0.01, 0.01, 0.05, 0.05, 0.1, 0.1]);
+        assert_eq!(c.w(30.0), 0.5);
+    }
+
+    #[test]
+    fn interpolation_names_round_trip() {
+        for i in Interpolation::ALL {
+            assert_eq!(Interpolation::from_name(i.name()), Some(i));
+        }
+        assert_eq!(Interpolation::from_name("cubic"), None);
     }
 
     #[test]
@@ -238,7 +308,7 @@ mod tests {
         ];
         for (ages, values, reason, position) in cases {
             assert_eq!(
-                Cip::new(ages, values).unwrap_err(),
+                Cip::new(ages, values, Interpolation::Linear).unwrap_err(),
                 Error::InvalidCip { reason, position }
             );
         }

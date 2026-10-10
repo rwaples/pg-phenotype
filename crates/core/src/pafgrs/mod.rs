@@ -14,6 +14,6 @@ mod triangle;
 mod uni;
 
 pub use biv::{score_bivariate, BivParams, BivScores};
-pub use cip::Cip;
+pub use cip::{Cip, Interpolation};
 pub use prep::{kinship_threshold, prepare, Prep, MAX_NDEGREE};
 pub use uni::{score_univariate, UniScores};

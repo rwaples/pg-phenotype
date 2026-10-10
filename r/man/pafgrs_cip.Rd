@@ -4,25 +4,30 @@
 \alias{pafgrs_cip}
 \title{PA-FGRS CIP table}
 \usage{
-pafgrs_cip(ages, cip)
+pafgrs_cip(ages, cip, interpolation = c("linear", "step"))
 }
 \arguments{
 \item{ages}{Ages, finite and strictly increasing.}
 
 \item{cip}{CIP at each age, non-decreasing in `[0, 1)` with a positive
 last value.}
+
+\item{interpolation}{How CIP reads between ages: `"linear"`, a straight
+line (a smooth table), or `"step"`, the value at the last age at or
+below (an estimator's step function).}
 }
 \value{
 An object of class `pgphenotype_pafgrs_cip` holding `ages`, `cip`,
-  `prevalence` and `threshold`.  An invalid table is a
+  `interpolation`, `prevalence` and `threshold`.  An invalid table is a
   `pgphenotype_parameter_error` with code `invalid_cip`.
 }
 \description{
-Cumulative incidence proportion by age.  CIP at an age is linear
-interpolation: 0 below the first age, the last value `K` (the lifetime
-prevalence) at and above the last age.  A control observed at age `a`
-carries weight `CIP(a) / K`; the liability threshold is `qnorm(1 - K)`.
+Cumulative incidence proportion by age: 0 below the first age, the last
+value `K` (the lifetime prevalence) at and above the last age.  A control
+observed at age `a` carries weight `CIP(a) / K`; the liability threshold
+is `qnorm(1 - K)`.
 }
 \examples{
 pafgrs_cip(c(0, 40, 80), c(0, 0.05, 0.1))
+pafgrs_cip(c(30, 50, 70), c(0.02, 0.05, 0.1), interpolation = "step")
 }

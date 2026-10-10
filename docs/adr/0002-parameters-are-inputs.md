@@ -1,6 +1,6 @@
 # ADR 0002: PA-FGRS parameters are inputs; the CIP contract
 
-**Status:** accepted
+**Status:** accepted; amended by ADR 0010 (a CIP reads between ages linearly or as a step)
 **Date:** 2026-10-06
 **Context:** simACE `plans/pg-phenotype-extraction-v3.md`, decisions #5-#9, #18
 
@@ -12,7 +12,7 @@ caller (fitACE_pafgrs keeps its estimators).
 
 | Input | Contract |
 |---|---|
-| CIP | `ages` strictly increasing and finite; `cip` non-decreasing in `[0, 1)` with a positive last value.  **K is the last value**, not a separate argument. CIP at an age interpolates linearly: 0 below the first age, K at and above the last (`numpy.interp(age, ages, cip, left=0, right=K)`). |
+| CIP | `ages` strictly increasing and finite; `cip` non-decreasing in `[0, 1)` with a positive last value.  **K is the last value**, not a separate argument. CIP at an age is 0 below the first age and K at and above the last.  Between ages it interpolates linearly (`numpy.interp(age, ages, cip, left=0, right=K)`), or for a step table holds the value at the last age at or below (ADR 0010). |
 | Threshold | `Phi^-1(1 - K)` by AS241, R's `qnorm` algorithm and coefficients. |
 | `w` | Case: 1.  Control: `clip(CIP(age) / K, 0, 1)`.  Missing status: 0.  Control without an age: 0, counted in `controls_without_age`. A case needs no age: thresholds are lifetime-only. |
 | `h2` | `(0, 1]` per trait. |

@@ -2,12 +2,13 @@
 //! estimator, with death as a competing risk and optional late entry
 //! (ADR 0010).
 
-use super::cip::Cip;
+use super::cip::{Cip, Interpolation};
 use crate::error::{CipEstimate, Error};
 
 impl Cip {
     /// The Aalen-Johansen cumulative incidence of cause 1 (case), with
-    /// cause 2 (death) competing, at each age where a case occurs.
+    /// cause 2 (death) competing: a [`Interpolation::Step`] table holding
+    /// the estimate at each age where a case occurs.
     ///
     /// Per row: `age` is the age at onset, death or last observation;
     /// `status` is 0 (censored), 1 (case) or 2 (death); `entry`, when
@@ -77,7 +78,7 @@ impl Cip {
                 reason: CipEstimate::ZeroPrevalence,
             });
         }
-        Cip::new(ages, cip)
+        Cip::new(ages, cip, Interpolation::Step)
     }
 }
 
@@ -157,6 +158,16 @@ mod tests {
         assert_close(&[cip.at(1.0), cip.at(4.0), cip.at(5.0)], &[0.2, 0.5, 0.8]);
         assert_eq!(cip.at(0.5), 0.0);
         assert!((cip.prevalence() - 0.8).abs() < 1e-15);
+    }
+
+    #[test]
+    fn the_table_is_a_step_function_at_the_case_ages() {
+        let cip = aj(&[1.0, 2.0, 3.0, 4.0, 5.0], &[1.0, 2.0, 0.0, 1.0, 1.0], None);
+        assert_eq!(cip.interpolation(), Interpolation::Step);
+        assert_close(&[cip.at(3.9), cip.at(4.5)], &[0.2, 0.5]);
+        let (ages, values) = cip.into_parts();
+        assert_eq!(ages, [1.0, 4.0, 5.0]);
+        assert_close(&values, &[0.2, 0.5, 0.8]);
     }
 
     #[test]

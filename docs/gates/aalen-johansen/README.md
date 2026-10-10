@@ -3,7 +3,7 @@
 Result: **pass**.  Run 2026-10-10 on simACE
 `6355ffa6aebe37238cb2724dfcde288830fdcb6c` (simACE's pixi env) and R 4.5.3
 with survival 3.8.12 (pg-phenotype's `r` env), against the pg-phenotype
-working tree on `ec14860`:
+working tree on `46b7502`:
 
     pixi run --manifest-path <simACE>/pixi.toml python -B tools/make_simace_aj_golden.py \
         --simace <simACE checkout> --out tests/golden/simace_aj_6355ffa6aebe
@@ -11,7 +11,8 @@ working tree on `ec14860`:
     pixi run python -B tools/aj_gate.py --out docs/gates/aalen-johansen/gate.json
 
 `tests/test_aalen_johansen.py` asserts the agreement below.  `gate.json`
-holds the numbers per case.
+holds the numbers per case.  The result is a `step` table of the case
+ages, compared at those ages.
 
 ## Inputs
 

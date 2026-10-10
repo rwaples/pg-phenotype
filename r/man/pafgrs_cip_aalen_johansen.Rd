@@ -19,7 +19,7 @@ risk.  A person is at risk at age `t` when `entry < t <= age`.  `NULL`:
 everyone is at risk from birth, `t <= age`.}
 }
 \value{
-A `pgphenotype_pafgrs_cip`, as from [pafgrs_cip()]; its last
+A `"step"` `pgphenotype_pafgrs_cip`, as from [pafgrs_cip()]; its last
   value is the estimated lifetime prevalence `K`.  A
   `pgphenotype_validation_error` with code `pair_length_mismatch` when
   `status` or `entry` is not `age`'s length.  Then person by person
@@ -30,11 +30,9 @@ A `pgphenotype_pafgrs_cip`, as from [pafgrs_cip()]; its last
 }
 \description{
 The cumulative incidence of the trait with death as a competing risk:
-a person who dies can no longer become a case.  The table steps at each
-age where a case occurs, to the estimated cumulative incidence there.
-[pafgrs_cip()] interpolates linearly between those ages, so between two
-steps it rises gradually where the estimate is flat, and exceeds it by
-at most the next step's height.
+a person who dies can no longer become a case.  The estimate is a step
+function, rising at each age where a case occurs; the result is a
+`"step"` table holding it at those ages.
 }
 \examples{
 pafgrs_cip_aalen_johansen(c(1, 2, 3, 4, 5), c(1, 2, 0, 1, 1))

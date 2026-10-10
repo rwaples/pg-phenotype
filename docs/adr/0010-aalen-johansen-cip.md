@@ -1,9 +1,10 @@
-# ADR 0010: A CIP is estimated by Aalen-Johansen at the case ages
+# ADR 0010: A CIP is estimated by Aalen-Johansen as a step function
 
 **Status:** accepted
 **Date:** 2026-10-10
 **Context:** issue #4; simACE `simace/analysis/stats/incidence.py`
-(`_aalen_johansen`); fitACE `fitace_pafgrs/pafgrs.py` (`compute_empirical_cip`)
+(`_aalen_johansen`); fitACE `fitace_pafgrs/pafgrs.py` (`compute_empirical_cip`);
+amends ADR 0002
 
 ## Context
 
@@ -28,8 +29,14 @@ for the states alive, case and dead.
   censored, 1 case, 2 death) and an optional `entry`, and returns a `Cip`.
   It reports no SE: simACE dropped its unused Greenwood SE (`6355ffa`), and
   PA-FGRS takes a point table.
-- The table's ages are the distinct case ages and its values the estimate
-  there; `K` is the last.  The estimate only moves at case ages.
+- A `Cip` has an interpolation, `linear` (the default, as before) or
+  `step`: between ages a step table holds the value at the last age at or
+  below.  It is part of the table, so every scoring call in every binding
+  reads it.
+- The estimate is a step function that moves only at case ages, so the
+  result is a `step` table of the distinct case ages and the estimate
+  there.  Below the first case age `Cip` gives 0 and from the last on `K`,
+  and a control's `w` is `F(age) / K` with `F` the estimate itself.
 - A person is at risk at `t` when `entry < t <= age`, the counting-process
   convention survfit uses.  Without `entry` everyone is at risk from birth,
   `t <= age`, so a case at age 0 counts.  A case and a death at one age
@@ -58,6 +65,17 @@ Rejected:
 - simACE's risk set `entry <= t <= age`.  It differs from survfit's only
   when an entry age equals an event age, as with whole-year ages, and
   counts a person at risk at the age they enter.
+- Linear interpolation between the case ages alone (the first draft).
+  Every step goes up, so between two case ages the line lies above the
+  estimate, by up to the next step's height; that raises the `w` of
+  controls there, by nearly double in a sparse stratum.  An opt-in smooth
+  CIP is #12.
+- A linear table that copies each step's previous value to one ulp before
+  the next case age (the second draft).  It reproduced the step function
+  without a mode, but only while those ages stayed one ulp apart:
+  `write.csv`, float32 or any rounding merged them into duplicate ages
+  (`invalid_cip`), the table had up to `2m - 1` rows, and the slope across
+  one ulp overflowed to infinity near 1e-300.
 - A caller-supplied age grid.  The case ages are where the estimate moves;
   a coarser grid loses steps and a finer one adds nothing.
 - Dropping invalid rows and counting them.  A `Cip` has nowhere to report
@@ -68,10 +86,10 @@ Rejected:
 
 ## Consequences
 
-- `Cip` interpolates linearly between ages, while the estimate is a step
-  function.  Between two case ages the table rises gradually where the
-  estimate is flat, by at most the next step's height.  Below the first
-  case age it is 0 and from the last on it is `K`, both exact.
+- A table saved and reloaded keeps its shape only if its interpolation
+  travels with it; `Cip(ages, cip)` alone reads a step table as linear.
+- A control's `w` jumps at each case age.  With few cases that is coarse;
+  smoothing is the caller's choice (#12), not the default.
 - With continuous ages the gate matches simACE bit for bit on 18 cases,
   and with whole-year ages differs by up to 1.2e-3 absolute; moving each
   entry one ulp earlier, which turns `entry < t` into simACE's

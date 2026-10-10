@@ -3,7 +3,9 @@
 //!
 //!     cargo run --release --example score_bench -- <dir> <ndegree> <threads> <uni|biv>
 
-use pg_phenotype_core::pafgrs::{prepare, score_bivariate, score_univariate, BivParams, Cip};
+use pg_phenotype_core::pafgrs::{
+    prepare, score_bivariate, score_univariate, BivParams, Cip, Interpolation,
+};
 use pg_phenotype_core::{configure_pool, PedigreeArg, PedigreeInput, Trait, TraitKind};
 use std::num::NonZeroUsize;
 use std::time::Instant;
@@ -61,7 +63,12 @@ fn main() {
         .map(|t| {
             let v = floats(dir, &format!("cip{t}"));
             let half = v.len() / 2;
-            Cip::new(v[..half].to_vec(), v[half..].to_vec()).expect("cip")
+            Cip::new(
+                v[..half].to_vec(),
+                v[half..].to_vec(),
+                Interpolation::Linear,
+            )
+            .expect("cip")
         })
         .collect();
     let traits = [0, 1].map(|t| Trait {

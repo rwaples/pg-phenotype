@@ -48,26 +48,32 @@ print.pgphenotype_pafgrs_prep <- function(x, ...) {
 
 #' PA-FGRS CIP table
 #'
-#' Cumulative incidence proportion by age.  CIP at an age is linear
-#' interpolation: 0 below the first age, the last value `K` (the lifetime
-#' prevalence) at and above the last age.  A control observed at age `a`
-#' carries weight `CIP(a) / K`; the liability threshold is `qnorm(1 - K)`.
+#' Cumulative incidence proportion by age: 0 below the first age, the last
+#' value `K` (the lifetime prevalence) at and above the last age.  A control
+#' observed at age `a` carries weight `CIP(a) / K`; the liability threshold
+#' is `qnorm(1 - K)`.
 #'
 #' @param ages Ages, finite and strictly increasing.
 #' @param cip CIP at each age, non-decreasing in `[0, 1)` with a positive
 #'   last value.
+#' @param interpolation How CIP reads between ages: `"linear"`, a straight
+#'   line (a smooth table), or `"step"`, the value at the last age at or
+#'   below (an estimator's step function).
 #' @return An object of class `pgphenotype_pafgrs_cip` holding `ages`, `cip`,
-#'   `prevalence` and `threshold`.  An invalid table is a
+#'   `interpolation`, `prevalence` and `threshold`.  An invalid table is a
 #'   `pgphenotype_parameter_error` with code `invalid_cip`.
 #' @examples
 #' pafgrs_cip(c(0, 40, 80), c(0, 0.05, 0.1))
+#' pafgrs_cip(c(30, 50, 70), c(0.02, 0.05, 0.1), interpolation = "step")
 #' @export
-pafgrs_cip <- function(ages, cip) {
+pafgrs_cip <- function(ages, cip, interpolation = c("linear", "step")) {
+  interpolation <- match.arg(interpolation)
   ages <- .pgp_doubles(ages, "ages")
   values <- .pgp_doubles(cip, "cip")
-  checked <- .pgp_call(.native_pafgrs_check_cip(ages, values))
+  checked <- .pgp_call(.native_pafgrs_check_cip(ages, values, interpolation))
   structure(
-    list(ages = ages, cip = values, prevalence = checked$prevalence, threshold = checked$threshold),
+    list(ages = ages, cip = values, interpolation = interpolation,
+         prevalence = checked$prevalence, threshold = checked$threshold),
     class = "pgphenotype_pafgrs_cip"
   )
 }
@@ -75,11 +81,9 @@ pafgrs_cip <- function(ages, cip) {
 #' Estimate a PA-FGRS CIP table by Aalen-Johansen
 #'
 #' The cumulative incidence of the trait with death as a competing risk:
-#' a person who dies can no longer become a case.  The table steps at each
-#' age where a case occurs, to the estimated cumulative incidence there.
-#' [pafgrs_cip()] interpolates linearly between those ages, so between two
-#' steps it rises gradually where the estimate is flat, and exceeds it by
-#' at most the next step's height.
+#' a person who dies can no longer become a case.  The estimate is a step
+#' function, rising at each age where a case occurs; the result is a
+#' `"step"` table holding it at those ages.
 #'
 #' @param age Per person, the age at onset for a case, at death, or at last
 #'   observation; finite and `>= 0`.
@@ -89,7 +93,7 @@ pafgrs_cip <- function(ages, cip) {
 #'   before `age`; a censored person may leave at entry and is then never at
 #'   risk.  A person is at risk at age `t` when `entry < t <= age`.  `NULL`:
 #'   everyone is at risk from birth, `t <= age`.
-#' @return A `pgphenotype_pafgrs_cip`, as from [pafgrs_cip()]; its last
+#' @return A `"step"` `pgphenotype_pafgrs_cip`, as from [pafgrs_cip()]; its last
 #'   value is the estimated lifetime prevalence `K`.  A
 #'   `pgphenotype_validation_error` with code `pair_length_mismatch` when
 #'   `status` or `entry` is not `age`'s length.  Then person by person
@@ -105,14 +109,14 @@ pafgrs_cip_aalen_johansen <- function(age, status, entry = NULL) {
   status <- .pgp_doubles(status, "status")
   if (!is.null(entry)) entry <- .pgp_doubles(entry, "entry")
   est <- .pgp_call(.native_pafgrs_cip_aalen_johansen(age, status, entry))
-  pafgrs_cip(est$ages, est$cip)
+  pafgrs_cip(est$ages, est$cip, interpolation = "step")
 }
 
 #' @export
 print.pgphenotype_pafgrs_cip <- function(x, ...) {
   cat(sprintf(
-    "<pgphenotype_pafgrs_cip> %d ages from %g to %g, prevalence %g, threshold %g\n",
-    length(x$ages), x$ages[1L], x$ages[length(x$ages)], x$prevalence, x$threshold
+    "<pgphenotype_pafgrs_cip> %s, %d ages from %g to %g, prevalence %g, threshold %g\n",
+    x$interpolation, length(x$ages), x$ages[1L], x$ages[length(x$ages)], x$prevalence, x$threshold
   ))
   invisible(x)
 }
@@ -182,7 +186,7 @@ pafgrs_score_univariate <- function(prep, trait, age, cip, h2) {
   age <- .pgp_doubles(age, "age", call)
   h2 <- .pgp_number(h2, "h2", call)
   raw <- .pgp_call(.native_pafgrs_score_univariate(
-    prep, trait$values, trait$kind, age, cip$ages, cip$cip, h2
+    prep, trait$values, trait$kind, age, cip$ages, cip$cip, cip$interpolation, h2
   ), call)
   metadata <- c(
     list(h2 = h2, prevalence = raw$prevalence, threshold = raw$threshold,
@@ -244,7 +248,8 @@ pafgrs_score_bivariate <- function(prep, traits, ages, cips, h2, rg, rho_within 
   t2 <- traits[[2L]]
   raw <- .pgp_call(.native_pafgrs_score_bivariate(
     prep, t1$values, t1$kind, age1, t2$values, t2$kind, age2,
-    cips[[1L]]$ages, cips[[1L]]$cip, cips[[2L]]$ages, cips[[2L]]$cip, h2, rg, rho_within
+    cips[[1L]]$ages, cips[[1L]]$cip, cips[[1L]]$interpolation,
+    cips[[2L]]$ages, cips[[2L]]$cip, cips[[2L]]$interpolation, h2, rg, rho_within
   ), call)
   metadata <- c(
     list(h2 = h2, rg = rg, rho_within = raw$rho_within, prevalence = raw$prevalence,

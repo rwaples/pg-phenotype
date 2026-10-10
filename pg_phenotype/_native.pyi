@@ -50,7 +50,10 @@ def prepare(
     probands: np.ndarray | None,
     threads: int,
 ) -> Prep: ...
-def check_cip(ages: list[float], cip: list[float]) -> tuple[float, float]: ...
+
+_CipTable = tuple[list[float], list[float], str]
+
+def check_cip(cip: _CipTable, /) -> tuple[float, float]: ...
 def cip_aalen_johansen(
     age: np.ndarray, status: np.ndarray, entry: np.ndarray | None, /
 ) -> tuple[list[float], list[float]]: ...
@@ -59,8 +62,7 @@ def score_univariate(
     values: np.ndarray,
     kind: str,
     age: np.ndarray,
-    cip_ages: list[float],
-    cip_values: list[float],
+    cip: _CipTable,
     /,
     *,
     h2: float,
@@ -74,8 +76,8 @@ def score_bivariate(
     values2: np.ndarray,
     kind2: str,
     age2: np.ndarray,
-    cip1: tuple[list[float], list[float]],
-    cip2: tuple[list[float], list[float]],
+    cip1: _CipTable,
+    cip2: _CipTable,
     /,
     *,
     h2: tuple[float, float],

@@ -44,7 +44,8 @@ relative.
 Cumulative incidence proportion by age.  **K** is its last value, the
 lifetime prevalence; the liability threshold is `Phi^-1(1 - K)`.  Given
 as a table, or estimated from ages and survival status by Aalen-Johansen,
-death competing, at the ages where a case occurs.
+death competing, at the ages where a case occurs.  Between its ages it
+reads linearly or, for an estimator's step function, as a step.
 _Avoid_: incidence curve, AOO table
 
 **w**:
