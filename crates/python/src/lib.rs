@@ -350,6 +350,23 @@ fn check_cip(py: Python<'_>, ages: Vec<f64>, cip: Vec<f64>) -> PyResult<(f64, f6
     Ok((cip.prevalence(), cip.threshold()))
 }
 
+/// The Aalen-Johansen CIP table of ages and survival statuses, as
+/// `(ages, cip)`.
+#[pyfunction]
+#[pyo3(signature = (age, status, entry, /))]
+fn cip_aalen_johansen<'py>(
+    py: Python<'py>,
+    age: PyReadonlyArray1<'py, f64>,
+    status: PyReadonlyArray1<'py, f64>,
+    entry: Option<PyReadonlyArray1<'py, f64>>,
+) -> PyResult<(Vec<f64>, Vec<f64>)> {
+    let (age, status) = (age.as_slice()?, status.as_slice()?);
+    let entry = entry.as_ref().map(|e| e.as_slice()).transpose()?;
+    py.detach(|| Cip::aalen_johansen(age, status, entry))
+        .map(Cip::into_parts)
+        .map_err(|e| to_pyerr(py, e))
+}
+
 /// Univariate scores of every proband, in the pool.
 #[pyfunction]
 #[pyo3(signature = (prep, values, kind, age, cip_ages, cip_values, /, *, h2, threads))]
@@ -459,6 +476,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_reset_thread_budget, m)?)?;
     m.add_function(wrap_pyfunction!(prepare, m)?)?;
     m.add_function(wrap_pyfunction!(check_cip, m)?)?;
+    m.add_function(wrap_pyfunction!(cip_aalen_johansen, m)?)?;
     m.add_function(wrap_pyfunction!(score_univariate, m)?)?;
     m.add_function(wrap_pyfunction!(score_bivariate, m)?)?;
     m.add_function(wrap_pyfunction!(assortative::mate_correlation, m)?)?;

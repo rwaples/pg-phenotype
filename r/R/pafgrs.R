@@ -72,6 +72,42 @@ pafgrs_cip <- function(ages, cip) {
   )
 }
 
+#' Estimate a PA-FGRS CIP table by Aalen-Johansen
+#'
+#' The cumulative incidence of the trait with death as a competing risk:
+#' a person who dies can no longer become a case.  The table steps at each
+#' age where a case occurs, to the estimated cumulative incidence there.
+#' [pafgrs_cip()] interpolates linearly between those ages, so between two
+#' steps it rises gradually where the estimate is flat, and exceeds it by
+#' at most the next step's height.
+#'
+#' @param age Per person, the age at onset for a case, at death, or at last
+#'   observation; finite and `>= 0`.
+#' @param status Per person, `0` censored, `1` case, `2` died without
+#'   becoming a case.
+#' @param entry Per person, the age they enter observation (late entry),
+#'   before `age`; a censored person may leave at entry and is then never at
+#'   risk.  A person is at risk at age `t` when `entry < t <= age`.  `NULL`:
+#'   everyone is at risk from birth, `t <= age`.
+#' @return A `pgphenotype_pafgrs_cip`, as from [pafgrs_cip()]; its last
+#'   value is the estimated lifetime prevalence `K`.  A
+#'   `pgphenotype_validation_error` with code `pair_length_mismatch` when
+#'   `status` or `entry` is not `age`'s length.  Then person by person
+#'   (1-based), in this order: `invalid_age` for an age that is `NA`,
+#'   negative or infinite, `invalid_status`, `invalid_age` for such an
+#'   entry, and `entry_not_before_age`.  Last, `cip_not_estimable` with `reason` `zero_prevalence` (no case while
+#'   anyone was at risk) or `prevalence_one` (everyone at risk became a case).
+#' @examples
+#' pafgrs_cip_aalen_johansen(c(1, 2, 3, 4, 5), c(1, 2, 0, 1, 1))
+#' @export
+pafgrs_cip_aalen_johansen <- function(age, status, entry = NULL) {
+  age <- .pgp_doubles(age, "age")
+  status <- .pgp_doubles(status, "status")
+  if (!is.null(entry)) entry <- .pgp_doubles(entry, "entry")
+  est <- .pgp_call(.native_pafgrs_cip_aalen_johansen(age, status, entry))
+  pafgrs_cip(est$ages, est$cip)
+}
+
 #' @export
 print.pgphenotype_pafgrs_cip <- function(x, ...) {
   cat(sprintf(

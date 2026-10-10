@@ -51,6 +51,9 @@ def prepare(
     threads: int,
 ) -> Prep: ...
 def check_cip(ages: list[float], cip: list[float]) -> tuple[float, float]: ...
+def cip_aalen_johansen(
+    age: np.ndarray, status: np.ndarray, entry: np.ndarray | None, /
+) -> tuple[list[float], list[float]]: ...
 def score_univariate(
     prep: Prep,
     values: np.ndarray,

@@ -47,6 +47,32 @@ impl CipProblem {
     }
 }
 
+/// Why data give no CIP table: the estimated `K` is outside `(0, 1)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CipEstimate {
+    /// No case while anyone was at risk, so `K = 0`.
+    ZeroPrevalence,
+    /// Everyone at risk became a case, so `K = 1`.
+    PrevalenceOne,
+}
+
+impl CipEstimate {
+    /// The stable `reason` a host branches on.
+    pub fn name(self) -> &'static str {
+        match self {
+            CipEstimate::ZeroPrevalence => "zero_prevalence",
+            CipEstimate::PrevalenceOne => "prevalence_one",
+        }
+    }
+
+    fn describe(self) -> &'static str {
+        match self {
+            CipEstimate::ZeroPrevalence => "no case while anyone was at risk: K is 0",
+            CipEstimate::PrevalenceOne => "everyone at risk became a case: K is 1",
+        }
+    }
+}
+
 /// Which joint constraint parameters each in their domain break together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Inconsistency {
@@ -219,6 +245,17 @@ pub enum Error {
         expected_length: usize,
         actual_length: usize,
     },
+    /// A survival status that is not 0 (censored), 1 (case) or 2 (death).
+    InvalidStatus { position: usize, value: f64 },
+    /// A row that enters the risk set after the age it leaves it, or a case
+    /// or death at its entry age.
+    EntryNotBeforeAge {
+        position: usize,
+        entry: f64,
+        age: f64,
+    },
+    /// Data whose estimated CIP is not a valid table.
+    CipNotEstimable { reason: CipEstimate },
 }
 
 impl From<PgError> for Error {
@@ -284,6 +321,9 @@ impl Error {
             Error::DuplicateEntryName { .. } => (Validation, "duplicate_entry_name"),
             Error::EmptyCategoryGroup { .. } => (Validation, "empty_category_group"),
             Error::InsufficientPrecision { .. } => (Validation, "insufficient_precision"),
+            Error::InvalidStatus { .. } => (Validation, "invalid_status"),
+            Error::EntryNotBeforeAge { .. } => (Validation, "entry_not_before_age"),
+            Error::CipNotEstimable { .. } => (Validation, "cip_not_estimable"),
         }
     }
 
@@ -456,6 +496,19 @@ impl Error {
                 ("expected_length", int(*expected_length)),
                 ("actual_length", int(*actual_length)),
             ],
+            Error::InvalidStatus { position, value } => {
+                vec![("position", int(*position)), ("value", Float(*value))]
+            }
+            Error::EntryNotBeforeAge {
+                position,
+                entry,
+                age,
+            } => vec![
+                ("position", int(*position)),
+                ("entry", Float(*entry)),
+                ("age", Float(*age)),
+            ],
+            Error::CipNotEstimable { reason } => vec![("reason", Str(reason.name()))],
         }
     }
 }
@@ -575,6 +628,17 @@ impl fmt::Display for Error {
                 f,
                 "{second} must have one entry per entry of {first} ({expected_length}), got {actual_length}"
             ),
+            Error::InvalidStatus { position, value } => {
+                write!(f, "status[{position}] = {value} is not 0 (censored), 1 (case) or 2 (death)")
+            }
+            Error::EntryNotBeforeAge { position, entry, age } => write!(
+                f,
+                "row {position} enters at {entry}, not before its age {age}: \
+                 only a censored row may leave at its entry age"
+            ),
+            Error::CipNotEstimable { reason } => {
+                write!(f, "no CIP table: {}", reason.describe())
+            }
         }
     }
 }

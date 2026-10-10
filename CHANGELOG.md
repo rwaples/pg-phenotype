@@ -25,6 +25,21 @@ continuous trait is centred on its midrange before quantization, and
 `empty_category_group`, `insufficient_precision`.  The gate against simACE
 `6355ffa` passes ([report](docs/gates/relative-pairs/README.md)).
 
+`Cip.from_aalen_johansen(age, status, entry=None)` (R:
+`pafgrs_cip_aalen_johansen()`, Rust: `Cip::aalen_johansen`) estimates a
+PA-FGRS CIP from data (#4): status 0 censored, 1 case, 2 death as a
+competing risk, with optional late entry.  The table steps at each case age
+and K is its last value.  A person is at risk at `t` when
+`entry < t <= age`.  New validation codes: `invalid_status`,
+`entry_not_before_age`, and `cip_not_estimable` (`reason`
+`zero_prevalence` or `prevalence_one`)
+([ADR 0010](docs/adr/0010-aalen-johansen-cip.md)).  The gate
+(`docs/gates/aalen-johansen`) matches simACE's `_aalen_johansen` bit for
+bit on continuous ages and R survival's `survfit` within 4.5e-14 on all
+cases.  With late entry, cases over rows (fitACE's `compute_empirical_cip`)
+gives a K about 30% lower.  The development `r` environment gains
+`r-survival`.
+
 `Pedigree.align(ids, values)` (R: `pedigree_align()`, Rust:
 `Pedigree::align`) moves values given per id onto a Pedigree's rows, NaN
 (R: `NA`) where no id names a row, and `Pedigree.rows(ids)` (R:

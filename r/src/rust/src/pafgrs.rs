@@ -97,6 +97,25 @@ fn pafgrs_check_cip(ages: Robj, cip: Robj) -> Robj {
     )
 }
 
+/// `list(ages, cip)` of the Aalen-Johansen CIP table; `entry` may be NULL.
+#[extendr]
+fn pafgrs_cip_aalen_johansen(age: Robj, status: Robj, entry: Robj) -> Robj {
+    finish(aalen_johansen(&age, &status, &entry))
+}
+
+fn aalen_johansen(age: &Robj, status: &Robj, entry: &Robj) -> HostResult<Robj> {
+    let entry = (!entry.is_null())
+        .then(|| input::doubles("entry", entry))
+        .transpose()?;
+    let cip = Cip::aalen_johansen(
+        input::doubles("age", age)?,
+        input::doubles("status", status)?,
+        entry,
+    )?;
+    let (ages, cip) = cip.into_parts();
+    Ok(list!(ages = ages, cip = cip).into_robj())
+}
+
 /// The `values` and `kind` of an R `trait()`; the R side checked both.
 fn trait_of<'a>(values: &'a Robj, kind: &Robj) -> HostResult<Trait<'a>> {
     Ok(Trait {
@@ -238,6 +257,7 @@ extendr_module! {
     fn pafgrs_prepare;
     fn pafgrs_prep_info;
     fn pafgrs_check_cip;
+    fn pafgrs_cip_aalen_johansen;
     fn pafgrs_score_univariate;
     fn pafgrs_score_bivariate;
 }

@@ -91,6 +91,47 @@ class Cip:
         object.__setattr__(self, "prevalence", prevalence)
         object.__setattr__(self, "threshold", threshold)
 
+    @classmethod
+    def from_aalen_johansen(cls, age: object, status: object, *, entry: object = None) -> Cip:
+        """Estimate a CIP from ages and survival status by Aalen-Johansen.
+
+        Death competes with the trait: a person who dies can no longer
+        become a case.  The table steps at each age where a case occurs,
+        to the estimated cumulative incidence there.  ``Cip`` interpolates
+        linearly between those ages, so between two steps it rises
+        gradually where the estimate is flat, and exceeds it by at most
+        the next step's height.
+
+        Args:
+            age: Per person, the age at onset for a case, at death, or at
+                last observation; finite and ``>= 0``.
+            status: Per person, ``0`` censored, ``1`` case, ``2`` died
+                without becoming a case.
+            entry: Per person, the age they enter observation (late
+                entry), before *age*; a censored person may leave at entry
+                and is then never at risk.  A person is at risk at age
+                ``t`` when ``entry < t <= age``.  ``None``: everyone is at
+                risk from birth, ``t <= age``.
+
+        Returns:
+            The :class:`Cip`, its last value ``K`` the estimated lifetime
+            prevalence.
+
+        Raises:
+            ValidationError: ``pair_length_mismatch`` when *status* or
+                *entry* is not *age*'s length.  Then person by person, in
+                this order: ``invalid_age`` for an age that is missing,
+                negative or infinite, ``invalid_status``, ``invalid_age``
+                for such an entry, and ``entry_not_before_age``.  Last,
+                ``cip_not_estimable`` with
+                ``reason`` ``zero_prevalence`` (no case while anyone was at
+                risk) or ``prevalence_one`` (everyone at risk became a
+                case).
+        """
+        entry_values = None if entry is None else floats(entry, "entry")
+        ages, cip = _native.cip_aalen_johansen(floats(age, "age"), floats(status, "status"), entry_values)
+        return cls(np.asarray(ages), np.asarray(cip))
+
 
 @dataclass(frozen=True)
 class UnivariateScores:

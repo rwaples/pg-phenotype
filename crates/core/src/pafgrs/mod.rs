@@ -4,6 +4,7 @@
 //! once; [`score_univariate`] and [`score_bivariate`] condition each proband
 //! on its relatives per trait and parameter variant.
 
+mod aalen_johansen;
 mod biv;
 mod cip;
 mod order;

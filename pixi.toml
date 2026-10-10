@@ -30,6 +30,8 @@ test-against-pg = "tools/test_against_pg.sh"
 [feature.r.dependencies]
 r-base = "4.5.*"
 r-testthat = ">=3.2"
+# Aalen-Johansen oracle for the CIP gate (survfit with a factor status).
+r-survival = "*"
 r-roxygen2 = "*"
 c-compiler = "*"
 make = "*"

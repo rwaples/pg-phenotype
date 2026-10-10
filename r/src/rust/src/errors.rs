@@ -190,6 +190,19 @@ fn one_based(err: Error) -> Error {
             group,
             position: position + 1,
         },
+        Error::InvalidStatus { position, value } => Error::InvalidStatus {
+            position: position + 1,
+            value,
+        },
+        Error::EntryNotBeforeAge {
+            position,
+            entry,
+            age,
+        } => Error::EntryNotBeforeAge {
+            position: position + 1,
+            entry,
+            age,
+        },
         other => other,
     }
 }

@@ -14,6 +14,9 @@
 }
 .native_pafgrs_prep_info <- function(prep) .Call(wrap__pafgrs_prep_info, prep)
 .native_pafgrs_check_cip <- function(ages, cip) .Call(wrap__pafgrs_check_cip, ages, cip)
+.native_pafgrs_cip_aalen_johansen <- function(age, status, entry) {
+  .Call(wrap__pafgrs_cip_aalen_johansen, age, status, entry)
+}
 .native_pafgrs_score_univariate <- function(prep, values, kind, age, cip_ages, cip_values, h2) {
   .Call(wrap__pafgrs_score_univariate, prep, values, kind, age, cip_ages, cip_values, h2)
 }

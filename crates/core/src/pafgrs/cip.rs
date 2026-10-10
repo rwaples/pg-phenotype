@@ -47,6 +47,11 @@ impl Cip {
         Ok(Cip { ages, cip })
     }
 
+    /// The ages and the CIP at each.
+    pub fn into_parts(self) -> (Vec<f64>, Vec<f64>) {
+        (self.ages, self.cip)
+    }
+
     /// The lifetime prevalence `K`, the last CIP value.
     pub fn prevalence(&self) -> f64 {
         self.cip[self.cip.len() - 1]

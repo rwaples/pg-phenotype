@@ -23,6 +23,7 @@ ped = pgp.Pedigree(pedigree)  # validated once, for every method
 trait = pgp.Trait(dx, kind="binary")  # one value per pedigree row
 prep = pafgrs.prepare(ped, ndegree=2)  # once per pedigree and degree
 cip = pafgrs.Cip(ages, cip_values)  # K is the last value
+cip = pafgrs.Cip.from_aalen_johansen(age, status, entry=entry_age)  # or estimate it
 scores = pafgrs.score_univariate(prep, trait, age=dx_age, cip=cip, h2=0.4)
 scores.est, scores.var, scores.n_relatives, scores.metadata
 
@@ -50,6 +51,16 @@ both = pafgrs.score_bivariate(prep, (t1, t2), age=(a1, a2), cip=(c1, c2), h2=(0.
 
 Errors are `pg_phenotype.ValidationError`, `ParameterError` and
 `ResourceError`, each with a stable `.code` and `.fields`.
+
+### CIP from data
+
+`Cip.from_aalen_johansen(age, status, entry=None)` estimates the CIP with
+the Aalen-Johansen estimator: `age` at onset, death or last observation,
+`status` 0 censored, 1 case, 2 death (a competing risk), and `entry` the
+age observation starts (late entry; `entry < t <= age` is at risk).  The
+table steps at each case age, and K is its last value.  For a CIP per sex,
+pass each sex's rows; scoring takes one CIP per trait
+([ADR 0010](docs/adr/0010-aalen-johansen-cip.md)).
 
 ### Assortative mating
 
@@ -164,6 +175,7 @@ ped <- pedigree(ped_df)
 dx <- trait(ped_df$dx, kind = "binary")
 prep <- pafgrs_prepare(ped, ndegree = 2L)
 cip <- pafgrs_cip(ages, cip_values)
+cip <- pafgrs_cip_aalen_johansen(age, status, entry = entry_age)  # or estimate it
 scores <- pafgrs_score_univariate(prep, dx, age = ped_df$dx_age, cip = cip, h2 = 0.4)
 both <- pafgrs_score_bivariate(prep, list(t1, t2), ages = list(a1, a2),
                                cips = list(c1, c2), h2 = c(0.4, 0.6), rg = 0.5)
@@ -189,6 +201,14 @@ positions 1-based.
 - Against BioPsyk/PAFGRS's own `pa_fgrs` on stored fixtures: within 1e-10
   (1.1e-15 observed).
 - Every kinship value bit-identical to pedigree-graph's `pair_kinship`.
+
+## Correctness (Aalen-Johansen CIP)
+
+- Against simACE's `_aalen_johansen` on 18 pipeline cases with continuous
+  ages: bit-identical.  With whole-year ages simACE also counts a person at
+  risk at the age they enter; moving entries one ulp earlier makes it
+  bit-identical again (`docs/gates/aalen-johansen`).
+- Against R survival's `survfit` on all 24 cases: within 4.5e-14 relative.
 
 ## Correctness (assortative mating)
 
