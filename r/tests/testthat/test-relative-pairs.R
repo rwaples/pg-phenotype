@@ -76,13 +76,28 @@ test_that("invalid input raises the core's conditions", {
     relative_pairs_correlation(ped, trait(c(0, 1, 2, 0, 1, 1, 0, 1, 0), kind = "ordinal")),
     "validation", "unsupported_trait_kind"
   )
+  # Fields and messages count entries from 1, as R does.
   err <- expect_pgp_error(relative_pairs_correlation(ped, trait(v), categories = "XX"), "validation", "unknown_category")
   expect_identical(err$fields$position, 1)
+  expect_match(conditionMessage(err), "categories[1]", fixed = TRUE)
   err <- expect_pgp_error(
     relative_pairs_correlation(ped, trait(v), categories = list("MO", PO = c("MO", "FO"))),
     "validation", "duplicate_category"
   )
   expect_identical(err$fields$positions, c(1, 2))
+  expect_identical(err$fields$entries, c("MO", "PO"))
+  expect_match(conditionMessage(err), "\"MO\" (categories[1]) and \"PO\" (categories[2])", fixed = TRUE)
+  err <- expect_pgp_error(
+    relative_pairs_correlation(ped, trait(v), categories = list(G = c("FS", "FS"))),
+    "validation", "duplicate_category"
+  )
+  expect_match(conditionMessage(err), "listed twice in group \"G\" (categories[1])", fixed = TRUE)
+  err <- expect_pgp_error(
+    relative_pairs_correlation(ped, trait(v), categories = list("FS", FS = "MHS")),
+    "validation", "reserved_group_name"
+  )
+  expect_identical(err$fields$position, 2)
+  expect_match(conditionMessage(err), "categories[2]", fixed = TRUE)
   expect_pgp_error(
     relative_pairs_correlation(ped, trait(v), categories = list(G = c("MO", "GP"))),
     "validation", "mixed_category_group"
@@ -91,10 +106,12 @@ test_that("invalid input raises the core's conditions", {
     relative_pairs_correlation(ped, trait(v), categories = list(G = character())),
     "validation", "empty_category_group"
   )
-  expect_pgp_error(
-    relative_pairs_correlation(ped, trait(v), categories = list("FS", FS = "MHS")),
+  err <- expect_pgp_error(
+    relative_pairs_correlation(ped, trait(v), categories = list(G = "FS", G = "MHS")),
     "validation", "duplicate_entry_name"
   )
+  expect_identical(err$fields$positions, c(1, 2))
+  expect_match(conditionMessage(err), "categories[1] and categories[2]", fixed = TRUE)
   expect_pgp_error(relative_pairs_correlation(ped, trait(v), memory_budget_bytes = 0), "parameter",
                    "parameter_out_of_range")
   expect_pgp_error(relative_pairs_correlation(ped, trait(v), memory_budget_bytes = 16), "resource",

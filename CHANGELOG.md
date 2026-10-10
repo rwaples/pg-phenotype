@@ -21,6 +21,7 @@ continuous trait is centred on its midrange before quantization, and
 `insufficient_precision` is raised when the quantization step exceeds
 2^-20 of its interquartile range.  New error codes: `unknown_category`,
 `duplicate_category`, `mixed_category_group`, `duplicate_entry_name`,
+`reserved_group_name` (a group named like a category code),
 `empty_category_group`, `insufficient_precision`.  The gate against simACE
 `6355ffa` passes ([report](docs/gates/relative-pairs/README.md)).
 

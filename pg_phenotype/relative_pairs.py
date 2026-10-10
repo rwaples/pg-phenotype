@@ -133,20 +133,27 @@ def _codes(name: str, members: object) -> list[str]:
     return codes
 
 
-def _entries(categories: object) -> list[tuple[str, list[str] | None]] | None:
+def _entries(categories: object) -> list[tuple[int, str, list[str] | None]] | None:
+    """Each entry as ``(position, name, members)``, *position* its index in *categories*.
+
+    The groups of one mapping share its position, so an error names the
+    caller's ``categories[i]``.
+    """
     if categories is None:
         return None
     if isinstance(categories, str | Mapping) or not isinstance(categories, Sequence):
         raise TypeError(f"categories must be a sequence of codes and group mappings, got {categories!r}")
-    entries: list[tuple[str, list[str] | None]] = []
-    for item in categories:
+    entries: list[tuple[int, str, list[str] | None]] = []
+    for position, item in enumerate(categories):
         if isinstance(item, str):
-            entries.append((item, None))
+            entries.append((position, item, None))
         elif isinstance(item, Mapping):
+            if not item:
+                raise ValueError(f"categories[{position}] is an empty mapping: map each group's name to its codes")
             for name, members in item.items():
                 if not isinstance(name, str):
                     raise TypeError(f"a category group's name must be a str, got {name!r}")
-                entries.append((name, _codes(name, members)))
+                entries.append((position, name, _codes(name, members)))
         else:
             raise TypeError(f"a categories entry must be a code or a group mapping, got {item!r}")
     return entries
@@ -192,7 +199,9 @@ def correlation(
             ``"MO"``, ``"1C"``, ...) and mappings of a group's name to its
             codes (``{"PO": ["MO", "FO"]}``).  A group's codes are all
             symmetric, or all directed with the same roles (mother and father
-            read as parent); no code is in two entries.  ``None`` gives every
+            read as parent); no code is in two entries, and no group is named
+            like a code.  Errors give positions in this sequence; the groups of
+            one mapping share its position.  ``None`` gives every
             category up to degree 3, one cell each.  A category with no pairs
             still gets a cell, with ``n = 0``.
         memory_budget_bytes: The bound on the engine's accumulators.
@@ -205,7 +214,8 @@ def correlation(
             ``unsupported_trait_kind`` for an ordinal or categorical trait,
             ``invalid_trait_value``), the request (``unknown_category``,
             ``duplicate_category``, ``mixed_category_group``,
-            ``duplicate_entry_name``, ``empty_category_group``), or a
+            ``duplicate_entry_name``, ``reserved_group_name``,
+            ``empty_category_group``), or a
             continuous trait whose range is too wide for its spread to keep
             2^-20 of its interquartile range (``insufficient_precision``).
         ParameterError: *memory_budget_bytes* is below 1
@@ -214,6 +224,7 @@ def correlation(
             (``memory_budget_exceeded``).
         TypeError: *trait* is not a :class:`~pg_phenotype.Trait`, or an
             argument has the wrong type.
+        ValueError: A group mapping in *categories* is empty.
     """
     from pg_phenotype import __version__
 

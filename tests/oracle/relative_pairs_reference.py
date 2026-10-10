@@ -12,11 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from pedigree_graph import PedigreeGraph
+from pedigree_graph import RELATIONSHIPS, PedigreeGraph
 
 from pg_phenotype import correlation as pgc
 
-SYMMETRIC = frozenset({"MZ", "FS", "MHS", "PHS", "1C", "H1C", "2C"})
+#: pedigree-graph's symmetric categories: those with no roles.
+SYMMETRIC = frozenset(code for code, category in RELATIONSHIPS.items() if category.first_role is None)
 
 
 @dataclass(frozen=True)

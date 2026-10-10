@@ -9,8 +9,13 @@ use pg_phenotype_core::relative_pairs::{self, Entry};
 use pg_phenotype_core::Trait;
 use pyo3::prelude::*;
 
+/// One entry as the wrapper passes it: its position, its code or group
+/// name, and a group's member codes.
+type HostEntry = (usize, String, Option<Vec<String>>);
+
 /// The Relative-Pair Correlation of one trait, in the pool.  Each entry of
-/// `categories` is `(code, None)` or `(group name, member codes)`.
+/// `categories` is `(position, code, None)` or `(position, group name, member
+/// codes)`, `position` its index in the caller's request.
 #[pyfunction]
 #[pyo3(signature = (pedigree, values, kind, n_levels, categories, memory_budget_bytes, /, *, threads))]
 #[allow(clippy::too_many_arguments)]
@@ -20,7 +25,7 @@ pub(crate) fn relative_pairs_correlation<'py>(
     values: PyReadonlyArray1<'py, f64>,
     kind: String,
     n_levels: Option<usize>,
-    categories: Option<Vec<(String, Option<Vec<String>>)>>,
+    categories: Option<Vec<HostEntry>>,
     memory_budget_bytes: i64,
     threads: usize,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -33,9 +38,16 @@ pub(crate) fn relative_pairs_correlation<'py>(
     let entries: Option<Vec<Entry>> = categories.map(|entries| {
         entries
             .into_iter()
-            .map(|(name, members)| match members {
-                None => Entry::Category(name),
-                Some(members) => Entry::Group { name, members },
+            .map(|(position, name, members)| match members {
+                None => Entry::Category {
+                    code: name,
+                    position,
+                },
+                Some(members) => Entry::Group {
+                    name,
+                    members,
+                    position,
+                },
             })
             .collect()
     });

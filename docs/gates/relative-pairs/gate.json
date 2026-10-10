@@ -29,11 +29,12 @@
    "n_phenotyped": 3000
   }
  ],
- "pg_phenotype_base_rev": "ec148604590d6c6978bd44e6b4b701b1ee5b6a9e",
+ "pg_phenotype_base_rev": "6e11fd34f0d2a9c9a574a727e452d3f9106e9a77",
  "tolerance": {
   "oracle_pearson_phi_abs": 1e-12,
   "simace_directed_pearson_phi_abs": 1e-12,
-  "simace_directed_tetrachoric_abs": 1.2e-07
+  "simace_directed_tetrachoric_abs": 1.2e-07,
+  "simace_min_pairs": 10
  },
  "checks": {
   "oracle_counts_equal": true,
@@ -44,7 +45,8 @@
   "simace_counts_match": true,
   "simace_directed_pearson_within": true,
   "simace_directed_phi_within": true,
-  "simace_directed_tetrachoric_within": true
+  "simace_directed_tetrachoric_within": true,
+  "simace_floor_withheld": true
  },
  "pass": true,
  "oracle_max_gap": {

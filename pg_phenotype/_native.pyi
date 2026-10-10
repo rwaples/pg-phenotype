@@ -113,7 +113,7 @@ def relative_pairs_correlation(
     values: np.ndarray,
     kind: str,
     n_levels: int | None,
-    categories: list[tuple[str, list[str] | None]] | None,
+    categories: list[tuple[int, str, list[str] | None]] | None,
     memory_budget_bytes: int,
     /,
     *,

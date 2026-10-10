@@ -119,7 +119,7 @@ _Avoid_: relationship type, relationship code
 Several Relationship Categories given one name and analysed as one, such as
 PO for MO and FO.  Its categories are all symmetric, or all directed with
 the same roles once mother and father both count as parent: PO's roles are
-offspring and parent.
+offspring and parent.  Its name is never a Relationship Category's code.
 
 **Relative Pair**:
 Two rows in one Relationship Category.  A pair in a symmetric category

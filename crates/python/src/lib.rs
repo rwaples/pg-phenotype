@@ -41,6 +41,7 @@ fn field_object(py: Python<'_>, value: FieldValue) -> PyResult<Py<PyAny>> {
         FieldValue::Float(v) => v.into_pyobject(py)?.into_any().unbind(),
         FieldValue::Str(v) => v.into_pyobject(py)?.into_any().unbind(),
         FieldValue::Text(v) => v.into_pyobject(py)?.into_any().unbind(),
+        FieldValue::Texts(v) => PyTuple::new(py, v)?.into_any().unbind(),
         FieldValue::Ints(v) => PyTuple::new(py, v)?.into_any().unbind(),
         FieldValue::Strs(v) => PyTuple::new(py, v)?.into_any().unbind(),
     })

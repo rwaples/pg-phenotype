@@ -244,10 +244,23 @@ def test_the_trait_is_checked_before_the_request(values, kind, code):
     [
         (["XX"], "unknown_category", {"category": "XX", "position": 0}),
         (["FS", {"G": ["MHS", "nope"]}], "unknown_category", {"category": "nope", "position": 1}),
-        (["FS", "FS"], "duplicate_category", {"category": "FS", "positions": (0, 1)}),
-        ([{"G": ["FS", "FS"]}], "duplicate_category", {"category": "FS", "positions": (0, 0)}),
-        (["MO", {"PO": ["MO", "FO"]}], "duplicate_category", {"category": "MO", "positions": (0, 1)}),
-        (["FS", {"FS": ["MHS"]}], "duplicate_entry_name", {"name": "FS", "positions": (0, 1)}),
+        # The groups of one mapping share its position.
+        ([{"A": ["MO"], "B": ["XX"]}], "unknown_category", {"category": "XX", "position": 0}),
+        (["FS", "FS"], "duplicate_category", {"category": "FS", "positions": (0, 1), "entries": ("FS", "FS")}),
+        ([{"G": ["FS", "FS"]}], "duplicate_category", {"category": "FS", "positions": (0, 0), "entries": ("G", "G")}),
+        (
+            ["MO", {"PO": ["MO", "FO"]}],
+            "duplicate_category",
+            {"category": "MO", "positions": (0, 1), "entries": ("MO", "PO")},
+        ),
+        (
+            [{"A": ["FS"], "B": ["FS"]}],
+            "duplicate_category",
+            {"category": "FS", "positions": (0, 0), "entries": ("A", "B")},
+        ),
+        ([{"G": ["FS"]}, {"G": ["MHS"]}], "duplicate_entry_name", {"name": "G", "positions": (0, 1)}),
+        (["FS", {"FS": ["MHS"]}], "reserved_group_name", {"group": "FS", "position": 1}),
+        ([{"MO": ["FO"]}], "reserved_group_name", {"group": "MO", "position": 0}),
         ([{"G": []}], "empty_category_group", {"group": "G", "position": 0}),
         ([{"G": ["MO", "GP"]}], "mixed_category_group", {"group": "G", "categories": ("MO", "GP")}),
         ([{"G": ["FS", "MO"]}], "mixed_category_group", {"group": "G", "categories": ("FS", "MO")}),
@@ -258,6 +271,19 @@ def test_category_requests_are_checked(categories, code, fields):
         rp.correlation(_family(), Trait(np.zeros(9), kind="binary"), categories=categories)
     assert err.value.code == code
     assert dict(err.value.fields) == fields
+
+
+def test_duplicate_messages_name_the_entries():
+    trait = Trait(np.zeros(9), kind="binary")
+    with pytest.raises(ValidationError, match=r'listed twice in group "G" \(categories\[0\]\)'):
+        rp.correlation(_family(), trait, categories=[{"G": ["FS", "FS"]}])
+    with pytest.raises(ValidationError, match=r'in both "MO" \(categories\[0\]\) and "PO" \(categories\[1\]\)'):
+        rp.correlation(_family(), trait, categories=["MO", {"PO": ["MO", "FO"]}])
+
+
+def test_an_empty_group_mapping_is_rejected():
+    with pytest.raises(ValueError, match=r"categories\[1\] is an empty mapping"):
+        rp.correlation(_family(), Trait(np.zeros(9), kind="binary"), categories=["FS", {}])
 
 
 @pytest.mark.parametrize(
@@ -316,15 +342,27 @@ def test_the_simace_gate_agrees():
 
     oracle = g.oracle_rows()
     assert len(oracle) == 3 * len(DEFAULT)
-    for r in oracle:
-        assert r["counts_equal"], r
-        assert r["tetrachoric_equal"], r
-        assert r["pearson_gap"] <= g.REL_ORACLE, r
-        assert r["phi_gap"] <= g.REL_ORACLE, r
-    for r in g.simace_rows():
-        assert r["n"] == r["simace_n_pairs"], r
-        assert r["counts_match"], r
-        if not r["symmetric"]:
-            assert r["pearson_gap"] <= g.ABS_SIMACE, r
-            assert r["phi_gap"] <= g.ABS_SIMACE, r
-            assert r["tetrachoric_gap"] <= g.ABS_SIMACE_TETRACHORIC, r
+    failed = [name for name, ok in g.checks(oracle, g.simace_rows()).items() if not ok]
+    assert failed == []
+
+
+def test_the_gate_withholds_comparison_below_simaces_floor():
+    """A directed category under ten pairs: simACE gives None by design, which is checked, not a gap."""
+    from tests import relative_pairs_golden as g
+
+    row = {
+        "symmetric": False,
+        "simace_floor": True,
+        "n": 4,
+        "simace_n_pairs": 4,
+        "counts_match": True,
+        "pearson_gap": None,
+        "phi_gap": None,
+        "tetrachoric_gap": None,
+        "simace_liability": None,
+        "simace_tetrachoric": None,
+        "simace_phi": None,
+    }
+    assert all(g.checks([], [row]).values())
+    assert not g.checks([], [{**row, "simace_phi": 0.1}])["simace_floor_withheld"]
+    assert not g.checks([], [{**row, "simace_floor": False}])["simace_directed_pearson_within"]

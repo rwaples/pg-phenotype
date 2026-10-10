@@ -114,7 +114,23 @@ fn tetrachoric_of(table: [[u64; 2]; 2], n_dropped: u64) -> Tetrachoric {
     }
 }
 
-pub(crate) fn fit(table: [[u64; 2]; 2]) -> Result<Estimate, Reason> {
+fn fit(table: [[u64; 2]; 2]) -> Result<Estimate, Reason> {
+    let (tables, point) = fitted(table)?;
+    let se = sandwich_se(&tables, point);
+    let ci = se.map(|se| Ci {
+        bounds: wald_ci(point.value, se, CiScale::FisherZ),
+        method: CiMethod::Sandwich,
+    });
+    Ok(Estimate { point, se, ci })
+}
+
+/// The point estimate alone: [`tetrachoric`]'s value and boundary flag,
+/// without the SE work.
+pub(crate) fn point(table: [[u64; 2]; 2]) -> Result<Point, Reason> {
+    fitted(table).map(|(_, point)| point)
+}
+
+fn fitted(table: [[u64; 2]; 2]) -> Result<(Tables, Point), Reason> {
     let mut counts = Table::zeros(1, 1, 2, 2);
     counts.data = table.iter().flatten().map(|&c| c as f64).collect();
     // A side's levels are the ones it shows, as a Mate Correlation cell's are.
@@ -131,12 +147,7 @@ pub(crate) fn fit(table: [[u64; 2]; 2]) -> Result<Estimate, Reason> {
         |r| tables.bound_nll(r),
         0.0,
     );
-    let se = sandwich_se(&tables, point);
-    let ci = se.map(|se| Ci {
-        bounds: wald_ci(point.value, se, CiScale::FisherZ),
-        method: CiMethod::Sandwich,
-    });
-    Ok(Estimate { point, se, ci })
+    Ok((tables, point))
 }
 
 /// `√(n/(n−1) · Σ_cells n_ij IF_ij²)`: the Mate Network sandwich with every

@@ -29,12 +29,20 @@ fn entries(names: &Robj, members: &Robj) -> HostResult<Option<Vec<Entry>>> {
     names
         .into_iter()
         .zip(members.values())
-        .map(|(name, codes)| {
+        .enumerate()
+        .map(|(position, (name, codes))| {
             Ok(if codes.is_null() {
-                Entry::Category(name)
+                Entry::Category {
+                    code: name,
+                    position,
+                }
             } else {
                 let members = strings(&format!("category group {name:?}"), &codes)?;
-                Entry::Group { name, members }
+                Entry::Group {
+                    name,
+                    members,
+                    position,
+                }
             })
         })
         .collect::<HostResult<Vec<Entry>>>()

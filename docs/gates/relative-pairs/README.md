@@ -2,7 +2,7 @@
 
 Result: **pass**.  Run 2026-10-10 on simACE
 `6355ffa6aebe37238cb2724dfcde288830fdcb6c` (simACE's pixi env) against the
-pg-phenotype working tree on `ec14860`:
+pg-phenotype working tree on `6e11fd3`:
 
     pixi run --manifest-path <simACE>/pixi.toml python -B tools/make_simace_relative_pairs_golden.py \
         --simace <simACE checkout> --reps <simACE>/results/test/small_test/rep{1,2,3} \
@@ -41,6 +41,11 @@ off the sample, so its pairs are the view's.
 | MO, FO Pearson against simACE | max 9.0e-15; tolerance 1e-12 |
 | MO, FO phi against simACE | max 6.9e-18 |
 | MO, FO tetrachoric against simACE | max 1.18e-8 (rep1 FO); tolerance 1.2e-7, ADR 0006's gate bound |
+| a directed category under simACE's 10-pair floor: simACE withholds every estimate | none on these reps (MO, FO have 2000 pairs each) |
+
+`tests/relative_pairs_golden.py::checks` holds these checks; the tool and
+the test both call it.  Below simACE's floor pg-phenotype still estimates,
+so the gate checks that simACE gave `None` there instead of a gap.
 
 ## Symmetric categories
 

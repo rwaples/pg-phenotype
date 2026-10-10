@@ -29,6 +29,8 @@ REL_ORACLE = 1e-12
 ABS_SIMACE = 1e-12
 #: A directed category's tetrachoric against simACE (ADR 0006's gate: 1.13e-7).
 ABS_SIMACE_TETRACHORIC = 1.2e-7
+#: simACE's ``_MIN_PAIRS``: below it, simACE reports no estimate.
+SIMACE_MIN_PAIRS = 10
 
 
 @cache
@@ -122,6 +124,7 @@ def simace_rows() -> list[dict]:
                 "simace_tetrachoric": simace_tet,
                 "phi": b["phi"].value,
                 "simace_phi": s["phi"][code],
+                "simace_floor": s["n_pairs"][code] < SIMACE_MIN_PAIRS,
             }
             if code in SYMMETRIC:
                 row["counts_match"] = b.concordance == (t[0][0], t[0][1] + t[1][0], t[1][1])
@@ -135,3 +138,36 @@ def simace_rows() -> list[dict]:
                 row[f"{est}_gap"] = _gap(row[est], row[theirs])
             rows.append(row)
     return rows
+
+
+def _within(gap: float | None, tolerance: float) -> bool:
+    return gap is not None and gap <= tolerance
+
+
+def checks(oracle: list[dict], simace: list[dict]) -> dict[str, bool]:
+    """Each gate check by name.
+
+    A directed category under simACE's ten-pair floor has every simACE
+    estimate ``None`` by design (pg-phenotype has no floor), so it is checked
+    for that instead of for a gap.
+    """
+    directed = [r for r in simace if not r["symmetric"]]
+    compared = [r for r in directed if not r["simace_floor"]]
+    floored = [r for r in directed if r["simace_floor"]]
+    return {
+        "oracle_counts_equal": all(r["counts_equal"] for r in oracle),
+        "oracle_tetrachoric_identical": all(r["tetrachoric_equal"] for r in oracle),
+        "oracle_pearson_within": all(_within(r["pearson_gap"], REL_ORACLE) for r in oracle),
+        "oracle_phi_within": all(_within(r["phi_gap"], REL_ORACLE) for r in oracle),
+        "simace_n_equal": all(r["n"] == r["simace_n_pairs"] for r in simace),
+        "simace_counts_match": all(r["counts_match"] for r in simace),
+        "simace_directed_pearson_within": all(_within(r["pearson_gap"], ABS_SIMACE) for r in compared),
+        "simace_directed_phi_within": all(_within(r["phi_gap"], ABS_SIMACE) for r in compared),
+        "simace_directed_tetrachoric_within": all(
+            _within(r["tetrachoric_gap"], ABS_SIMACE_TETRACHORIC) for r in compared
+        ),
+        "simace_floor_withheld": all(
+            r["simace_liability"] is None and r["simace_tetrachoric"] is None and r["simace_phi"] is None
+            for r in floored
+        ),
+    }

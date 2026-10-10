@@ -22,8 +22,8 @@
 #'   whose unnamed elements are codes and whose named elements are Category
 #'   Groups: `list("MZ", "FS", PO = c("MO", "FO"))`.  A group's codes are all
 #'   symmetric, or all directed with the same roles (mother and father read
-#'   as parent); no code is in two entries.  A category with no pairs still
-#'   gets a cell, with `n = 0`.
+#'   as parent); no code is in two entries, and no group is named like a
+#'   code.  A category with no pairs still gets a cell, with `n = 0`.
 #' @param memory_budget_bytes The bound on the engine's accumulators.
 #' @return An object of class `pgphenotype_relative_pairs`: a list with
 #'   `cells` (one per entry, in request order), `settings`, `method` and

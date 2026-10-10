@@ -95,6 +95,8 @@ pub enum FieldValue {
     Strs(Vec<&'static str>),
     /// A string the caller passed, such as a category code it misspelt.
     Text(String),
+    /// Strings the caller passed, such as two entries' names.
+    Texts(Vec<String>),
 }
 
 /// A structured pg-phenotype failure.
@@ -184,11 +186,16 @@ pub enum Error {
     /// A requested category is not a Relationship Category code.
     UnknownCategory { category: String, position: usize },
     /// A Relationship Category requested twice, in two entries or in one
-    /// Category Group; `positions` are the entries.
+    /// Category Group; `positions` and `entries` are the entries' positions
+    /// in the request and their names (a code, or a group's name).
     DuplicateCategory {
         category: &'static str,
         positions: [usize; 2],
+        entries: [String; 2],
     },
+    /// A Category Group named like a Relationship Category code, which would
+    /// label another category's pairs with that code.
+    ReservedGroupName { group: String, position: usize },
     /// A Category Group mixes symmetric and directed categories, or directed
     /// categories with different roles.
     MixedCategoryGroup {
@@ -272,6 +279,7 @@ impl Error {
             Error::PairLength { .. } => (Validation, "pair_length_mismatch"),
             Error::UnknownCategory { .. } => (Validation, "unknown_category"),
             Error::DuplicateCategory { .. } => (Validation, "duplicate_category"),
+            Error::ReservedGroupName { .. } => (Validation, "reserved_group_name"),
             Error::MixedCategoryGroup { .. } => (Validation, "mixed_category_group"),
             Error::DuplicateEntryName { .. } => (Validation, "duplicate_entry_name"),
             Error::EmptyCategoryGroup { .. } => (Validation, "empty_category_group"),
@@ -411,7 +419,15 @@ impl Error {
             Error::DuplicateCategory {
                 category,
                 positions,
-            } => vec![("category", Str(category)), ("positions", ints(positions))],
+                entries,
+            } => vec![
+                ("category", Str(category)),
+                ("positions", ints(positions)),
+                ("entries", FieldValue::Texts(entries.to_vec())),
+            ],
+            Error::ReservedGroupName { group, position } => {
+                vec![("group", Text(group.clone())), ("position", int(*position))]
+            }
             Error::MixedCategoryGroup { group, categories } => vec![
                 ("group", Text(group.clone())),
                 ("categories", FieldValue::Strs(categories.to_vec())),
@@ -522,10 +538,20 @@ impl fmt::Display for Error {
                 f,
                 "categories[{position}] names {category:?}, which is not a Relationship Category code"
             ),
-            Error::DuplicateCategory { category, positions } => write!(
+            Error::DuplicateCategory { category, positions: [p, q], entries: [a, b] } => {
+                if p == q && a == b {
+                    write!(f, "category {category} is listed twice in group {a:?} (categories[{p}])")
+                } else {
+                    write!(
+                        f,
+                        "category {category} is in both {a:?} (categories[{p}]) and {b:?} (categories[{q}])"
+                    )
+                }
+            }
+            Error::ReservedGroupName { group, position } => write!(
                 f,
-                "category {category} is requested in entries {} and {}",
-                positions[0], positions[1]
+                "category group {group:?} (categories[{position}]) is named like a Relationship \
+                 Category code; name it apart from every code"
             ),
             Error::MixedCategoryGroup { group, categories: [a, b] } => write!(
                 f,
@@ -534,7 +560,7 @@ impl fmt::Display for Error {
             ),
             Error::DuplicateEntryName { name, positions } => write!(
                 f,
-                "entries {} and {} are both named {name:?}",
+                "categories[{}] and categories[{}] are both named {name:?}",
                 positions[0], positions[1]
             ),
             Error::EmptyCategoryGroup { group, position } => {

@@ -165,6 +165,31 @@ fn one_based(err: Error) -> Error {
             position: position + 1,
             value,
         },
+        Error::UnknownCategory { category, position } => Error::UnknownCategory {
+            category,
+            position: position + 1,
+        },
+        Error::DuplicateCategory {
+            category,
+            positions,
+            entries,
+        } => Error::DuplicateCategory {
+            category,
+            positions: positions.map(|p| p + 1),
+            entries,
+        },
+        Error::DuplicateEntryName { name, positions } => Error::DuplicateEntryName {
+            name,
+            positions: positions.map(|p| p + 1),
+        },
+        Error::EmptyCategoryGroup { group, position } => Error::EmptyCategoryGroup {
+            group,
+            position: position + 1,
+        },
+        Error::ReservedGroupName { group, position } => Error::ReservedGroupName {
+            group,
+            position: position + 1,
+        },
         other => other,
     }
 }
@@ -214,6 +239,7 @@ fn field_robj(name: &str, value: FieldValue) -> Robj {
         FieldValue::Float(x) => x.into(),
         FieldValue::Str(s) => s.into(),
         FieldValue::Text(s) => s.into(),
+        FieldValue::Texts(v) => Strings::from_values(v).into_robj(),
         FieldValue::Strs(v) => Strings::from_values(v).into_robj(),
     }
 }

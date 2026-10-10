@@ -24,8 +24,8 @@ each; else the cells in order, as a character vector of codes or a list
 whose unnamed elements are codes and whose named elements are Category
 Groups: `list("MZ", "FS", PO = c("MO", "FO"))`.  A group's codes are all
 symmetric, or all directed with the same roles (mother and father read
-as parent); no code is in two entries.  A category with no pairs still
-gets a cell, with `n = 0`.}
+as parent); no code is in two entries, and no group is named like a
+code.  A category with no pairs still gets a cell, with `n = 0`.}
 
 \item{memory_budget_bytes}{The bound on the engine's accumulators.}
 }

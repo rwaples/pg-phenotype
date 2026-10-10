@@ -24,6 +24,8 @@ from tests.relative_pairs_golden import (  # noqa: E402
     ABS_SIMACE,
     ABS_SIMACE_TETRACHORIC,
     REL_ORACLE,
+    SIMACE_MIN_PAIRS,
+    checks,
     load,
     oracle_rows,
     simace_rows,
@@ -44,23 +46,9 @@ def main() -> None:
     args = parser.parse_args()
     golden, _ = load()
     oracle, simace = oracle_rows(), simace_rows()
-    directed = [r for r in simace if not r["symmetric"]]
+    directed = [r for r in simace if not r["symmetric"] and not r["simace_floor"]]
     symmetric = [r for r in simace if r["symmetric"]]
-    checks = {
-        "oracle_counts_equal": all(r["counts_equal"] for r in oracle),
-        "oracle_tetrachoric_identical": all(r["tetrachoric_equal"] for r in oracle),
-        "oracle_pearson_within": all(r["pearson_gap"] is not None and r["pearson_gap"] <= REL_ORACLE for r in oracle),
-        "oracle_phi_within": all(r["phi_gap"] is not None and r["phi_gap"] <= REL_ORACLE for r in oracle),
-        "simace_n_equal": all(r["n"] == r["simace_n_pairs"] for r in simace),
-        "simace_counts_match": all(r["counts_match"] for r in simace),
-        "simace_directed_pearson_within": all(
-            r["pearson_gap"] is not None and r["pearson_gap"] <= ABS_SIMACE for r in directed
-        ),
-        "simace_directed_phi_within": all(r["phi_gap"] is not None and r["phi_gap"] <= ABS_SIMACE for r in directed),
-        "simace_directed_tetrachoric_within": all(
-            r["tetrachoric_gap"] is not None and r["tetrachoric_gap"] <= ABS_SIMACE_TETRACHORIC for r in directed
-        ),
-    }
+    passed = checks(oracle, simace)
     rev = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
     gate = {
         "simace_rev": golden["simace_rev"],
@@ -73,9 +61,10 @@ def main() -> None:
             "oracle_pearson_phi_abs": REL_ORACLE,
             "simace_directed_pearson_phi_abs": ABS_SIMACE,
             "simace_directed_tetrachoric_abs": ABS_SIMACE_TETRACHORIC,
+            "simace_min_pairs": SIMACE_MIN_PAIRS,
         },
-        "checks": checks,
-        "pass": all(checks.values()),
+        "checks": passed,
+        "pass": all(passed.values()),
         "oracle_max_gap": {k: worst(oracle, f"{k}_gap") for k in ("pearson", "phi")},
         "simace_directed_max_gap": {k: worst(directed, f"{k}_gap") for k in ("pearson", "tetrachoric", "phi")},
         "symmetric_double_minus_single": [

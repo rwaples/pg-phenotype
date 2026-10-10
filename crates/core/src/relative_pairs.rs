@@ -14,6 +14,7 @@ use crate::error::Error;
 use crate::input::{Trait, TraitKind, ValueRule};
 use crate::pedigree::PedigreeArg;
 use crate::value::Value;
+use pedigree_graph_core::error::Error as PgError;
 use pedigree_graph_core::relationships::{
     quantize_column, relationship_moments, Category, CategorySet, MaxDegree, MomentsInput,
     MomentsTable, Operand, Product, Progress, Receiver, Side, Statistic, Symmetric, N_CATEGORIES,
@@ -36,11 +37,20 @@ pub const DEFAULT_MEMORY_BUDGET_BYTES: i64 = 1 << 30;
 const PRECISION: f64 = 1.0 / (1u64 << 20) as f64;
 
 /// One entry of a category request: a Relationship Category code, or a
-/// named Category Group.  Each entry gives one cell.
+/// named Category Group.  Each entry gives one cell.  `position` is its
+/// index in the caller's request, as errors report it; groups a host gives
+/// together (one Python mapping) share one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Entry {
-    Category(String),
-    Group { name: String, members: Vec<String> },
+    Category {
+        code: String,
+        position: usize,
+    },
+    Group {
+        name: String,
+        members: Vec<String>,
+        position: usize,
+    },
 }
 
 /// A correlation estimator.
@@ -283,35 +293,52 @@ fn group_roles(category: Category) -> Option<[&'static str; 2]> {
 }
 
 /// The entries, checked in order: each is a known code, no category is in
-/// two entries, names are distinct, and a group is non-empty and of one
-/// kind.
+/// two entries (or twice in one group), names are distinct, and a group is
+/// named apart from every category code, non-empty and of one kind.
 fn resolve(entries: &[Entry]) -> Result<Vec<Request>, Error> {
-    let mut owner: [Option<usize>; N_CATEGORIES] = [None; N_CATEGORIES];
-    let mut requests: Vec<Request> = Vec::with_capacity(entries.len());
-    let mut claim = |category: Category, position: usize| match owner[category.index()] {
-        Some(first) => Err(Error::DuplicateCategory {
-            category: category.code(),
-            positions: [first, position],
-        }),
-        None => {
-            owner[category.index()] = Some(position);
-            Ok(())
+    fn claim<'a>(
+        owner: &mut [Option<(usize, &'a str)>; N_CATEGORIES],
+        category: Category,
+        position: usize,
+        name: &'a str,
+    ) -> Result<(), Error> {
+        if let Some((first, first_name)) = owner[category.index()] {
+            return Err(Error::DuplicateCategory {
+                category: category.code(),
+                positions: [first, position],
+                entries: [first_name.to_string(), name.to_string()],
+            });
         }
-    };
+        owner[category.index()] = Some((position, name));
+        Ok(())
+    }
+    // The entry, by position and name, that first claimed each category.
+    let mut owner: [Option<(usize, &str)>; N_CATEGORIES] = [None; N_CATEGORIES];
+    let mut requests: Vec<(usize, Request)> = Vec::with_capacity(entries.len());
     let parse = |code: &str, position: usize| {
         Category::parse(code).ok_or_else(|| Error::UnknownCategory {
             category: code.to_string(),
             position,
         })
     };
-    for (position, entry) in entries.iter().enumerate() {
-        let request = match entry {
-            Entry::Category(code) => {
+    for entry in entries {
+        let request = match *entry {
+            Entry::Category { ref code, position } => {
                 let category = parse(code, position)?;
-                claim(category, position)?;
-                single(category)
+                claim(&mut owner, category, position, code)?;
+                (position, single(category))
             }
-            Entry::Group { name, members } => {
+            Entry::Group {
+                ref name,
+                ref members,
+                position,
+            } => {
+                if Category::parse(name).is_some() {
+                    return Err(Error::ReservedGroupName {
+                        group: name.clone(),
+                        position,
+                    });
+                }
                 let Some(first) = members.first() else {
                     return Err(Error::EmptyCategoryGroup {
                         group: name.clone(),
@@ -319,11 +346,11 @@ fn resolve(entries: &[Entry]) -> Result<Vec<Request>, Error> {
                     });
                 };
                 let first = parse(first, position)?;
-                claim(first, position)?;
+                claim(&mut owner, first, position, name)?;
                 let mut cats = vec![first];
                 for code in &members[1..] {
                     let category = parse(code, position)?;
-                    claim(category, position)?;
+                    claim(&mut owner, category, position, name)?;
                     if category.symmetric() != first.symmetric()
                         || group_roles(category) != group_roles(first)
                     {
@@ -334,28 +361,27 @@ fn resolve(entries: &[Entry]) -> Result<Vec<Request>, Error> {
                     }
                     cats.push(category);
                 }
-                Request {
-                    name: name.clone(),
-                    members: cats,
-                    symmetric: first.symmetric(),
-                    roles: group_roles(first),
-                }
+                (
+                    position,
+                    Request {
+                        name: name.clone(),
+                        members: cats,
+                        symmetric: first.symmetric(),
+                        roles: group_roles(first),
+                    },
+                )
             }
         };
-        check_name(&requests, &request.name, position)?;
-        requests.push(request);
+        let (position, request) = request;
+        if let Some(&(first, _)) = requests.iter().find(|(_, r)| r.name == request.name) {
+            return Err(Error::DuplicateEntryName {
+                name: request.name,
+                positions: [first, position],
+            });
+        }
+        requests.push((position, request));
     }
-    Ok(requests)
-}
-
-fn check_name(requests: &[Request], name: &str, position: usize) -> Result<(), Error> {
-    match requests.iter().position(|r| r.name == name) {
-        Some(first) => Err(Error::DuplicateEntryName {
-            name: name.to_string(),
-            positions: [first, position],
-        }),
-        None => Ok(()),
-    }
+    Ok(requests.into_iter().map(|(_, r)| r).collect())
 }
 
 /// One member's inputs to the engine: the same labels and values on both
@@ -396,31 +422,36 @@ impl Member {
                 exponent: None,
             });
         }
-        let present = t.values.iter().copied().filter(|v| !v.is_nan());
-        let (min, max) = present.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
-            (lo.min(v), hi.max(v))
-        });
+        let (min, max) = t
+            .values
+            .iter()
+            .filter(|v| !v.is_nan())
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &v| {
+                (lo.min(v), hi.max(v))
+            });
         // No overflow near f64::MAX; Pearson is shift-invariant.
         let centre = if min <= max {
             min / 2.0 + max / 2.0
         } else {
             0.0
         };
-        let centred: Vec<f64> = t
+        let mut scratch: Vec<f64> = t
             .values
             .iter()
             .map(|&v| if v.is_nan() { 0.0 } else { v - centre })
             .collect();
-        let mut values = vec![0i64; centred.len()];
-        let exponent = quantize_column(&centred, &mut values, 1, 0, FIELD)?;
-        let present: Vec<f64> = t
-            .values
-            .iter()
-            .zip(&centred)
-            .filter(|(v, _)| !v.is_nan())
-            .map(|(_, &c)| c)
-            .collect();
-        check_precision(&present, exponent)?;
+        let mut values = vec![0i64; scratch.len()];
+        let exponent = quantize_column(&scratch, &mut values, 1, 0, FIELD)?;
+        // The present centred values, compacted in place.
+        let mut kept = 0;
+        for (i, &v) in t.values.iter().enumerate() {
+            if !v.is_nan() {
+                scratch[kept] = scratch[i];
+                kept += 1;
+            }
+        }
+        scratch.truncate(kept);
+        check_precision(&mut scratch, exponent)?;
         Ok(Member {
             labels: t.values.iter().map(|&v| i32::from(v.is_nan())).collect(),
             n_labels: 2,
@@ -453,7 +484,7 @@ fn step_of(exponent: i64) -> f64 {
 /// `insufficient_precision` when the step exceeds `2^-20` of the present
 /// values' interquartile range, or of their SD when the IQR is 0.  A
 /// constant (or empty) trait has no spread and passes.
-fn check_precision(present: &[f64], exponent: i64) -> Result<(), Error> {
+fn check_precision(present: &mut [f64], exponent: i64) -> Result<(), Error> {
     let spread = match iqr(present) {
         0.0 => sd(present),
         iqr => iqr,
@@ -471,19 +502,26 @@ fn check_precision(present: &[f64], exponent: i64) -> Result<(), Error> {
 
 /// The interquartile range with linear interpolation (NumPy's default); 0
 /// for fewer than two values.
-fn iqr(values: &[f64]) -> f64 {
+/// Reorders `values` (a selection, not a sort).
+fn iqr(values: &mut [f64]) -> f64 {
     if values.len() < 2 {
         return 0.0;
     }
-    let mut sorted = values.to_vec();
-    sorted.sort_unstable_by(f64::total_cmp);
-    let quantile = |p: f64| {
-        let h = (sorted.len() - 1) as f64 * p;
+    let last = values.len() - 1;
+    let mut quantile = |p: f64| {
+        let h = last as f64 * p;
         let (lo, frac) = (h.floor() as usize, h - h.floor());
-        let hi = (lo + 1).min(sorted.len() - 1);
-        sorted[lo] + frac * (sorted[hi] - sorted[lo])
+        let (_, &mut below, above) = values.select_nth_unstable_by(lo, f64::total_cmp);
+        // The next order statistic is the smallest value above position lo.
+        let next = above.iter().copied().fold(f64::INFINITY, f64::min);
+        if lo == last {
+            below
+        } else {
+            below + frac * (next - below)
+        }
     };
-    quantile(0.75) - quantile(0.25)
+    let q3 = quantile(0.75);
+    q3 - quantile(0.25)
 }
 
 /// The sample SD, scaled by the largest magnitude so squares cannot
@@ -510,20 +548,27 @@ fn cell(request: Request, table: &MomentsTable<'_>, kind: TraitKind) -> Result<C
     } else {
         at(0, 0)
     };
-    // Each symmetric pair entered in both orders: mirrored blocks are even.
-    let halve = |count: u64| {
-        if request.symmetric {
-            debug_assert!(count % 2 == 0, "a mirrored block is even");
-            count / 2
-        } else {
-            count
+    // Each symmetric pair entered in both orders, so its table is symmetric
+    // with an even diagonal, and halving is exact.  Anything else is an
+    // engine contract break, raised rather than rounded.
+    if request.symmetric {
+        let mirrored =
+            (0..n_labels).all(|i| at(i, i) % 2 == 0 && (0..i).all(|j| at(i, j) == at(j, i)));
+        if !mirrored {
+            return Err(PgError::InvalidMomentsTable {
+                reason: format!(
+                    "the double-entered counts of symmetric {} are not mirrored: {counts:?}",
+                    request.name
+                ),
+            }
+            .into());
         }
-    };
+    }
+    let halve = |count: u64| if request.symmetric { count / 2 } else { count };
     let (n, n_dropped) = (halve(observed), halve(total - observed));
     let (counts, estimates) = if kind == TraitKind::Binary {
         let fitted = [[at(0, 0), at(0, 1)], [at(1, 0), at(1, 1)]];
         let shown = if request.symmetric {
-            debug_assert_eq!(at(0, 1), at(1, 0), "a symmetric table is symmetric");
             Counts::Concordance([at(0, 0) / 2, at(0, 1), at(1, 1) / 2])
         } else {
             Counts::Table(fitted)
@@ -555,13 +600,13 @@ fn cell(request: Request, table: &MomentsTable<'_>, kind: TraitKind) -> Result<C
     })
 }
 
-/// ADR 0006's two-step fit of the table; its SE is not reported.
+/// ADR 0006's two-step point estimate of the table, without its SE.
 fn tetrachoric(table: [[u64; 2]; 2]) -> Estimate {
-    let fit = correlation::fit(table);
+    let point = correlation::point(table);
     Estimate {
         estimator: Estimator::Tetrachoric,
-        value: fit.map(|e| e.point.value).map_err(Reason::from),
-        boundary: fit.ok().and_then(|e| e.point.boundary),
+        value: point.map(|p| p.value).map_err(Reason::from),
+        boundary: point.ok().and_then(|p| p.boundary),
     }
 }
 
@@ -735,10 +780,11 @@ mod tests {
             kind,
             n_levels: None,
         };
+        let categories = categories.map(numbered);
         correlation(
             PedigreeArg::Columns(input),
             trait_,
-            categories,
+            categories.as_deref(),
             DEFAULT_MEMORY_BUDGET_BYTES,
         )
     }
@@ -747,15 +793,38 @@ mod tests {
         res.cells.iter().find(|c| c.category == name).unwrap()
     }
 
+    /// A code entry; [`numbered`] gives it its position.
     fn code(c: &str) -> Entry {
-        Entry::Category(c.to_string())
+        Entry::Category {
+            code: c.to_string(),
+            position: 0,
+        }
     }
 
+    /// A group entry; [`numbered`] gives it its position.
     fn group(name: &str, members: &[&str]) -> Entry {
         Entry::Group {
             name: name.to_string(),
             members: members.iter().map(|m| m.to_string()).collect(),
+            position: 0,
         }
+    }
+
+    /// `entries` at positions 0, 1, ..., as a host passes a list.
+    fn numbered(entries: &[Entry]) -> Vec<Entry> {
+        entries
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(i, e)| match e {
+                Entry::Category { code, .. } => Entry::Category { code, position: i },
+                Entry::Group { name, members, .. } => Entry::Group {
+                    name,
+                    members,
+                    position: i,
+                },
+            })
+            .collect()
     }
 
     /// Pearson's r of two columns, two-pass.
@@ -872,8 +941,8 @@ mod tests {
             pooled
         );
         assert_eq!(po.n, 10);
-        let fit = correlation::fit(table(po)).unwrap();
-        assert_eq!(po.estimates[0].value, Ok(fit.point.value));
+        let point = correlation::point(table(po)).unwrap();
+        assert_eq!(po.estimates[0].value, Ok(point.value));
     }
 
     #[test]
@@ -899,13 +968,19 @@ mod tests {
     #[test]
     fn category_requests_are_checked() {
         let v = [0.0; 9];
-        let cases: [(&[Entry], &str); 6] = [
+        let cases: [(&[Entry], &str); 9] = [
             (&[code("XX")], "unknown_category"),
             (&[group("G", &["FS", "nope"])], "unknown_category"),
             (&[code("FS"), code("FS")], "duplicate_category"),
             (&[group("G", &["FS", "FS"])], "duplicate_category"),
-            (&[code("FS"), group("FS", &["MHS"])], "duplicate_entry_name"),
+            (
+                &[group("G", &["FS"]), group("G", &["MHS"])],
+                "duplicate_entry_name",
+            ),
+            (&[code("FS"), group("FS", &["MHS"])], "reserved_group_name"),
+            (&[group("MO", &["FO"])], "reserved_group_name"),
             (&[group("G", &[])], "empty_category_group"),
+            (&[group("G", &["MO", "GP"])], "mixed_category_group"),
         ];
         for (entries, expected) in cases {
             let err = run(&v, TraitKind::Binary, Some(entries)).unwrap_err();
@@ -913,6 +988,71 @@ mod tests {
         }
         let res = run(&v, TraitKind::Binary, Some(&[])).unwrap();
         assert!(res.cells.is_empty());
+        let twice = run(&v, TraitKind::Binary, Some(&[group("G", &["FS", "FS"])])).unwrap_err();
+        assert_eq!(
+            twice.to_string(),
+            "category FS is listed twice in group \"G\" (categories[0])"
+        );
+    }
+
+    #[test]
+    fn errors_report_the_callers_positions() {
+        // Two groups a host passed as one mapping share position 1.
+        let entries = [
+            code("FS"),
+            Entry::Group {
+                name: "A".to_string(),
+                members: vec!["MO".to_string()],
+                position: 1,
+            },
+            Entry::Group {
+                name: "B".to_string(),
+                members: vec!["XX".to_string()],
+                position: 1,
+            },
+        ];
+        let err = run_raw(&entries).unwrap_err();
+        assert_eq!(
+            err,
+            Error::UnknownCategory {
+                category: "XX".to_string(),
+                position: 1
+            }
+        );
+        let mut entries = entries;
+        entries[2] = Entry::Group {
+            name: "B".to_string(),
+            members: vec!["MO".to_string()],
+            position: 1,
+        };
+        assert_eq!(
+            run_raw(&entries).unwrap_err().to_string(),
+            "category MO is in both \"A\" (categories[1]) and \"B\" (categories[1])"
+        );
+    }
+
+    /// [`correlation`] on the family with `entries` as given, positions kept.
+    fn run_raw(entries: &[Entry]) -> Result<RelativePairCorrelation, Error> {
+        let (ids, mother, father) = family();
+        let input = PedigreeInput {
+            ids: &ids,
+            mother: &mother,
+            father: &father,
+            twin: None,
+            sex: None,
+        };
+        let values = [0.0; 9];
+        let trait_ = Trait {
+            values: &values,
+            kind: TraitKind::Binary,
+            n_levels: None,
+        };
+        correlation(
+            PedigreeArg::Columns(input),
+            trait_,
+            Some(entries),
+            DEFAULT_MEMORY_BUDGET_BYTES,
+        )
     }
 
     #[test]
@@ -1020,6 +1160,28 @@ mod tests {
     }
 
     #[test]
+    fn a_symmetric_table_that_is_not_mirrored_raises() {
+        // Binary labels 0, 1, missing: N[0][1] = 3 but N[1][0] = 2.
+        let counts: [i128; 9] = [4, 3, 0, 2, 6, 0, 0, 0, 0];
+        let table = MomentsTable::from_i128(vec![3, 3], 0, vec![], vec![], &counts).unwrap();
+        let err = super::cell(single(Category::FS), &table, TraitKind::Binary).unwrap_err();
+        assert!(
+            matches!(err, Error::Pedigree(PgError::InvalidMomentsTable { .. })),
+            "{err:?}"
+        );
+        // An odd diagonal is not a double entry either.
+        let counts: [i128; 9] = [5, 2, 0, 2, 6, 0, 0, 0, 0];
+        let table = MomentsTable::from_i128(vec![3, 3], 0, vec![], vec![], &counts).unwrap();
+        assert!(super::cell(single(Category::FS), &table, TraitKind::Binary).is_err());
+        // A directed category takes any table.
+        let table =
+            MomentsTable::from_i128(vec![3, 3], 0, vec![], vec![], &[5, 3, 0, 2, 6, 0, 0, 0, 0])
+                .unwrap();
+        let mo = super::cell(single(Category::MO), &table, TraitKind::Binary).unwrap();
+        assert_eq!(mo.counts, Counts::Table([[5, 3], [2, 6]]));
+    }
+
+    #[test]
     fn phi_matches_its_formula() {
         let e = phi([[30, 10], [5, 15]]);
         let expected = (30.0 * 15.0 - 10.0 * 5.0) / (40.0f64 * 20.0 * 35.0 * 25.0).sqrt();
@@ -1030,8 +1192,10 @@ mod tests {
 
     #[test]
     fn quantile_and_sd_helpers() {
-        assert_eq!(iqr(&[1.0, 2.0, 3.0, 4.0, 5.0]), 2.0);
-        assert_eq!(iqr(&[7.0]), 0.0);
+        assert_eq!(iqr(&mut [5.0, 1.0, 4.0, 2.0, 3.0]), 2.0);
+        // Interpolated: q1 = 1.75, q3 = 3.25.
+        assert_eq!(iqr(&mut [4.0, 3.0, 2.0, 1.0]), 1.5);
+        assert_eq!(iqr(&mut [7.0]), 0.0);
         assert!((sd(&[1.0, 2.0, 3.0]) - 1.0).abs() < 1e-15);
         assert!(sd(&[-1e300, 1e300]).is_finite());
         assert_eq!(step_of(0), 1.0);

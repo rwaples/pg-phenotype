@@ -37,7 +37,10 @@ fits one connected pedigree (`docs/relative-pairs-se-research.md`).
 - `categories=` takes Relationship Category codes and named Category Groups
   (such as PO for MO and FO).  Each entry gives one cell.  A group's
   categories are all symmetric or all directed with the same roles, and no
-  category is in two entries.  Roles are compared with mother and father
+  category is in two entries.  A group is not named like any category code
+  (`reserved_group_name`), so a cell named MO always holds MO's pairs.
+  Errors give each entry's position in the caller's request.  Roles are
+  compared with mother and father
   both read as parent, so pedigree-graph's (offspring, mother) and
   (offspring, father) make PO's (offspring, parent).  The default is every
   category up to degree 3.
