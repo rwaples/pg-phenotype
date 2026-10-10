@@ -85,16 +85,14 @@ pedsum commit), not against a live pedsum.
   1e-16.  The bound then looks hundreds of nats better than it is, and at
   large n the relative tolerance is tens of nats: `[[14045855, 3530593],
   [1, 6012126]]` (n = 2.4e7) was flagged at the interior maximum 0.99546,
-  its SE withheld.  pg-phenotype counts a bound where a populated cell's
-  probability is below 1e-12 (`CELL_NOISE`) as no plateau
-  (`Tables::bound_nll`).  A real plateau comes from an empty cell, which
-  is no term of the NLL, so the test still finds it.  The rule also clears
-  a bound where such a cell's probability is computed accurately but is
-  below 1e-12.  pedsum would still call that a plateau when the NLL gap
-  is within its relative tolerance.  Since the cell's probability at the
-  optimum is at least about 1/n, that cell alone adds about
-  `ln(1e12 / n)` to the gap.  Against a tolerance of about `1e-6 * n`
-  nats, that points to n of 1e7 or more, where the tolerance is itself
-  tens of nats.  The tolerance stays relative.  No
-  golden moved, and on 100,000 random tables no other flag or estimate
-  changed.
+  its SE withheld.  At the bound, pg-phenotype recomputes each populated
+  cell whose corner difference is below 1e-12 (`CELL_NOISE`) as a 1-D
+  integral, `∫ φ(x) P(k0 < Y <= k1 | x) dx` by adaptive Gauss-Kronrod with
+  tail-safe factors (`bvn::rectangle`), and runs pedsum's test on that NLL
+  (`Tables::bound_nll`).  The table above is then 431.05 nats from its
+  bound (SciPy's `quad` agrees to 1e-8), not a plateau.  A first version
+  of this fix counted any bound with such a cell as no plateau; it would
+  have missed a real plateau whose cell is truly that small, which the
+  relative tolerance allows from n of about 3e7.  The tolerance stays
+  relative, and everywhere else, the estimates included, the NLL is
+  pedsum's to the bit.

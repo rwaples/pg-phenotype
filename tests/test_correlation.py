@@ -114,7 +114,7 @@ def test_newton_overshooting_into_a_noisy_cell_falls_back_to_brent(table):
 def test_a_bound_whose_nll_is_rounding_is_no_plateau():
     # Issue #8: at rho = 0.9999 the one-pair cell's probability is rounding noise, so the NLL
     # there came out 18.8 nats above the optimum, inside the 22-nat relative tolerance at
-    # n = 2.4e7, and the interior maximum was flagged as a plateau.  The true gap is 673 nats.
+    # n = 2.4e7, and the interior maximum was flagged as a plateau.  The true gap is 431 nats.
     table = [[14045855, 3530593], [1, 6012126]]
     got = tetrachoric(table=table)
     assert got.boundary is False

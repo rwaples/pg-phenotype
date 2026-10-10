@@ -252,35 +252,41 @@ impl Tables {
         )
     }
 
-    /// The NLL, `None` where a populated cell's probability is below
-    /// [`CELL_NOISE`] and the NLL mostly rounding (issue #8).
-    pub fn bound_nll(&self, rho: f64) -> Option<f64> {
-        let (nll, least) = self.nll_and_least(rho);
-        (least >= CELL_NOISE).then_some(nll)
-    }
-
     pub fn nll(&self, rho: f64) -> f64 {
-        self.nll_and_least(rho).0
+        self.nll_at(rho, false)
     }
 
-    /// The NLL, and the least probability of a populated cell.
-    fn nll_and_least(&self, rho: f64) -> (f64, f64) {
+    /// The NLL at a bound, for the plateau test.  There a populated cell's
+    /// difference of corner CDFs can be rounding (issue #8): a cell below
+    /// [`CELL_NOISE`] is recomputed by [`bvn::rectangle`].  With none below,
+    /// this is [`Tables::nll`] bit for bit.
+    pub fn bound_nll(&self, rho: f64) -> f64 {
+        self.nll_at(rho, true)
+    }
+
+    fn nll_at(&self, rho: f64, resolve_noise: bool) -> f64 {
         let mut nll = 0.0;
-        let mut least = f64::INFINITY;
         for &combo in &self.combos {
+            let (s, u) = combo;
             let cdf = self.grid(combo, |h, k| bvn::cdf(h, k, rho));
             for i in 0..self.n.k_m {
                 for j in 0..self.n.k_f {
-                    let count = self.n.at(combo.0, combo.1, i, j);
+                    let count = self.n.at(s, u, i, j);
                     if count > 0.0 {
-                        let pi = corner(&cdf, i, j).max(TINY);
-                        least = least.min(pi);
-                        nll += count * pi.ln();
+                        let mut pi = corner(&cdf, i, j);
+                        if resolve_noise && pi < CELL_NOISE {
+                            pi = bvn::rectangle(
+                                (self.a.at(s, i), self.a.at(s, i + 1)),
+                                (self.b.at(u, j), self.b.at(u, j + 1)),
+                                rho,
+                            );
+                        }
+                        nll += count * pi.max(TINY).ln();
                     }
                 }
             }
         }
-        (-nll, least)
+        -nll
     }
 }
 
@@ -413,7 +419,7 @@ pub(crate) fn polyserial(serial: Serial<'_>, w: &[f64], start: Option<f64>) -> F
     Ok(newton_rho(
         |r| kernel.terms(r, true),
         |r| kernel.terms(r, true).nll,
-        |r| Some(kernel.terms(r, true).nll),
+        |r| kernel.terms(r, true).nll,
         start,
     ))
 }
@@ -492,13 +498,29 @@ mod tests {
     }
 
     #[test]
-    fn the_bound_nll_is_withheld_where_a_populated_cell_is_rounding() {
-        // Issue #8: the one-pair cell is rounding at the bound.
+    fn the_bound_nll_resolves_a_cell_that_is_rounding() {
+        // Issue #8: at the bound the one-pair cell's corner difference is
+        // rounding.  Its probability is e^-449.0238 by SciPy's `quad` of
+        // φ(x) Φ((b - ρx)/s) on a log scale, and the bound's NLL is 431.0475
+        // nats above the optimum's by the same.  (#8's 672.8 floored the
+        // cell at 1e-300.)
         let t = tables([14045855.0, 3530593.0, 1.0, 6012126.0]);
-        assert_eq!(t.bound_nll(LATENT_BOUND), None);
-        assert_eq!(t.bound_nll(0.99), Some(t.nll(0.99)));
-        // An empty corner is no term of the NLL, so a bound it vanishes at is resolved.
+        let (a, b) = (t.a.at(0, 1), t.b.at(0, 1));
+        let cell = bvn::rectangle((a, f64::INFINITY), (f64::NEG_INFINITY, b), LATENT_BOUND);
+        assert!(
+            (cell.ln() + 449.023_788).abs() < 1e-4,
+            "ln p = {}",
+            cell.ln()
+        );
+        let gap = t.bound_nll(LATENT_BOUND) - t.nll(0.995_456_868);
+        assert!((gap - 431.0475).abs() < 1e-3, "gap {gap}");
+        // With no cell below the noise floor it is the NLL, bit for bit.
+        assert_eq!(t.bound_nll(0.99).to_bits(), t.nll(0.99).to_bits());
+        // An empty corner is no term of the NLL.
         let t = tables([10.0, 0.0, 0.0, 10.0]);
-        assert_eq!(t.bound_nll(LATENT_BOUND), Some(t.nll(LATENT_BOUND)));
+        assert_eq!(
+            t.bound_nll(LATENT_BOUND).to_bits(),
+            t.nll(LATENT_BOUND).to_bits()
+        );
     }
 }

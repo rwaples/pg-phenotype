@@ -138,10 +138,10 @@ unchanged.
   populated cell's probability there is below 1e-12 it is rounding noise,
   so the bound looked far better than it is: `[[14045855, 3530593],
   [1, 6012126]]` came out 18.8 nats above the optimum, within the 22-nat
-  tolerance at n = 2.4e7, and its SE was withheld.  The true gap is
-  673 nats.  Such a bound now counts as no plateau.  On 100,000 random
-  tables no other flag or estimate changed.  This departs from pedsum
-  (ADR 0005).
+  tolerance at n = 2.4e7, and its SE was withheld.  At the bound, a
+  populated cell below 1e-12 is now recomputed by quadrature without
+  cancellation, and the test runs on that NLL: the table is 431 nats from
+  its bound.  This departs from pedsum (ADR 0005).
 
 ## v0.2.0
 

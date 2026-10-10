@@ -151,10 +151,10 @@ permutation p-value.
   interval takes over.
 - `boundary` is set on a latent estimate when rho is within 1e-3 of
   ±0.9999, or when the negative log-likelihood at the nearer bound is
-  within 1e-6 (relative) of the optimum.  That second test is skipped
-  (table estimators) when a populated cell's probability at the bound is
-  below 1e-12, where the NLL there is mostly rounding.  It comes from the
-  fit, never from a zero count.
+  within 1e-6 (relative) of the optimum.  For that NLL, a table
+  estimator's populated cell whose probability at the bound is below
+  1e-12, where a difference of CDFs is mostly rounding, is recomputed by
+  quadrature.  The flag comes from the fit, never from a zero count.
 
 The latent estimators (`tetrachoric`, `polychoric`, `biserial`,
 `polyserial`) estimate the correlation of a liability that is assumed

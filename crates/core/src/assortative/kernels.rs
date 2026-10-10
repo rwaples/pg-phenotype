@@ -489,7 +489,7 @@ pub(crate) fn thresholds(margin: &Grid<f64>) -> Grid<f64> {
 
 /// `Φ(upper) − Φ(lower)` without cancellation in the upper tail.
 #[inline]
-fn interval_mass(upper: f64, lower: f64) -> f64 {
+pub(crate) fn interval_mass(upper: f64, lower: f64) -> f64 {
     if lower > 0.0 {
         return 0.5 * (c_erfc(lower / SQRT_2) - c_erfc(upper / SQRT_2));
     }
