@@ -11,6 +11,7 @@ core; each method is a module on top.
 | Assortative mating: the Mate Correlation of one or two traits, ported from pedsum #13 | `pg_phenotype.assortative` | available |
 | Correlation estimators on their own: the tetrachoric correlation of a 2 x 2 table | `pg_phenotype.correlation` | available |
 | Parent-offspring regression: midparent, mother and father, with a Mate Network sandwich SE | `pg_phenotype.regression` | available |
+| Relative-Pair Correlation: a trait's correlation between relatives per relationship category, no SE yet | `pg_phenotype.relative_pairs` | available |
 
 ## Python
 
@@ -106,6 +107,28 @@ shared by parent and child, the midparent slope estimates h2 and a
 single-parent slope h2/2.  The sandwich SE needs many networks
 ([ADR 0007](docs/adr/0007-parent-offspring-regression.md)).
 
+### Relative-Pair Correlation
+
+```python
+from pg_phenotype import relative_pairs
+
+res = relative_pairs.correlation(ped, pgp.Trait(dx, kind="binary"), categories=["MZ", "FS", {"PO": ["MO", "FO"]}, "1C"])
+fs = res.cell("FS")
+fs.primary.value, fs["phi"].value, fs.n, fs.n_dropped, fs.concordance
+res.cell("PO").table, res.cell("PO").roles  # rows by offspring; ("offspring", "parent")
+```
+
+One cell per category code or named Category Group (default: every
+pedigree-graph category up to degree 3).  A continuous trait gets Pearson's
+r; a binary one the tetrachoric (primary) and phi.  A symmetric category's
+pairs enter in both orders, so its correlation is intraclass and does not
+depend on row order; a directed category's enter once, in its roles' order.
+Pairs are reduced as pedigree-graph finds them and never stored
+(`memory_budget_bytes=` bounds the accumulators).  There is no minimum pair
+count and no SE yet: relative pairs share people, and the cluster design
+waits on a calibration study
+([ADR 0009](docs/adr/0009-relative-pair-correlation.md)).
+
 ## Rows and alignment
 
 A Pedigree keeps its input's row order: row *i* of the Pedigree is row *i*
@@ -148,6 +171,8 @@ am <- assortative_mate_correlation(ped, list(trait(ped_df$liab), trait(ped_df$dx
                                    stratum = ped_df$birth_decade, bootstrap = 1000, seed = 1)
 tc <- correlation_tetrachoric(ped_df$dx1, ped_df$dx2)  # or table = matrix(...)
 po <- regression_parent_offspring(ped, trait(ped_df$liab), stratum = ped_df$generation)
+rp <- relative_pairs_correlation(ped, trait(ped_df$dx, kind = "binary"),
+                                 categories = list("MZ", "FS", PO = c("MO", "FO")))
 ```
 
 The R package runs the same core as Python and returns the same scores bit
@@ -192,6 +217,18 @@ positions 1-based.
   matrix-form sandwich (`tests/oracle/po_regression_reference.py`), on
   random pedigrees with remating, missing and external parents: every field
   to 1e-10.
+
+## Correctness (Relative-Pair Correlation)
+
+- Against a reference on pedigree-graph's own pair list
+  (`tests/oracle/relative_pairs_reference.py`: NumPy double-entry Pearson
+  and phi, `correlation.tetrachoric` on the doubled table), on random
+  inbred pedigrees with twins and on three simACE `small_test` reps: every
+  count equal, Pearson and phi within 1e-12, the tetrachoric identical.
+- Against simACE `6355ffa` on those reps: every pair count and table equal;
+  on MO and FO, Pearson and phi within 1e-14 and the tetrachoric within
+  1.2e-8.  Symmetric categories differ by design, by up to 3.4e-3 at a
+  thousand pairs or more ([gate report](docs/gates/relative-pairs/README.md)).
 
 Design decisions are in `docs/adr/`; vocabulary in `CONTEXT.md`.
 

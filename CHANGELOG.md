@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+Relative-Pair Correlation (#1, unit 1):
+`pg_phenotype.relative_pairs.correlation` (R:
+`relative_pairs_correlation()`, Rust: `relative_pairs::correlation`)
+correlates one trait between the members of each Relationship Category's
+Relative Pairs, or a named Category Group's (`{"PO": ["MO", "FO"]}`), one
+cell each; the default is every category up to degree 3.  A continuous
+trait gets Pearson's r, a binary trait the tetrachoric (primary, ADR
+0006's fit) and phi.  A symmetric category's pairs enter in both orders,
+so its correlation is intraclass and row-order free; a directed one's enter
+once, in its roles' order.  Each cell reports `n`, `n_dropped`, and a
+binary cell's Concordance (symmetric) or 2 x 2 table (directed).  A value
+is `None` only when undefined, with a reason; there is no pair floor and no
+SE yet ([ADR 0009](docs/adr/0009-relative-pair-correlation.md)).  Pairs
+come from pedigree-graph-core's `relationship_moments` and are never
+stored; `memory_budget_bytes=` (default 1 GiB) bounds its accumulators.  A
+continuous trait is centred on its midrange before quantization, and
+`insufficient_precision` is raised when the quantization step exceeds
+2^-20 of its interquartile range.  New error codes: `unknown_category`,
+`duplicate_category`, `mixed_category_group`, `duplicate_entry_name`,
+`empty_category_group`, `insufficient_precision`.  The gate against simACE
+`6355ffa` passes ([report](docs/gates/relative-pairs/README.md)).
+
 `Pedigree.align(ids, values)` (R: `pedigree_align()`, Rust:
 `Pedigree::align`) moves values given per id onto a Pedigree's rows, NaN
 (R: `NA`) where no id names a row, and `Pedigree.rows(ids)` (R:

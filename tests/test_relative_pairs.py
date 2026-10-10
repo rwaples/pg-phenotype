@@ -309,3 +309,22 @@ def test_settings_method_and_metadata():
     assert res.metadata["pedigree_graph_core_rev"] == pg_phenotype.pg_core_rev()
     assert pg_phenotype.relative_pairs is rp
 
+
+def test_the_simace_gate_agrees():
+    """docs/gates/relative-pairs: the reference everywhere, simACE on directed categories (tools/relative_pairs_gate.py)."""
+    from tests import relative_pairs_golden as g
+
+    oracle = g.oracle_rows()
+    assert len(oracle) == 3 * len(DEFAULT)
+    for r in oracle:
+        assert r["counts_equal"], r
+        assert r["tetrachoric_equal"], r
+        assert r["pearson_gap"] <= g.REL_ORACLE, r
+        assert r["phi_gap"] <= g.REL_ORACLE, r
+    for r in g.simace_rows():
+        assert r["n"] == r["simace_n_pairs"], r
+        assert r["counts_match"], r
+        if not r["symmetric"]:
+            assert r["pearson_gap"] <= g.ABS_SIMACE, r
+            assert r["phi_gap"] <= g.ABS_SIMACE, r
+            assert r["tetrachoric_gap"] <= g.ABS_SIMACE_TETRACHORIC, r
