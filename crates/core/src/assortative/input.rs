@@ -15,11 +15,16 @@ pub struct Strata<'a> {
     pub known: &'a [bool],
 }
 
+/// Father permutations per primary estimate when inference is on and none
+/// are given (pedsum's CLI default).
+pub const DEFAULT_PERMUTATIONS: i64 = 999;
+
 /// Draw counts, the seed, the thin-stratum rule, and the optional estimators.
 #[derive(Clone, Copy, Debug)]
 pub struct Settings {
-    /// Father permutations per primary estimate; 0 turns them off.
-    pub permutations: i64,
+    /// Father permutations per primary estimate; 0 turns them off.  `None`
+    /// is [`DEFAULT_PERMUTATIONS`] with inference and 0 without.
+    pub permutations: Option<i64>,
     /// Mate Network bootstrap draws; 0 gives sandwich (Wald) CIs.
     pub bootstrap: i64,
     /// Keys every permutation and bootstrap draw.
@@ -29,17 +34,22 @@ pub struct Settings {
     pub min_stratum_networks: i64,
     /// Add Spearman to a continuous x continuous cell's crude estimators.
     pub spearman: bool,
+    /// Compute inference: Mate Networks, SEs, CIs, the permutation records
+    /// and the Within-Person Cross-Trait Correlation.  Off, a call returns
+    /// the point estimates and counts alone, and takes no draws.
+    pub inference: bool,
 }
 
 impl Default for Settings {
     /// pedsum's CLI defaults, without Spearman, which pedsum always computes.
     fn default() -> Settings {
         Settings {
-            permutations: 999,
+            permutations: None,
             bootstrap: 0,
             seed: 0,
             min_stratum_networks: 10,
             spearman: false,
+            inference: true,
         }
     }
 }
@@ -52,6 +62,7 @@ pub(crate) struct Checked {
     pub seed: i64,
     pub min_stratum_networks: u64,
     pub spearman: bool,
+    pub inference: bool,
 }
 
 impl Settings {
@@ -67,13 +78,34 @@ impl Settings {
                 })
             }
         };
-        Ok(Checked {
-            permutations: count("permutations", self.permutations, 0)?,
+        let permutations = self.permutations.unwrap_or(if self.inference {
+            DEFAULT_PERMUTATIONS
+        } else {
+            0
+        });
+        let checked = Checked {
+            permutations: count("permutations", permutations, 0)?,
             bootstrap: count("bootstrap", self.bootstrap, 0)?,
             seed: self.seed,
             min_stratum_networks: count("min_stratum_networks", self.min_stratum_networks, 1)?,
             spearman: self.spearman,
-        })
+            inference: self.inference,
+        };
+        if !self.inference {
+            for (name, value) in [
+                ("permutations", permutations),
+                ("bootstrap", self.bootstrap),
+            ] {
+                if value != 0 {
+                    return Err(Error::ParameterOutOfRange {
+                        name,
+                        value: value as f64,
+                        domain: "{0} without inference",
+                    });
+                }
+            }
+        }
+        Ok(checked)
     }
 }
 
@@ -244,6 +276,31 @@ mod tests {
     use super::*;
 
     const NA: f64 = f64::NAN;
+
+    #[test]
+    fn without_inference_every_draw_count_is_zero() {
+        let on = Settings::default().check().unwrap();
+        assert_eq!(on.permutations, DEFAULT_PERMUTATIONS as u64);
+        let off = Settings {
+            inference: false,
+            ..Settings::default()
+        };
+        let checked = off.check().unwrap();
+        assert_eq!((checked.permutations, checked.inference), (0, false));
+        for settings in [
+            Settings {
+                permutations: Some(1),
+                ..off
+            },
+            Settings {
+                bootstrap: 1,
+                ..off
+            },
+        ] {
+            let err = settings.check().unwrap_err();
+            assert_eq!(err.code(), "parameter_out_of_range");
+        }
+    }
 
     fn t(values: &[f64], kind: TraitKind, n_levels: Option<usize>) -> Trait<'_> {
         Trait {

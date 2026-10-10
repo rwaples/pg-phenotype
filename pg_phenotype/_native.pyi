@@ -85,11 +85,12 @@ def mate_correlation(
     stratum_known: np.ndarray | None,
     /,
     *,
-    permutations: int,
+    permutations: int | None,
     bootstrap: int,
     seed: int,
     min_stratum_networks: int,
     spearman: bool,
+    inference: bool,
     threads: int,
 ) -> dict[str, Any]: ...
 def tetrachoric_table(table: tuple[tuple[int, int], tuple[int, int]], /) -> dict[str, Any]: ...

@@ -55,7 +55,7 @@ fn main() {
         known: &known,
     });
     let settings = Settings {
-        permutations: args[4].parse().expect("permutations"),
+        permutations: Some(args[4].parse().expect("permutations")),
         bootstrap: args[5].parse().expect("bootstrap"),
         ..Settings::default()
     };

@@ -21,6 +21,36 @@ pedigree-graph's checks of the pedigree.
   `_native.prepare` take one positional `pedigree`, a `_native.Pedigree` or
   the column tuple.
 
+`mate_correlation(..., inference=False)` (R: `inference = FALSE`) returns
+the cells' point estimates and the counts alone (#10).  It builds no Mate
+Networks, SEs, CIs, permutation records or Within-Person Cross-Trait
+Correlation: the network counts, `within_person` and `permutation` are
+`None`, and `se` and `ci` are `None` with the reason `not_requested`.
+Every cell estimate and count equals the default's; the default still
+gives `within_person`.  It takes no draws, so a nonzero `permutations` or
+`bootstrap` is a `parameter_out_of_range` error.  `permutations` now
+defaults to `None`: 999 with inference, 0 without.  The result's
+`settings` echo `inference`, and a `Pedigree` builds no Mate Networks for
+such a call.  A stratified call still builds each cell's networks for the
+thin-stratum rule, so it saves less than an unstratified one.
+
+- Rust: `Settings::permutations` is an `Option<i64>`, `None` by default,
+  resolved by `DEFAULT_PERMUTATIONS` (999) with inference and 0 without.
+
+- On a 5M-row pedigree (2.0M Mating Pairs), a `Pedigree`, one two-trait
+  call and two one-trait calls (all continuous and unstratified,
+  `permutations=0`) peaked
+  491 MB above the loaded columns before this change.  They now peak at
+  397 MB with inference and 324 MB without.  The two-trait call without
+  inference takes 0.7-1.0 s, the one-trait calls 0.15-0.26 s.  Every run
+  gave the same values.
+- With inference, a cell no longer copies its pairs to pool them when they
+  already form one stratum (every unstratified cell).  The numbers are
+  unchanged bit for bit.
+- `Pedigree(...)` returns free heap memory to the system before it builds
+  (glibc), as `mate_correlation` does.  On the same pedigree, a second
+  Pedigree built after the first was freed peaked 62 MB lower.
+
 `mate_correlation` computes Spearman only when asked: pass `spearman=True`
 (R: `spearman = TRUE`) to keep a continuous x continuous cell's `spearman`
 record.  The result's `settings` echo `spearman`.  Every other value is

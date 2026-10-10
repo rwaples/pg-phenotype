@@ -5,6 +5,7 @@
 
 use super::input::Strata;
 use super::kernels::{stratum_moments, Grid};
+use std::borrow::Cow;
 
 /// A pedigree's Mating Pairs, as rows: pair `p` is `(mothers[p], fathers[p])`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -185,17 +186,26 @@ impl CellPairs {
         (n_codes(&self.m_stratum), n_codes(&self.f_stratum))
     }
 
-    /// The same pairs as one stratum, for a crude estimator.
-    pub fn pooled(&self) -> CellPairs {
+    /// The same pairs as one stratum, for a crude estimator: borrowed when
+    /// they already are.
+    pub fn pooled(&self) -> Cow<'_, CellPairs> {
+        let one_stratum = |stratum: &[usize], levels: &Option<Grid<bool>>| {
+            stratum.iter().all(|&s| s == 0) && levels.as_ref().is_none_or(|l| l.rows == 1)
+        };
+        if one_stratum(&self.m_stratum, &self.m_levels)
+            && one_stratum(&self.f_stratum, &self.f_levels)
+        {
+            return Cow::Borrowed(self);
+        }
         let zeros = vec![0; self.len()];
-        CellPairs {
+        Cow::Owned(CellPairs {
             m: self.m.clone(),
             f: self.f.clone(),
             m_stratum: zeros.clone(),
             f_stratum: zeros,
             m_levels: self.m_levels.as_ref().map(pooled_levels),
             f_levels: self.f_levels.as_ref().map(pooled_levels),
-        }
+        })
     }
 }
 
@@ -301,6 +311,38 @@ mod tests {
         assert_eq!(mate_networks(&m, &f), vec![0, 1, 1]);
         assert_eq!(network_summary(&[0, 1, 1]), (2, Some(2.0 / 3.0)));
         assert_eq!(network_summary(&[]), (0, None));
+    }
+
+    #[test]
+    fn pooled_borrows_pairs_already_in_one_stratum() {
+        let pairs = |m_stratum: Vec<usize>| {
+            CellPairs {
+                m: vec![0.0, 1.0, 1.0],
+                f: vec![1.0, 0.0, 1.0],
+                m_stratum,
+                f_stratum: vec![0; 3],
+                m_levels: None,
+                f_levels: None,
+            }
+            .with_levels(Some(2), Some(2))
+        };
+        let one = pairs(vec![0; 3]);
+        assert!(matches!(one.pooled(), Cow::Borrowed(_)));
+        let two = pairs(vec![0, 1, 1]);
+        let pooled = two.pooled();
+        assert!(matches!(pooled, Cow::Owned(_)));
+        assert_eq!(pooled.m_stratum, vec![0; 3]);
+        assert_eq!(pooled.m_levels, one.m_levels);
+        let empty = CellPairs {
+            m: vec![],
+            f: vec![],
+            m_stratum: vec![],
+            f_stratum: vec![],
+            m_levels: None,
+            f_levels: None,
+        }
+        .with_levels(Some(2), Some(2));
+        assert_eq!(empty.pooled().m_levels.as_ref().map(|l| l.rows), Some(1));
     }
 
     #[test]

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 from pg_phenotype import _native
 from pg_phenotype._input import pedigree_arrays
+from pg_phenotype._memory import release_free_memory
 
 if TYPE_CHECKING:
     import numpy as np
@@ -17,9 +18,9 @@ class Pedigree:
     """A pedigree validated once, for several methods or calls.
 
     ``mate_correlation`` and ``pafgrs.prepare`` take a ``Pedigree`` wherever
-    they take pedigree columns.  It keeps the Mating Pairs and Mate Networks
-    the first ``mate_correlation`` finds, so a later call skips validation
-    and finding them.
+    they take pedigree columns.  It keeps the Mating Pairs the first
+    ``mate_correlation`` finds and the Mate Networks the first with inference
+    builds, so a later call skips validation and finding them.
 
     Row *i* of the Pedigree is row *i* of *pedigree*.  Traits, ages, strata
     and probands are matched to it by position: align values from another
@@ -40,7 +41,9 @@ class Pedigree:
     __slots__ = ("_native",)
 
     def __init__(self, pedigree: object) -> None:
-        self._native = _native.Pedigree(*pedigree_arrays(pedigree))
+        arrays = pedigree_arrays(pedigree)
+        release_free_memory()
+        self._native = _native.Pedigree(*arrays)
 
     def __len__(self) -> int:
         return len(self._native)

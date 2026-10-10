@@ -43,7 +43,7 @@ type TraitArg<'py> = (PyReadonlyArray1<'py, f64>, String, Option<usize>);
 
 /// The Mate Correlation of one or two traits, in the pool.
 #[pyfunction]
-#[pyo3(signature = (pedigree, traits, stratum_labels, stratum_known, /, *, permutations, bootstrap, seed, min_stratum_networks, spearman, threads))]
+#[pyo3(signature = (pedigree, traits, stratum_labels, stratum_known, /, *, permutations, bootstrap, seed, min_stratum_networks, spearman, inference, threads))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn mate_correlation<'py>(
     py: Python<'py>,
@@ -51,11 +51,12 @@ pub(crate) fn mate_correlation<'py>(
     traits: Vec<TraitArg<'py>>,
     stratum_labels: Option<PyReadonlyArray1<'py, i64>>,
     stratum_known: Option<PyReadonlyArray1<'py, bool>>,
-    permutations: i64,
+    permutations: Option<i64>,
     bootstrap: i64,
     seed: i64,
     min_stratum_networks: i64,
     spearman: bool,
+    inference: bool,
     threads: usize,
 ) -> PyResult<Bound<'py, PyAny>> {
     let pedigree = pedigree.arg()?;
@@ -87,6 +88,7 @@ pub(crate) fn mate_correlation<'py>(
         seed,
         min_stratum_networks,
         spearman,
+        inference,
     };
     let pool = checked_pool(py, threads)?;
     let result = py

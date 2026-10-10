@@ -448,7 +448,7 @@ fn primary(stratified: bool, pairs: &CellPairs, w: &[f64], start: Option<f64>) -
         pairs
     } else {
         pooled = pairs.pooled();
-        &pooled
+        &*pooled
     };
     match Sides::of(pairs) {
         Sides::Continuous if stratified => closed(stratified_pearson(pairs, w)),

@@ -24,7 +24,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from scipy.stats import norm
 
-from pg_phenotype import ParameterError, PgPhenotypeError, Trait, ValidationError
+from pg_phenotype import ParameterError, Pedigree, PgPhenotypeError, Trait, ValidationError
 from pg_phenotype.assortative import MateCorrelation, WithinPerson, mate_correlation
 from tests import assortative_builders as b
 from tests.oracle import assortative_reference as ref
@@ -1053,7 +1053,8 @@ def test_dataclass_fields_are_the_core_tree_keys():
         (ped["id"], ped["mother"], ped["father"], None, None),
         [(np.ascontiguousarray(x), "continuous", None), (np.ascontiguousarray(bb), "binary", None)],
         labels, ~np.isnan(strata),
-        permutations=19, bootstrap=19, seed=0, min_stratum_networks=2, spearman=True, threads=1,
+        permutations=19, bootstrap=19, seed=0, min_stratum_networks=2, spearman=True, inference=True,
+        threads=1,
     )  # fmt: skip
 
     def names(cls):
@@ -1071,3 +1072,93 @@ def test_dataclass_fields_are_the_core_tree_keys():
     assert set(defined["permutation"]) == names(am.Permutation)
     assert set(defined["bootstrap"]) == names(am.Draws)
     assert set(raw["within_person"]["mothers"]) == names(am.WithinPerson)
+
+
+def _without_inference(full: dict, permutations: int = 0, bootstrap: int = 0) -> dict:
+    """``plain`` of a default-mode result as ``inference=False`` reports it: inference fields cleared."""
+
+    def estimate(r: dict | None) -> None:
+        if r is None or r["reason"] is not None:
+            return
+        r.update(
+            se=None, se_unavailable_reason="not_requested", ci=None, ci_method=None,
+            ci_unavailable_reason="not_requested", bootstrap=None, permutation=None,
+        )  # fmt: skip
+
+    for record in (full["sample"], *full["cells"]):
+        record.update(n_mate_networks=None, largest_mate_network_share=None)
+    for cell in full["cells"]:
+        for r in cell["crude"]:
+            estimate(r)
+        estimate(cell["stratified"] and cell["stratified"]["result"])
+    full["within_person"] = None
+    full["settings"].update(inference=False, permutations=permutations, bootstrap=bootstrap)
+    return full
+
+
+@settings(deadline=None, max_examples=100)
+@given(
+    seed=st.integers(0, 2**32 - 1),
+    n_pairs=st.integers(1, 80),
+    kinds=st.lists(st.sampled_from(["continuous", "binary", "ordinal"]), min_size=1, max_size=2),
+    stratify=st.booleans(),
+    spearman=st.booleans(),
+    draws=st.sampled_from([0, 19]),
+)
+def test_inference_off_keeps_every_value_and_count(seed, n_pairs, kinds, stratify, spearman, draws):
+    """``inference=False`` reports exactly the default's estimates and counts, and clears only the inference fields."""
+    rng = np.random.default_rng(seed)
+    n_mothers, n_fathers = rng.integers(max(1, n_pairs // 2), n_pairs + 1, size=2)
+    pairs = sorted({(int(rng.integers(1, n_mothers + 1)), 1000 + int(rng.integers(n_fathers))) for _ in range(n_pairs)})
+    ped = b.pedigree(pairs, children_per_pair=int(rng.integers(1, 3)))
+    n = ped["id"].size
+    ped["father"][rng.random(n) < 0.1] = -1
+
+    def values(kind: str) -> Trait:
+        x = rng.normal(size=n)
+        if kind == "binary":
+            x = (x > 0).astype(np.float64)
+        elif kind == "ordinal":
+            x = np.digitize(x, [-0.5, 0.5]).astype(np.float64)
+        x[rng.random(n) < 0.05] = np.nan
+        return Trait(x, kind=kind)
+
+    traits = [values(k) for k in kinds]
+    stratum = None
+    if stratify:
+        stratum = rng.integers(0, 2, size=n).astype(np.float64)
+        stratum[rng.random(n) < 0.05] = np.nan
+
+    def outcome(pedigree: object, **kwargs: object) -> object:
+        try:
+            res = mate_correlation(
+                pedigree, traits, stratum=stratum, seed=seed, min_stratum_networks=2, spearman=spearman, **kwargs
+            )
+        except PgPhenotypeError as exc:
+            return exc.code
+        return b.plain(res)
+
+    shared = Pedigree(ped)
+    point = outcome(shared, inference=False)
+    full = outcome(shared, permutations=draws, bootstrap=draws)
+    if isinstance(full, str):
+        assert point == full
+        return
+    assert point == _without_inference(full)
+    assert outcome(ped, inference=False) == point
+
+
+def test_inference_off_takes_no_draws():
+    """Without inference, draws default to none and a requested one is refused."""
+    ped, x, _, _ = b.frame(1, 40)
+    trait = Trait(x, kind="continuous")
+    res = mate_correlation(ped, trait, inference=False)
+    assert (res.settings["permutations"], res.settings["bootstrap"], res.settings["inference"]) == (0, 0, False)
+    assert mate_correlation(ped, trait).settings["permutations"] == 999
+    for name in ("permutations", "bootstrap"):
+        with pytest.raises(ParameterError) as exc:
+            mate_correlation(ped, trait, inference=False, **{name: 1})
+        assert exc.value.code == "parameter_out_of_range"
+        assert exc.value.fields["name"] == name
+    with pytest.raises(TypeError, match="inference must be a bool"):
+        mate_correlation(ped, trait, inference=1)

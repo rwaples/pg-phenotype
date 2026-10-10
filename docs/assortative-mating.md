@@ -21,19 +21,20 @@ res = mate_correlation(
     ped,
     [Trait(liability), Trait(dx, kind="binary")],
     stratum=birth_decade,  # None by default
-    permutations=999,
+    permutations=None,  # 999, or 0 without inference
     bootstrap=0,
     seed=0,
     min_stratum_networks=10,
     spearman=False,
+    inference=True,
 )
 ```
 
 ```r
 ped <- pedigree(ped_df)
 res <- assortative_mate_correlation(ped, list(trait(ped_df$liability), trait(ped_df$dx, kind = "binary")),
-                                    stratum = ped_df$birth_decade, permutations = 999, bootstrap = 0,
-                                    seed = 0, min_stratum_networks = 10, spearman = FALSE)
+                                    stratum = ped_df$birth_decade, permutations = NULL, bootstrap = 0,
+                                    seed = 0, min_stratum_networks = 10, spearman = FALSE, inference = TRUE)
 ```
 
 | Argument | Meaning | Default |
@@ -41,19 +42,21 @@ res <- assortative_mate_correlation(ped, list(trait(ped_df$liability), trait(ped
 | `pedigree` | A `Pedigree`, or columns `id`, `mother`, `father` (`-1` or NA when missing) and optional `twin`, `sex`, which pedigree-graph's rules validate for this call alone | required |
 | `traits` | One or two `Trait`s on the pedigree's rows, continuous, binary or ordinal | required |
 | `stratum` | One integer label per row (a Depth, a birth-year bin), NA where unknown | `None` (unstratified) |
-| `permutations` | The most father permutations a primary estimate runs. 0 turns the p-value off | 999 |
+| `permutations` | The most father permutations a primary estimate runs. 0 turns the p-value off | `None`: 999, or 0 without inference |
 | `bootstrap` | Mate Network bootstrap draws. 0 gives sandwich (Wald) CIs | 0 |
 | `seed` | Keys every permutation and bootstrap draw. Any int64 (R: a whole number below 2^53 in magnitude) | 0 |
 | `min_stratum_networks` | With `stratum`, the fewest Mate Networks a sex x stratum may span. At least 1 | 10 |
 | `spearman` | Add `spearman` to a continuous x continuous cell. It ranks every pair, which costs more than the rest of such a cell | `False` |
+| `inference` | `False` returns the point estimates and counts alone; see [Point estimates only](#point-estimates-only) | `True` |
 
 The thread count is the package budget (`configure_threads`, or
 `PG_PHENOTYPE_THREADS`).  The same input and `seed` give the same result
 under every budget.
 
-A `Pedigree` keeps the Mating Pairs and Mate Networks that its first call
-finds.  A later call on it skips validating the pedigree and finding the
-pairs, and, when its strata drop no pair, building the networks.  The
+A `Pedigree` keeps the Mating Pairs that its first call finds and the Mate
+Networks that its first call with inference builds.  A later call on it
+skips validating the pedigree and finding the pairs, and, when its strata
+drop no pair, building the networks.  The
 result is the same as with the columns.  Traits and strata are matched to
 the pedigree's rows by position; see
 [Rows and alignment](../README.md#rows-and-alignment).
@@ -241,6 +244,28 @@ sequential p is exact under the null.  A null cell stops after about 98
 draws on average at 999 permutations. A cell with a strong signal runs
 every draw.
 
+## Point estimates only
+
+`inference=False` (R: `inference = FALSE`) returns what a caller that wants
+only the mate correlations needs: every cell's estimates, `boundary` flags,
+undefined estimates' `reason`, `table`, `n` and `n_dropped`, and the sample
+counts, equal to the default's.  It skips the work behind the rest:
+
+- No Mate Networks: `n_mate_networks` and `largest_mate_network_share` are
+  `None` in `sample` and in every cell.  A stratified call still builds a
+  cell's networks for the thin-stratum rule but does not report them, so
+  it saves less than an unstratified call.
+- No SE and no CI: `se` and `ci` are `None` with the reason
+  `not_requested`; `ci_method` is `None`.
+- No permutation record and no bootstrap: `permutation` and `bootstrap`
+  are `None`.  It takes no draws, so `permutations` and `bootstrap` must be
+  0; `permutations=None` gives 0.
+- No Within-Person Cross-Trait Correlation: `within_person` is `None`.
+  The default mode computes it.
+
+A `Pedigree` builds no Mate Networks for such a call, so it keeps only its
+Mating Pairs.
+
 ## Result
 
 `mate_correlation` returns a frozen `MateCorrelation`.  In R the same
@@ -251,8 +276,8 @@ values come as nested lists with the same names, `NULL` where Python has
 |---|---|
 | `sample` | `n_total` (Mating Pairs), `n_dropped_unknown_stratum`, `n_mate_networks`, `largest_mate_network_share`, `n_mothers_multiple_mates`, `n_fathers_multiple_mates` |
 | `cells` | One `Cell` per cell, in the order above |
-| `within_person` | Two traits only: `{"mothers": WithinPerson, "fathers": WithinPerson}` |
-| `settings` | `permutations`, `bootstrap`, `seed`, `threads`, `ci_level` (0.95), `min_stratum_networks` (`None` without `stratum`), `spearman` |
+| `within_person` | Two traits with inference only: `{"mothers": WithinPerson, "fathers": WithinPerson}` |
+| `settings` | `permutations`, `bootstrap`, `seed`, `threads`, `ci_level` (0.95), `min_stratum_networks` (`None` without `stratum`), `spearman`, `inference` |
 | `method` | `se_method`, `ci_scale`, `bootstrap_unit`, `bootstrap_assumption`, `bootstrap_method`, `permutation_null`, `permutation_blocks`, `permutation_statistic`, `permutation_stopping`, `permutation_stop_h`: the method in words |
 | `metadata` | `pg_phenotype_version`, `pedigree_graph_core_rev` |
 
@@ -261,7 +286,7 @@ values come as nested lists with the same names, `NULL` where Python has
 | `mother_trait`, `father_trait` | Indices into `traits` |
 | `n` | Analysed Mating Pairs |
 | `n_dropped` | `mother_missing`, `father_missing`, `both_missing`, `small_stratum`, `degenerate_stratum` |
-| `n_mate_networks`, `largest_mate_network_share` | Over the cell's pairs. The share is `None` without pairs |
+| `n_mate_networks`, `largest_mate_network_share` | Over the cell's pairs; `None` without inference. The share is also `None` without pairs |
 | `table` | Binary x binary only: the pair counts, rows by mother level, columns by father level |
 | `crude` | One `EstimatorResult` per estimator, the primary first. `cell["odds_ratio"]` looks one up by name, `cell.primary` is the first |
 | `stratified` | With `stratum`: `Stratified(result, n_strata_mothers, n_strata_fathers)` |
@@ -274,7 +299,7 @@ values come as nested lists with the same names, `NULL` where Python has
 | `se`, `se_unavailable_reason` | The sandwich SE, or `None` with a reason |
 | `ci`, `ci_method`, `ci_unavailable_reason` | The 95% CI and how it was built, or `None` with a reason |
 | `bootstrap` | With `bootstrap > 0`: `Draws(requested, valid, failed, failure_reasons)` |
-| `permutation` | Primary estimates only: `Permutation(statistic, p, p_unavailable_reason, draws, seed, n_fixed_fathers, stopped_early, draws_used, sequential_h)` |
+| `permutation` | Primary estimates with inference only: `Permutation(statistic, p, p_unavailable_reason, draws, seed, n_fixed_fathers, stopped_early, draws_used, sequential_h)` |
 
 In `permutation`, `draws` counts the draws read (`draws_used`, which
 includes failed draws), and `stopped_early` says whether that is fewer than
@@ -300,7 +325,7 @@ A value that is `None` comes with one of these reasons.
 | `sandwich_undefined` | SE, CI | The rho equation is not concave at the estimate |
 | `bootstrap_not_requested` | SE, CI | Spearman without a bootstrap |
 | `too_many_failed_draws` | CI | Fewer than 95% of the bootstrap draws are valid |
-| `not_requested` | p | `permutations=0` |
+| `not_requested` | SE, CI, p | SE and CI: `inference=False`. p: `permutations=0` |
 | `no_informative_permutations` | p | Every father of the cell is alone in his block |
 | `no_valid_permutations` | p | No permuted sample gave a statistic |
 
@@ -328,7 +353,7 @@ pedigree by pedigree-graph's rules, then the traits in order, then
 | `unused_level` | `ValidationError` | A declared level no row takes |
 | `stratum_length_mismatch` | `ValidationError` | `stratum` is not one label per row |
 | `invalid_integer_value` | `ValidationError` | A `stratum` label is not a whole number |
-| `parameter_out_of_range` | `ParameterError` | A negative `permutations` or `bootstrap`, `min_stratum_networks` below 1, or an integer outside int64 |
+| `parameter_out_of_range` | `ParameterError` | A negative `permutations` or `bootstrap`, a nonzero one with `inference=False`, `min_stratum_networks` below 1, or an integer outside int64 |
 
 A cell whose own pairs make an estimate impossible is not an error: the
 estimate is `None` with a [reason](#reasons).

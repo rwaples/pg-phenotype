@@ -27,3 +27,13 @@ def test_mate_correlation_releases_free_memory_first(monkeypatch):
     pedigree = {"id": ids, "mother": [-1, -1, -1, -1, 1, 2], "father": [-1, -1, -1, -1, 3, 4]}
     am.mate_correlation(pedigree, Trait([0.1, 0.9, 0.4, 0.2, np.nan, np.nan]), permutations=0)
     assert calls == [1]
+
+
+def test_pedigree_releases_free_memory_before_building(monkeypatch):
+    """``Pedigree`` hands free memory back once, after reading the columns and before the native build."""
+    from pg_phenotype import Pedigree, _pedigree
+
+    calls = []
+    monkeypatch.setattr(_pedigree, "release_free_memory", lambda: calls.append(1))
+    Pedigree({"id": np.arange(1, 4), "mother": [-1, -1, 1], "father": [-1, -1, 2]})
+    assert calls == [1]

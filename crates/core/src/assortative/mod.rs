@@ -39,7 +39,7 @@ use permutation::{NullDraw, Packed, SEQUENTIAL_H};
 use sample::{distinct_rows, drop_thin_strata, network_summary, stratum_codes, CellPairs, Kept};
 use std::borrow::Cow;
 
-pub use input::{Settings, Strata};
+pub use input::{Settings, Strata, DEFAULT_PERMUTATIONS};
 pub use result::{
     Cell, Ci, CiMethod, CiScale, Draws, Dropped, Estimate, Estimator, EstimatorResult,
     MateCorrelation, Method, Permutation, PermutationStatistic, Point, Reason, Sample,
@@ -76,8 +76,9 @@ fn cell_estimators(m: Kind, f: Kind) -> (&'static [Estimator], Estimator) {
 /// The Mate Correlation of `traits` (one or two, on the pedigree's rows) over
 /// the pedigree's Mating Pairs, optionally stratified, on the current pool.
 ///
-/// A built `pedigree` keeps its Mating Pairs and their Mate Networks for
-/// later calls; columns are validated for this call alone.
+/// A built `pedigree` keeps its Mating Pairs, and the Mate Networks a call
+/// with inference builds, for later calls; columns are validated for this
+/// call alone.
 ///
 /// # Errors
 ///
@@ -101,23 +102,29 @@ pub fn mate_correlation(
     }
     let stratified = strata.is_some();
     let ids = pedigree.ids();
-    let pairs = Pairs::build(&pedigree, strata);
-    let fathers = DistinctFathers::build(&pairs, ids, &columns);
+    let pairs = Pairs::build(&pedigree, strata, settings.inference);
     let sample = pairs.sample(n_rows);
+    let fathers = settings
+        .inference
+        .then(|| DistinctFathers::build(&pairs, ids, &columns));
 
     let mut cells = Vec::with_capacity(columns.len() * columns.len());
-    let mut fitted = Vec::with_capacity(cells.capacity());
+    let mut fitted = Vec::new();
     for mt in 0..columns.len() {
         for ft in 0..columns.len() {
-            let (cell, fit) = analyse_cell(&pairs, &fathers, &columns, [mt, ft], settings);
+            let (cell, analysed) = analyse_cell(&pairs, &columns, [mt, ft], settings);
             cells.push(cell);
-            fitted.push(fit);
+            if let Some(fathers) = &fathers {
+                fitted.push(cell_fit(fathers, analysed, ft, settings));
+            }
         }
     }
-    let nulls = permutation_nulls(&cells, &fitted, &columns, &fathers, settings);
-    attach_permutations(&mut cells, &fitted, &nulls, settings);
+    if let Some(fathers) = &fathers {
+        let nulls = permutation_nulls(&cells, &fitted, &columns, fathers, settings);
+        attach_permutations(&mut cells, &fitted, &nulls, settings);
+    }
 
-    let within_person = (columns.len() == 2).then(|| {
+    let within_person = (columns.len() == 2 && settings.inference).then(|| {
         let one = |rows: &[usize]| within_person(&columns, ids, rows);
         WithinPersonPair {
             mothers: one(&pairs.mothers),
@@ -136,6 +143,7 @@ pub fn mate_correlation(
             ci_level: CI_LEVEL,
             min_stratum_networks: stratified.then_some(settings.min_stratum_networks),
             spearman: settings.spearman,
+            inference: settings.inference,
         },
         method: METHOD,
     })
@@ -151,12 +159,12 @@ struct Pairs<'p> {
     /// Each row's stratum code, `None` where unknown; without strata every
     /// row is code 0.
     codes: Option<Vec<Option<usize>>>,
-    /// Each pair's Mate Network.
-    labels: Cow<'p, [usize]>,
+    /// Each pair's Mate Network, with inference.
+    labels: Option<Cow<'p, [usize]>>,
 }
 
 impl<'p> Pairs<'p> {
-    fn build(pedigree: &'p Pedigree, strata: Option<Strata<'_>>) -> Pairs<'p> {
+    fn build(pedigree: &'p Pedigree, strata: Option<Strata<'_>>, inference: bool) -> Pairs<'p> {
         let all = pedigree.mating_pairs();
         let codes = strata.map(stratum_codes);
         let all_pairs = || all.mothers.iter().zip(&all.fathers);
@@ -169,13 +177,13 @@ impl<'p> Pairs<'p> {
             Some(c) => {
                 let (mothers, fathers): (Vec<usize>, Vec<usize>) =
                     all_pairs().filter(|&pair| known(c, pair)).unzip();
-                let labels = mate_networks(&mothers, &fathers);
-                (Cow::Owned(mothers), Cow::Owned(fathers), Cow::Owned(labels))
+                let labels = inference.then(|| Cow::Owned(mate_networks(&mothers, &fathers)));
+                (Cow::Owned(mothers), Cow::Owned(fathers), labels)
             }
             None => (
                 Cow::Borrowed(all.mothers.as_slice()),
                 Cow::Borrowed(all.fathers.as_slice()),
-                Cow::Borrowed(pedigree.networks()),
+                inference.then(|| Cow::Borrowed(pedigree.networks())),
             ),
         };
         Pairs {
@@ -197,7 +205,7 @@ impl<'p> Pairs<'p> {
     }
 
     fn sample(&self, n_rows: usize) -> Sample {
-        let (n_mate_networks, largest_mate_network_share) = network_summary(&self.labels);
+        let (n_mate_networks, largest_mate_network_share) = networks_of(self.labels.as_deref());
         let multiple = |rows: &[usize], n: usize| {
             let mut count = vec![0u32; n];
             for &r in rows {
@@ -214,6 +222,14 @@ impl<'p> Pairs<'p> {
             n_fathers_multiple_mates: multiple(&self.fathers, n_rows),
         }
     }
+}
+
+/// [`network_summary`] of the Mate Networks inference built, `None` without.
+fn networks_of(labels: Option<&[usize]>) -> (Option<u64>, Option<f64>) {
+    labels.map_or((None, None), |labels| {
+        let (n, share) = network_summary(labels);
+        (Some(n), share)
+    })
 }
 
 /// The distinct fathers of the kept pairs, in father-id order, with their
@@ -276,15 +292,21 @@ struct CellTest {
     father_trait: usize,
 }
 
+/// A cell's analysed pairs: which of the sample's pairs they are, and their values.
+struct Analysed {
+    /// Index of each analysed pair among the sample's pairs.
+    complete: Vec<usize>,
+    pairs: CellPairs,
+}
+
 /// One cell (mother trait `mt` x father trait `ft`): its complete pairs, the
-/// thin-stratum drop, and every estimator with its SE and CI.
+/// thin-stratum drop, and every estimator with, under inference, its SE and CI.
 fn analyse_cell(
     pairs: &Pairs<'_>,
-    fathers: &DistinctFathers,
     columns: &[input::Column<'_>],
     [mt, ft]: [usize; 2],
     settings: input::Checked,
-) -> (Cell, CellFit) {
+) -> (Cell, Analysed) {
     let stratified = pairs.stratified();
     let (mother_trait, father_trait) = (&columns[mt], &columns[ft]);
     let mut dropped = Dropped::default();
@@ -322,7 +344,7 @@ fn analyse_cell(
     let cell_mothers = || -> Vec<usize> { complete.iter().map(|&p| pairs.mothers[p]).collect() };
     let cell_fathers = || -> Vec<usize> { complete.iter().map(|&p| pairs.fathers[p]).collect() };
     let n_complete = complete.len() as u64;
-    let labels: Cow<'_, [usize]> = if stratified {
+    let labels: Option<Cow<'_, [usize]>> = if stratified {
         let Kept {
             keep,
             n_small,
@@ -337,11 +359,15 @@ fn analyse_cell(
         cell_pairs = cell_pairs.take(&keep);
         dropped.small_stratum = n_small;
         dropped.degenerate_stratum = n_complete - complete.len() as u64 - n_small;
-        Cow::Owned(labels)
-    } else if complete.len() == pairs.mothers.len() {
-        Cow::Borrowed(&pairs.labels)
+        settings.inference.then_some(Cow::Owned(labels))
+    } else if let Some(all) = pairs.labels.as_deref() {
+        Some(if complete.len() == pairs.mothers.len() {
+            Cow::Borrowed(all)
+        } else {
+            Cow::Owned(mate_networks(&cell_mothers(), &cell_fathers()))
+        })
     } else {
-        Cow::Owned(mate_networks(&cell_mothers(), &cell_fathers()))
+        None
     };
     let cell_pairs = cell_pairs.with_levels(mother_trait.kind.levels(), father_trait.kind.levels());
     let (all_crude, strat) = cell_estimators(mother_trait.kind, father_trait.kind);
@@ -358,11 +384,11 @@ fn analyse_cell(
     let results = fit_cell(
         &estimators,
         &cell_pairs,
-        &labels,
+        labels.as_deref(),
         settings.bootstrap,
         settings.seed,
     );
-    let (n_mate_networks, largest_mate_network_share) = network_summary(&labels);
+    let (n_mate_networks, largest_mate_network_share) = networks_of(labels.as_deref());
     let n_strata = |code: &[usize]| {
         let mut distinct = code.to_vec();
         distinct.sort_unstable();
@@ -377,7 +403,7 @@ fn analyse_cell(
         n_strata_fathers: n_strata(&cell_pairs.f_stratum),
     });
     let table = (crude[0] == Estimator::Tetrachoric).then(|| {
-        let t = estimators::two_by_two(&cell_pairs.pooled(), &vec![1.0; cell_pairs.len()]);
+        let t = estimators::two_by_two(&cell_pairs, &vec![1.0; cell_pairs.len()]);
         t.map(|row| row.map(|v| v as u64))
     });
     let cell = Cell {
@@ -391,21 +417,38 @@ fn analyse_cell(
         crude: crude_results,
         stratified: stratified_result,
     };
-    let pair_father: Vec<usize> = complete.iter().map(|&p| fathers.of_pair[p]).collect();
+    let analysed = Analysed {
+        complete,
+        pairs: cell_pairs,
+    };
+    (cell, analysed)
+}
+
+/// What the permutation test of father trait `ft` needs of an analysed cell.
+fn cell_fit(
+    fathers: &DistinctFathers,
+    analysed: Analysed,
+    ft: usize,
+    settings: input::Checked,
+) -> CellFit {
+    let pair_father: Vec<usize> = analysed
+        .complete
+        .iter()
+        .map(|&p| fathers.of_pair[p])
+        .collect();
     let mut seen = vec![false; fathers.rows.len()];
-    let fit = CellFit {
+    CellFit {
         n_fixed_fathers: pair_father
             .iter()
             .filter(|&&f| fathers.fixed[f] && !std::mem::replace(&mut seen[f], true))
             .count() as u64,
         exchangeable: pair_father.iter().any(|&f| !fathers.fixed[f]),
         test: (settings.permutations > 0).then_some(CellTest {
-            pairs: cell_pairs,
+            pairs: analysed.pairs,
             pair_father,
             father_trait: ft,
         }),
-    };
-    (cell, fit)
+    }
 }
 
 /// Per cell, the observed permutation statistic and the null draws read of
@@ -517,11 +560,12 @@ fn attach_permutations(
     }
 }
 
-/// Observed estimates of one cell, and their records with SE, CI and draws.
+/// Observed estimates of one cell, and their records with SE, CI and draws
+/// given the pairs' Mate Network `labels` (inference).
 fn fit_cell(
     estimators: &[(Estimator, bool)],
     pairs: &CellPairs,
-    labels: &[usize],
+    labels: Option<&[usize]>,
     bootstrap: u64,
     seed: i64,
 ) -> Vec<EstimatorResult> {
@@ -530,6 +574,44 @@ fn fit_cell(
         .iter()
         .map(|&(e, strat)| estimators::point(e, strat, pairs, &ones, None))
         .collect();
+    drop(ones);
+    let estimates: Vec<Result<Estimate, Reason>> = match labels {
+        None => observed
+            .iter()
+            .map(|obs| {
+                obs.map(|point| Estimate {
+                    point,
+                    se: Err(Reason::NotRequested),
+                    ci: Err(Reason::NotRequested),
+                    bootstrap: None,
+                    permutation: None,
+                })
+                .map_err(kernels::Status::reason)
+            })
+            .collect(),
+        Some(labels) => infer(estimators, &observed, pairs, labels, bootstrap, seed),
+    };
+    estimators
+        .iter()
+        .zip(estimates)
+        .enumerate()
+        .map(|(k, (&(estimator, strat), outcome))| EstimatorResult {
+            estimator,
+            primary: k == 0 || strat,
+            outcome,
+        })
+        .collect()
+}
+
+/// Each observed estimate with its sandwich SE, its CI and its bootstrap draws.
+fn infer(
+    estimators: &[(Estimator, bool)],
+    observed: &[estimators::Fitted],
+    pairs: &CellPairs,
+    labels: &[usize],
+    bootstrap: u64,
+    seed: i64,
+) -> Vec<Result<Estimate, Reason>> {
     let starts: Vec<Option<f64>> = observed
         .iter()
         .map(|o| o.as_ref().ok().map(|p| p.value))
@@ -542,41 +624,34 @@ fn fit_cell(
     };
     estimators
         .iter()
-        .zip(&observed)
+        .zip(observed)
         .zip(&draws)
-        .enumerate()
-        .map(|(k, ((&(est, strat), obs), draws))| EstimatorResult {
-            estimator: est,
-            primary: k == 0 || strat,
-            outcome: match obs {
-                Err(status) => Err(status.reason()),
-                Ok(point) => {
-                    let se = sandwich::sandwich_se(est, strat, pairs, *point, labels);
-                    let (counts, ci) = if bootstrap > 0 {
-                        let (counts, ci) = bootstrap::record(draws, bootstrap, n_networks);
-                        (
-                            Some(counts),
-                            ci.map(|bounds| Ci {
-                                bounds,
-                                method: CiMethod::Bootstrap,
-                            }),
-                        )
-                    } else {
-                        let ci = se.map(|se| Ci {
-                            bounds: sandwich::wald_ci(point.value, se, est.ci_scale()),
-                            method: CiMethod::Sandwich,
-                        });
-                        (None, ci)
-                    };
-                    Ok(Estimate {
-                        point: *point,
-                        se,
-                        ci,
-                        bootstrap: counts,
-                        permutation: None,
-                    })
-                }
-            },
+        .map(|((&(est, strat), obs), draws)| {
+            let point = obs.map_err(kernels::Status::reason)?;
+            let se = sandwich::sandwich_se(est, strat, pairs, point, labels);
+            let (counts, ci) = if bootstrap > 0 {
+                let (counts, ci) = bootstrap::record(draws, bootstrap, n_networks);
+                (
+                    Some(counts),
+                    ci.map(|bounds| Ci {
+                        bounds,
+                        method: CiMethod::Bootstrap,
+                    }),
+                )
+            } else {
+                let ci = se.map(|se| Ci {
+                    bounds: sandwich::wald_ci(point.value, se, est.ci_scale()),
+                    method: CiMethod::Sandwich,
+                });
+                (None, ci)
+            };
+            Ok(Estimate {
+                point,
+                se,
+                ci,
+                bootstrap: counts,
+                permutation: None,
+            })
         })
         .collect()
 }

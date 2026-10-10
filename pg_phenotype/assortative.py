@@ -5,7 +5,8 @@ Network is a connected set of pairs through shared mates.  Each cell (mother
 trait x father trait) gets crude estimators on its pairs and, with strata,
 the primary estimator standardised within each sex x stratum.  Inference is a
 Mate Network cluster-robust sandwich SE, an optional one-step Mate Network
-bootstrap, and a father-permutation test of each primary estimate.  The
+bootstrap, and a father-permutation test of each primary estimate;
+``inference=False`` skips it all for the point estimates and counts.  The
 method follows pedsum #13; :attr:`MateCorrelation.method` describes it.
 """
 
@@ -80,7 +81,9 @@ class EstimatorResult:
 
     ``value`` is ``None`` exactly when ``reason`` says why there is no estimate.
     ``boundary`` is set for a latent correlation only.  ``se``, ``ci`` and the
-    permutation's ``p`` are each ``None`` with a ``*_unavailable_reason``.
+    permutation's ``p`` are each ``None`` with a ``*_unavailable_reason``;
+    without inference ``se`` and ``ci`` are ``not_requested`` and
+    ``permutation`` is ``None``.
     """
 
     estimator: str
@@ -119,13 +122,17 @@ class Dropped:
 
 @dataclass(frozen=True)
 class Cell:
-    """The mother's trait ``mother_trait`` against the father's ``father_trait`` (indices into the traits)."""
+    """The mother's trait ``mother_trait`` against the father's ``father_trait`` (indices into the traits).
+
+    ``n_mate_networks`` and ``largest_mate_network_share`` are ``None``
+    without inference; the share is also ``None`` when the cell has no pairs.
+    """
 
     mother_trait: int
     father_trait: int
     n: int
     n_dropped: Dropped
-    n_mate_networks: int
+    n_mate_networks: int | None
     largest_mate_network_share: float | None
     table: tuple[tuple[int, int], tuple[int, int]] | None
     crude: tuple[EstimatorResult, ...]
@@ -146,11 +153,14 @@ class Cell:
 
 @dataclass(frozen=True)
 class Sample:
-    """The Mating Pairs before any cell's filtering."""
+    """The Mating Pairs before any cell's filtering.
+
+    The Mate Network counts are ``None`` without inference.
+    """
 
     n_total: int
     n_dropped_unknown_stratum: int
-    n_mate_networks: int
+    n_mate_networks: int | None
     largest_mate_network_share: float | None
     n_mothers_multiple_mates: int
     n_fathers_multiple_mates: int
@@ -174,7 +184,8 @@ class MateCorrelation:
     Attributes:
         sample: Counts over the Mating Pairs.
         cells: Mother trait 0 x father trait 0, then (0, 1), (1, 0), (1, 1).
-        within_person: ``{"mothers": ..., "fathers": ...}`` with two traits.
+        within_person: ``{"mothers": ..., "fathers": ...}`` with two traits
+            and inference.
         settings: The settings used, the thread count, and the CI level.
         method: The method description (SE, CI scale, bootstrap and
             permutation design).
@@ -286,11 +297,12 @@ def mate_correlation(
     traits: Trait | Sequence[Trait],
     *,
     stratum: object = None,
-    permutations: int = 999,
+    permutations: int | None = None,
     bootstrap: int = 0,
     seed: int = 0,
     min_stratum_networks: int = 10,
     spearman: bool = False,
+    inference: bool = True,
 ) -> MateCorrelation:
     """The Mate Correlation of one or two traits over *pedigree*'s Mating Pairs.
 
@@ -300,11 +312,12 @@ def mate_correlation(
 
     Args:
         pedigree: A :class:`~pg_phenotype.Pedigree`, which keeps its Mating
-            Pairs and Mate Networks for later calls, or its columns ``id``,
-            ``mother``, ``father`` (``-1`` or NA when missing) and optional
-            ``twin``, ``sex``, as a polars or pandas frame or a mapping of
-            arrays.  Columns are read first and checked by pedigree-graph's
-            rules after the counts, for this call alone.
+            Pairs, and the Mate Networks a call with inference builds, for
+            later calls, or its columns ``id``, ``mother``, ``father``
+            (``-1`` or NA when missing) and optional ``twin``, ``sex``, as a
+            polars or pandas frame or a mapping of arrays.  Columns are read
+            first and checked by pedigree-graph's rules after the counts, for
+            this call alone.
         traits: One or two :class:`~pg_phenotype.Trait` (continuous, binary
             or ordinal).  Binary and ordinal values are level codes
             ``0..k-1``; every level is taken by some row.
@@ -313,7 +326,8 @@ def mate_correlation(
             each cell then drops its pairs in any sex x stratum spanning
             fewer than *min_stratum_networks* Mate Networks or constant there,
             and adds the stratified primary estimator.
-        permutations: Father permutations per primary estimate; 0 turns them off.
+        permutations: Father permutations per primary estimate; 0 turns them
+            off.  ``None`` is 999 with inference and 0 without.
         bootstrap: Mate Network bootstrap draws; 0 gives each estimate a Wald
             CI from its sandwich SE.
         seed: Keys every permutation and bootstrap draw (int64).
@@ -321,6 +335,14 @@ def mate_correlation(
         spearman: Add Spearman to the crude estimators of a continuous x
             continuous cell.  Off by default: it ranks every pair, which costs
             more than the rest of such a cell.
+        inference: ``False`` returns the point estimates and the pair counts
+            alone: no Mate Networks (their counts are ``None``), no SE or CI
+            (``not_requested``), no permutation record, and no
+            Within-Person Cross-Trait Correlation (the default computes
+            it).  Cell estimates and counts are the default's.  It takes no
+            draws: *permutations* and *bootstrap* must be 0.  A
+            :class:`~pg_phenotype.Pedigree` builds no Mate Networks for such
+            a call.
 
     Returns:
         A :class:`MateCorrelation`.
@@ -331,8 +353,9 @@ def mate_correlation(
             ``invalid_trait_value``, ``all_missing_trait``, ``constant_trait``,
             ``sparse_ordinal_codes``, ``unused_level``) or the strata
             (``stratum_length_mismatch``) is invalid.
-        ParameterError: A negative draw count, *min_stratum_networks* below 1,
-            or an integer outside int64.
+        ParameterError: A negative draw count, a nonzero one without
+            inference, *min_stratum_networks* below 1, or an integer outside
+            int64.
     """
     from pg_phenotype import __version__
 
@@ -342,19 +365,21 @@ def mate_correlation(
         (np.ascontiguousarray(t.values), t.kind, None if t.levels is None else len(t.levels)) for t in trait_list
     ]
     labels, known = (None, None) if stratum is None else _strata(stratum)
-    if not isinstance(spearman, (bool, np.bool_)):
-        raise TypeError(f"spearman must be a bool, got {spearman!r}")
+    for name, flag in (("spearman", spearman), ("inference", inference)):
+        if not isinstance(flag, (bool, np.bool_)):
+            raise TypeError(f"{name} must be a bool, got {flag!r}")
     release_free_memory()
     raw = _native.mate_correlation(
         native,
         native_traits,
         labels,
         known,
-        permutations=_count("permutations", permutations),
+        permutations=None if permutations is None else _count("permutations", permutations),
         bootstrap=_count("bootstrap", bootstrap),
         seed=_count("seed", seed),
         min_stratum_networks=_count("min_stratum_networks", min_stratum_networks),
         spearman=bool(spearman),
+        inference=bool(inference),
         threads=thread_budget(),
     )
     s = raw["sample"]

@@ -2,9 +2,9 @@
 #'
 #' Validates a pedigree once, for several methods or calls.
 #' [assortative_mate_correlation()] and [pafgrs_prepare()] take the result
-#' wherever they take pedigree columns.  It keeps the Mating Pairs and Mate
-#' Networks the first `assortative_mate_correlation()` call finds, so a later
-#' call skips validation and finding them.
+#' wherever they take pedigree columns.  It keeps the Mating Pairs the first
+#' `assortative_mate_correlation()` call finds and the Mate Networks the first
+#' with inference builds, so a later call skips validation and finding them.
 #'
 #' Row *i* of the pedigree is row *i* of `x`.  Traits, ages, strata and
 #' probands are matched to it by position: align values from another table

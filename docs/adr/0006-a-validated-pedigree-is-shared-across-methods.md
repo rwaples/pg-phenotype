@@ -28,7 +28,8 @@ call.
 - Validation still goes only through pg-phenotype's pinned
   `graph::build`, as ADR 0001 requires.
 - A Pedigree builds its Mating Pairs on first use and keeps them, and
-  likewise the Mate Networks of all its pairs.  Inputs given per call
+  likewise the Mate Networks of all its pairs, on the first call with
+  inference (a point-estimate call builds none).  Inputs given per call
   (traits, strata) never enter it.  A call whose strata drop no pair
   reuses both.  A call whose strata drop pairs computes the networks of
   the pairs it keeps, for that call alone.

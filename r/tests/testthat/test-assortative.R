@@ -90,6 +90,31 @@ test_that("one trait gives one cell, no within-person block, and the method desc
   expect_output(print(r), "4 Mating Pairs")
 })
 
+test_that("inference = FALSE keeps the estimates and counts and drops the inference", {
+  y <- trait(c(0.4, -0.2, 0.9, 0.1, -1.0, 0.3, 0.5, 0.7, rep(NA, 4)))
+  full <- assortative_mate_correlation(ped, list(x, y), permutations = 0)
+  point <- assortative_mate_correlation(ped, list(x, y), inference = FALSE)
+  expect_false(point$settings$inference)
+  expect_identical(point$settings$permutations, 0L)
+  expect_identical(point$sample$n_total, full$sample$n_total)
+  expect_null(point$sample$n_mate_networks)
+  expect_null(point$within_person)
+  for (k in seq_along(full$cells)) {
+    expect_identical(point$cells[[k]]$n, full$cells[[k]]$n)
+    expect_null(point$cells[[k]]$n_mate_networks)
+    r <- point$cells[[k]]$crude[[1L]]
+    expect_identical(r$value, full$cells[[k]]$crude[[1L]]$value)
+    expect_null(r$se)
+    expect_identical(r$se_unavailable_reason, "not_requested")
+    expect_null(r$permutation)
+  }
+  expect_output(print(point), "4 Mating Pairs\n")
+  err <- expect_pgp_error(assortative_mate_correlation(ped, x, inference = FALSE, bootstrap = 9),
+                          "parameter", "parameter_out_of_range")
+  expect_identical(err$fields$name, "bootstrap")
+  expect_pgp_error(assortative_mate_correlation(ped, x, inference = NA), "usage")
+})
+
 test_that("input errors carry the core's codes", {
   expect_pgp_error(assortative_mate_correlation(ped, list()), "validation", "trait_count")
   expect_pgp_error(assortative_mate_correlation(ped, trait(c(1, 1, 1, NA), kind = "binary")),

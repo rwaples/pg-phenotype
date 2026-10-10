@@ -220,12 +220,13 @@ pub struct Estimate {
     pub point: Point,
     /// The Mate Network cluster-robust sandwich SE, on the scale of the
     /// estimate: a correlation's raw r (its Wald interval converts it to
-    /// Fisher z), the odds ratio's log.
+    /// Fisher z), the odds ratio's log.  [`Reason::NotRequested`] without
+    /// inference, as is `ci`.
     pub se: Result<f64, Reason>,
     pub ci: Result<Ci, Reason>,
     /// Present when a bootstrap was requested.
     pub bootstrap: Option<Draws>,
-    /// Present for a primary estimate.
+    /// Present for a primary estimate with inference.
     pub permutation: Option<Permutation>,
 }
 
@@ -267,7 +268,9 @@ pub struct Cell {
     /// Analysed Mating Pairs.
     pub n: u64,
     pub n_dropped: Dropped,
-    pub n_mate_networks: u64,
+    /// `None` without inference.
+    pub n_mate_networks: Option<u64>,
+    /// `None` without inference or without pairs.
     pub largest_mate_network_share: Option<f64>,
     /// Pair counts of a binary x binary cell, rows by mother level, columns
     /// by father level.
@@ -283,7 +286,9 @@ pub struct Cell {
 pub struct Sample {
     pub n_total: u64,
     pub n_dropped_unknown_stratum: u64,
-    pub n_mate_networks: u64,
+    /// `None` without inference.
+    pub n_mate_networks: Option<u64>,
+    /// `None` without inference or without pairs.
     pub largest_mate_network_share: Option<f64>,
     pub n_mothers_multiple_mates: u64,
     pub n_fathers_multiple_mates: u64,
@@ -316,6 +321,7 @@ pub struct SettingsEcho {
     /// `Some` with strata.
     pub min_stratum_networks: Option<u64>,
     pub spearman: bool,
+    pub inference: bool,
 }
 
 /// The method description: what pedsum writes as its `inference` block.
@@ -359,7 +365,7 @@ pub struct MateCorrelation {
     pub sample: Sample,
     /// Mother trait 0 x father trait 0, then (0, 1), (1, 0), (1, 1).
     pub cells: Vec<Cell>,
-    /// Present with two traits.
+    /// Present with two traits and inference.
     pub within_person: Option<WithinPersonPair>,
     pub settings: SettingsEcho,
     pub method: Method,

@@ -6,11 +6,12 @@
 #' its pairs and, with `stratum`, the primary estimator standardised within
 #' each sex x stratum.  Inference is a Mate Network cluster-robust sandwich
 #' SE, an optional one-step Mate Network bootstrap, and a father-permutation
-#' test of each primary estimate.  The same inputs give the same numbers as
-#' the Python package's `pg_phenotype.assortative.mate_correlation`.
+#' test of each primary estimate; `inference = FALSE` skips it all for the
+#' point estimates and counts.  The same inputs give the same numbers as the
+#' Python package's `pg_phenotype.assortative.mate_correlation`.
 #'
-#' @param pedigree A [pedigree()], which keeps its Mating Pairs and Mate
-#'   Networks for later calls, or a data frame or a named list with columns
+#' @param pedigree A [pedigree()], which keeps its Mating Pairs, and the Mate
+#'   Networks a call with inference builds, for later calls, or a data frame or a named list with columns
 #'   `id`, `mother` and `father` (`NA` or -1 when missing), optionally `twin`
 #'   and `sex`.  Columns are read first and checked by pedigree-graph's rules
 #'   after the counts, for this call alone.
@@ -22,7 +23,8 @@
 #'   stratum are dropped; each cell then drops its pairs in any sex x stratum
 #'   spanning fewer than `min_stratum_networks` Mate Networks or constant
 #'   there, and adds the stratified primary estimator.
-#' @param permutations Father permutations per primary estimate; 0 turns them off.
+#' @param permutations Father permutations per primary estimate; 0 turns them
+#'   off.  `NULL` is 999 with inference and 0 without.
 #' @param bootstrap Mate Network bootstrap draws; 0 gives each estimate a
 #'   Wald CI from its sandwich SE.
 #' @param seed Keys every permutation and bootstrap draw (a whole number).
@@ -30,13 +32,21 @@
 #' @param spearman Add Spearman to the crude estimators of a continuous x
 #'   continuous cell.  Off by default: it ranks every pair, which costs
 #'   more than the rest of such a cell.
+#' @param inference `FALSE` returns the point estimates and the pair counts
+#'   alone: no Mate Networks (their counts are `NULL`), no SE or CI
+#'   (`not_requested`), no permutation record, and no Within-Person
+#'   Cross-Trait Correlation (the default computes it).  Cell estimates and
+#'   counts are the default's.  It takes no draws: `permutations` and
+#'   `bootstrap` must be 0.  A [pedigree()] builds no Mate Networks for such
+#'   a call.
 #' @return An object of class `pgphenotype_mate_correlation`: a list with
 #'   `sample`, `cells` (mother trait 1 x father trait 1, then 1 x 2, 2 x 1,
 #'   2 x 2), `within_person` (with two traits), `settings`, `method` (the
 #'   method description) and `metadata`.  Each cell holds `crude` (a list of
 #'   estimator records, the primary first) and `stratified`; a record has
 #'   `value` or a `reason`, and `se`, `ci` and the permutation `p` each come
-#'   with an `*_unavailable_reason`.  Trait indices (`mother_trait`,
+#'   with an `*_unavailable_reason`.  `within_person` and the Mate Network
+#'   counts are `NULL` without inference.  Trait indices (`mother_trait`,
 #'   `father_trait`) count from 0, as in Python.
 #' @examples
 #' ped <- data.frame(
@@ -48,8 +58,8 @@
 #' r <- assortative_mate_correlation(ped, x, permutations = 99)
 #' r
 #' @export
-assortative_mate_correlation <- function(pedigree, traits, stratum = NULL, permutations = 999, bootstrap = 0,
-                                         seed = 0, min_stratum_networks = 10, spearman = FALSE) {
+assortative_mate_correlation <- function(pedigree, traits, stratum = NULL, permutations = NULL, bootstrap = 0,
+                                         seed = 0, min_stratum_networks = 10, spearman = FALSE, inference = TRUE) {
   call <- sys.call()
   args <- .pgp_pedigree_args(pedigree, call)
   if (inherits(traits, "pgphenotype_trait")) traits <- list(traits)
@@ -59,9 +69,10 @@ assortative_mate_correlation <- function(pedigree, traits, stratum = NULL, permu
   n_levels <- vapply(traits, function(t) if (is.null(t$levels)) NA_real_ else as.double(length(t$levels)), 0)
   raw <- .pgp_call(do.call(.native_assortative_mate_correlation, c(args, list(
     lapply(traits, `[[`, "values"), vapply(traits, `[[`, "", "kind"), n_levels, stratum,
-    .pgp_number(permutations, "permutations", call), .pgp_number(bootstrap, "bootstrap", call),
+    if (is.null(permutations)) NULL else .pgp_number(permutations, "permutations", call),
+    .pgp_number(bootstrap, "bootstrap", call),
     .pgp_number(seed, "seed", call), .pgp_number(min_stratum_networks, "min_stratum_networks", call),
-    .pgp_flag(spearman, "spearman", call)
+    .pgp_flag(spearman, "spearman", call), .pgp_flag(inference, "inference", call)
   ))), call)
   raw$metadata <- list(pg_phenotype_version = pgphenotype_version(), pedigree_graph_core_rev = pg_core_rev())
   structure(raw, class = "pgphenotype_mate_correlation")
@@ -69,8 +80,8 @@ assortative_mate_correlation <- function(pedigree, traits, stratum = NULL, permu
 
 #' @export
 print.pgphenotype_mate_correlation <- function(x, ...) {
-  cat(sprintf("<pgphenotype_mate_correlation> %d Mating Pairs, %d Mate Networks\n",
-              x$sample$n_total, x$sample$n_mate_networks))
+  networks <- if (is.null(x$sample$n_mate_networks)) "" else sprintf(", %d Mate Networks", x$sample$n_mate_networks)
+  cat(sprintf("<pgphenotype_mate_correlation> %d Mating Pairs%s\n", x$sample$n_total, networks))
   for (cell in x$cells) {
     for (r in c(list(cell$crude[[1L]]), if (!is.null(cell$stratified)) list(cell$stratified))) {
       form <- if (identical(r, cell$crude[[1L]])) "crude" else "stratified"

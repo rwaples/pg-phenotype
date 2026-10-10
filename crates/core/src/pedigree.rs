@@ -9,7 +9,8 @@ use std::ops::Deref;
 use std::sync::{Arc, OnceLock};
 
 /// A pedigree pedigree-graph-core's validator accepted, in its input's row
-/// order, with the Mating Pairs and Mate Networks it finds once used.
+/// order, with the Mating Pairs it finds once used and the Mate Networks
+/// once a call with inference needs them.
 ///
 /// It keeps only what no method parameter changes.  The caches are filled
 /// serially: a Rayon worker waiting on one must not steal a job that waits

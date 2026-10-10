@@ -281,7 +281,7 @@ fn influence(
         pairs
     } else {
         pooled = pairs.pooled();
-        &pooled
+        &*pooled
     };
     Some(match est {
         Estimator::Spearman => return None,

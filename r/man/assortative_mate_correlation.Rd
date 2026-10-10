@@ -8,16 +8,17 @@ assortative_mate_correlation(
   pedigree,
   traits,
   stratum = NULL,
-  permutations = 999,
+  permutations = NULL,
   bootstrap = 0,
   seed = 0,
   min_stratum_networks = 10,
-  spearman = FALSE
+  spearman = FALSE,
+  inference = TRUE
 )
 }
 \arguments{
-\item{pedigree}{A [pedigree()], which keeps its Mating Pairs and Mate
-Networks for later calls, or a data frame or a named list with columns
+\item{pedigree}{A [pedigree()], which keeps its Mating Pairs, and the Mate
+Networks a call with inference builds, for later calls, or a data frame or a named list with columns
 `id`, `mother` and `father` (`NA` or -1 when missing), optionally `twin`
 and `sex`.  Columns are read first and checked by pedigree-graph's rules
 after the counts, for this call alone.}
@@ -32,7 +33,8 @@ stratum are dropped; each cell then drops its pairs in any sex x stratum
 spanning fewer than `min_stratum_networks` Mate Networks or constant
 there, and adds the stratified primary estimator.}
 
-\item{permutations}{Father permutations per primary estimate; 0 turns them off.}
+\item{permutations}{Father permutations per primary estimate; 0 turns them
+off.  `NULL` is 999 with inference and 0 without.}
 
 \item{bootstrap}{Mate Network bootstrap draws; 0 gives each estimate a
 Wald CI from its sandwich SE.}
@@ -44,6 +46,14 @@ Wald CI from its sandwich SE.}
 \item{spearman}{Add Spearman to the crude estimators of a continuous x
 continuous cell.  Off by default: it ranks every pair, which costs
 more than the rest of such a cell.}
+
+\item{inference}{`FALSE` returns the point estimates and the pair counts
+alone: no Mate Networks (their counts are `NULL`), no SE or CI
+(`not_requested`), no permutation record, and no Within-Person
+Cross-Trait Correlation (the default computes it).  Cell estimates and
+counts are the default's.  It takes no draws: `permutations` and
+`bootstrap` must be 0.  A [pedigree()] builds no Mate Networks for such
+a call.}
 }
 \value{
 An object of class `pgphenotype_mate_correlation`: a list with
@@ -52,7 +62,8 @@ An object of class `pgphenotype_mate_correlation`: a list with
   method description) and `metadata`.  Each cell holds `crude` (a list of
   estimator records, the primary first) and `stratified`; a record has
   `value` or a `reason`, and `se`, `ci` and the permutation `p` each come
-  with an `*_unavailable_reason`.  Trait indices (`mother_trait`,
+  with an `*_unavailable_reason`.  `within_person` and the Mate Network
+  counts are `NULL` without inference.  Trait indices (`mother_trait`,
   `father_trait`) count from 0, as in Python.
 }
 \description{
@@ -62,8 +73,9 @@ mates.  Each cell (mother trait x father trait) gets crude estimators on
 its pairs and, with `stratum`, the primary estimator standardised within
 each sex x stratum.  Inference is a Mate Network cluster-robust sandwich
 SE, an optional one-step Mate Network bootstrap, and a father-permutation
-test of each primary estimate.  The same inputs give the same numbers as
-the Python package's `pg_phenotype.assortative.mate_correlation`.
+test of each primary estimate; `inference = FALSE` skips it all for the
+point estimates and counts.  The same inputs give the same numbers as the
+Python package's `pg_phenotype.assortative.mate_correlation`.
 }
 \examples{
 ped <- data.frame(
