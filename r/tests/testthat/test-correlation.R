@@ -52,6 +52,7 @@ test_that("bad input is a classed error", {
   expect_pgp_error(correlation_tetrachoric(table = matrix(c(2^53 + 2, 1, 1, 1), 2)), "validation", "invalid_table")
   err <- expect_pgp_error(correlation_tetrachoric(c(0, 1, 1), c(0, 1, 7)), "validation", "invalid_trait_value")
   expect_identical(err$fields, list(field = "y", kind = "binary", position = 3, value = 7))
+  expect_match(conditionMessage(err), "y[3] = 7", fixed = TRUE)
   expect_pgp_error(correlation_tetrachoric(c(0, 1), c(0, 1, 1)), "validation", "pair_length_mismatch")
   expect_pgp_error(correlation_tetrachoric(table = 1:4), "usage")
   expect_pgp_error(correlation_tetrachoric(c(0, 1)), "usage")

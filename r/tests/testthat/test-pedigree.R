@@ -100,6 +100,7 @@ test_that("pedigree_rows() and pedigree_align() report bad ids with 1-based posi
   expect_match(conditionMessage(err), "ids[2] = 99", fixed = TRUE)
   err <- expect_pgp_error(pedigree_align(built, c(12, 10, 12), c(1, 2, 3)), "validation", "duplicate_lookup_id")
   expect_identical(err$fields, list(id = 12, positions = c(1, 3)))
+  expect_match(conditionMessage(err), "listed at positions 1 and 3", fixed = TRUE)
   err <- expect_pgp_error(pedigree_align(built, c(10, 11), 1), "validation", "pair_length_mismatch")
   expect_identical(err$fields, list(columns = c("ids", "values"), expected_length = 2, actual_length = 1))
   expect_pgp_error(pedigree_rows(built, c(10, NA)), "validation", "invalid_integer_value")

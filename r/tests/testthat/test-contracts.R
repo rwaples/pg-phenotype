@@ -102,6 +102,7 @@ test_that("pafgrs_cip validates and derives the threshold", {
   for (case in bad) {
     err <- expect_pgp_error(pafgrs_cip(case[[1]], case[[2]]), "parameter", "invalid_cip")
     expect_identical(err$fields$position, case[[3]])
+    expect_match(conditionMessage(err), paste0("at position ", case[[3]], ":"), fixed = TRUE)
   }
   expect_pgp_error(pafgrs_cip("0", 0.1), "usage")
 })

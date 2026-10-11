@@ -6,6 +6,7 @@ test_that("errors are classed conditions with a code and 1-based fields", {
   expect_match(conditionMessage(err), "probands[2] = 99", fixed = TRUE)
   err <- expect_pgp_error(pafgrs_prepare(ped, probands = c(12, 13, 12)), "validation", "duplicate_proband")
   expect_identical(err$fields, list(id = 12, positions = c(1, 3)))
+  expect_match(conditionMessage(err), "listed at positions 1 and 3", fixed = TRUE)
   err <- expect_pgp_error(pafgrs_prepare(ped, probands = c(12, NA)), "validation", "invalid_integer_value")
   expect_identical(err$fields$position, 2)
 })
@@ -20,7 +21,10 @@ test_that("the pedigree is validated", {
   expect_identical(err$fields[c("field", "position", "value")], list(field = "mother", position = 3, value = 10.5))
   dup <- ped
   dup$id[2] <- 10L
-  expect_pgp_error(pafgrs_prepare(dup), "validation", "duplicate_id")
+  err <- expect_pgp_error(pafgrs_prepare(dup), "validation", "duplicate_id")
+  expect_identical(err$fields$rows, c(1, 2))
+  # pedigree-graph writes a pedigree error's message, counting from 0.
+  expect_match(conditionMessage(err), "rows (0, 1)", fixed = TRUE)
   cyc <- ped
   cyc$mother[1] <- 15L
   expect_pgp_error(pafgrs_prepare(cyc), "validation")

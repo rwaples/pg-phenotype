@@ -33,6 +33,7 @@ test_that("invalid input names the first offending person, 1-based", {
   expect_identical(err$fields$columns, c("age", "status"))
   err <- expect_pgp_error(pafgrs_cip_aalen_johansen(c(1, NA), c(1, 0)), "validation", "invalid_age")
   expect_identical(err$fields$position, 2)
+  expect_match(conditionMessage(err), "age[2]", fixed = TRUE)
   err <- expect_pgp_error(pafgrs_cip_aalen_johansen(c(1, 2), c(1, 3)), "validation", "invalid_status")
   expect_identical(err$fields$position, 2)
   expect_match(conditionMessage(err), "status[2]", fixed = TRUE)

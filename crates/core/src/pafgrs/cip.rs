@@ -46,7 +46,12 @@ impl Cip {
     ///
     /// [`Error::InvalidCip`] at the first position that breaks the contract.
     pub fn new(ages: Vec<f64>, cip: Vec<f64>, interpolation: Interpolation) -> Result<Cip, Error> {
-        let bad = |reason, position| Err(Error::InvalidCip { reason, position });
+        let bad = |reason, position: usize| {
+            Err(Error::InvalidCip {
+                reason,
+                position: position.into(),
+            })
+        };
         if ages.is_empty() {
             return bad(CipProblem::Empty, 0);
         }
@@ -175,7 +180,7 @@ impl Observed {
             if !age.is_nan() && !(age.is_finite() && age >= 0.0) {
                 return Err(Error::InvalidAge {
                     field: age_field,
-                    position: row,
+                    position: row.into(),
                     value: age,
                 });
             }
@@ -195,7 +200,7 @@ impl Observed {
                 return Err(Error::InvalidTraitCode {
                     field: status_field,
                     kind: TraitKind::Binary,
-                    position: row,
+                    position: row.into(),
                     value: s,
                 });
             }
@@ -309,7 +314,10 @@ mod tests {
         for (ages, values, reason, position) in cases {
             assert_eq!(
                 Cip::new(ages, values, Interpolation::Linear).unwrap_err(),
-                Error::InvalidCip { reason, position }
+                Error::InvalidCip {
+                    reason,
+                    position: position.into()
+                }
             );
         }
     }

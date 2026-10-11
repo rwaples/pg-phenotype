@@ -101,25 +101,28 @@ fn check(age: &[f64], status: &[f64], entry: Option<&[f64]>) -> Result<(), Error
         if !valid_age(a) {
             return Err(Error::InvalidAge {
                 field: "age",
-                position,
+                position: position.into(),
                 value: a,
             });
         }
         if !matches!(s, 0.0 | 1.0 | 2.0) {
-            return Err(Error::InvalidStatus { position, value: s });
+            return Err(Error::InvalidStatus {
+                position: position.into(),
+                value: s,
+            });
         }
         if let Some(&e) = entry.map(|e| &e[position]) {
             if !valid_age(e) {
                 return Err(Error::InvalidAge {
                     field: "entry",
-                    position,
+                    position: position.into(),
                     value: e,
                 });
             }
             // A censored row may leave at its entry age, at risk nowhere.
             if e > a || (e == a && s != 0.0) {
                 return Err(Error::EntryNotBeforeAge {
-                    position,
+                    position: position.into(),
                     entry: e,
                     age: a,
                 });
@@ -247,7 +250,7 @@ mod tests {
         for bad in [f64::NAN, 3.0, 0.5, -1.0] {
             let e = err(&[1.0, 2.0], &[1.0, bad], None);
             assert!(
-                matches!(e, Error::InvalidStatus { position: 1, .. }),
+                matches!(e, Error::InvalidStatus { position, .. } if position == 1.into()),
                 "{e:?}"
             );
         }
@@ -257,16 +260,16 @@ mod tests {
                 e,
                 Error::InvalidAge {
                     field: "entry",
-                    position: 1,
+                    position,
                     ..
-                }
+                } if position == 1.into()
             ),
             "{e:?}"
         );
         assert_eq!(
             err(&[1.0, 2.0], &[1.0, 0.0], Some(&[0.0, 2.5])),
             Error::EntryNotBeforeAge {
-                position: 1,
+                position: 1.into(),
                 entry: 2.5,
                 age: 2.0
             }
@@ -274,7 +277,7 @@ mod tests {
         for event in [1.0, 2.0] {
             let e = err(&[1.0, 2.0], &[1.0, event], Some(&[0.0, 2.0]));
             assert!(
-                matches!(e, Error::EntryNotBeforeAge { position: 1, .. }),
+                matches!(e, Error::EntryNotBeforeAge { position, .. } if position == 1.into()),
                 "{e:?}"
             );
         }

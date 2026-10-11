@@ -121,7 +121,7 @@ impl ValueRule {
             Err(Error::InvalidTraitCode {
                 field: self.field,
                 kind: self.kind,
-                position,
+                position: position.into(),
                 value,
             })
         }

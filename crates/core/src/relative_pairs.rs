@@ -305,7 +305,7 @@ fn resolve(entries: &[Entry]) -> Result<Vec<Request>, Error> {
         if let Some((first, first_name)) = owner[category.index()] {
             return Err(Error::DuplicateCategory {
                 category: category.code(),
-                positions: [first, position],
+                positions: [first.into(), position.into()],
                 entries: [first_name.to_string(), name.to_string()],
             });
         }
@@ -318,7 +318,7 @@ fn resolve(entries: &[Entry]) -> Result<Vec<Request>, Error> {
     let parse = |code: &str, position: usize| {
         Category::parse(code).ok_or_else(|| Error::UnknownCategory {
             category: code.to_string(),
-            position,
+            position: position.into(),
         })
     };
     for entry in entries {
@@ -336,13 +336,13 @@ fn resolve(entries: &[Entry]) -> Result<Vec<Request>, Error> {
                 if Category::parse(name).is_some() {
                     return Err(Error::ReservedGroupName {
                         group: name.clone(),
-                        position,
+                        position: position.into(),
                     });
                 }
                 let Some(first) = members.first() else {
                     return Err(Error::EmptyCategoryGroup {
                         group: name.clone(),
-                        position,
+                        position: position.into(),
                     });
                 };
                 let first = parse(first, position)?;
@@ -376,7 +376,7 @@ fn resolve(entries: &[Entry]) -> Result<Vec<Request>, Error> {
         if let Some(&(first, _)) = requests.iter().find(|(_, r)| r.name == request.name) {
             return Err(Error::DuplicateEntryName {
                 name: request.name,
-                positions: [first, position],
+                positions: [first.into(), position.into()],
             });
         }
         requests.push((position, request));
@@ -1016,7 +1016,7 @@ mod tests {
             err,
             Error::UnknownCategory {
                 category: "XX".to_string(),
-                position: 1
+                position: 1.into()
             }
         );
         let mut entries = entries;

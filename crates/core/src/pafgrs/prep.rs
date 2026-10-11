@@ -19,7 +19,7 @@
 //! storage, so neither depends on the thread count.
 
 use super::triangle::Triangle;
-use crate::error::Error;
+use crate::error::{Error, Position};
 use crate::lineage::Terminals;
 use crate::pedigree::{checked_rows, Pedigree as Validated, PedigreeArg};
 use pedigree_graph_core::kinship::ancestry::AncestorSignatures;
@@ -299,8 +299,14 @@ fn proband_rows(pedigree: &Validated, ids: Option<&[i64]>) -> Result<Vec<u32>, E
         &pedigree.index_or_build(),
         pedigree.len(),
         ids,
-        |id, position| Error::UnknownProband { id, position },
-        |id, positions| Error::DuplicateProband { id, positions },
+        |id, position| Error::UnknownProband {
+            id,
+            position: position.into(),
+        },
+        |id, positions| Error::DuplicateProband {
+            id,
+            positions: positions.map(Position::from),
+        },
     )?;
     let mut rows: Vec<u32> = rows.into_iter().map(|row| row as u32).collect();
     rows.sort_unstable();
@@ -735,7 +741,7 @@ mod tests {
             err,
             Error::UnknownProband {
                 id: 77,
-                position: 1
+                position: 1.into()
             }
         );
         let err = prepare(input(&ids, &mother, &father), 2, Some(&[12, 13, 12])).unwrap_err();
@@ -743,7 +749,7 @@ mod tests {
             err,
             Error::DuplicateProband {
                 id: 12,
-                positions: [0, 2]
+                positions: [0.into(), 2.into()]
             }
         );
     }

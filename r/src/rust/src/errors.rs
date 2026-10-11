@@ -6,7 +6,7 @@
 //! give an untyped `simpleError` and unwind through R's longjmp.
 
 use extendr_api::prelude::*;
-use pg_phenotype_core::error::{Class, FieldValue};
+use pg_phenotype_core::error::{Class, FieldValue, IndexBase};
 use pg_phenotype_core::Error;
 
 /// One failure on its way to R.
@@ -109,115 +109,17 @@ impl From<Error> for HostError {
             code => Some(code),
         };
         let fields = err
-            .fields()
+            .fields(IndexBase::One)
             .into_iter()
-            .map(|(name, value)| (name, field_robj(name, value)))
+            .map(|(name, value)| (name, field_robj(value)))
             .collect();
         HostError {
             class,
             code,
-            message: one_based(err).to_string(),
+            message: err.message(IndexBase::One),
             fields,
         }
     }
-}
-
-/// `err` with the positions its message names counted from 1, as R counts.
-fn one_based(err: Error) -> Error {
-    match err {
-        Error::UnknownProband { id, position } => Error::UnknownProband {
-            id,
-            position: position + 1,
-        },
-        Error::DuplicateProband { id, positions } => Error::DuplicateProband {
-            id,
-            positions: positions.map(|p| p + 1),
-        },
-        Error::UnknownId { id, position } => Error::UnknownId {
-            id,
-            position: position + 1,
-        },
-        Error::DuplicateLookupId { id, positions } => Error::DuplicateLookupId {
-            id,
-            positions: positions.map(|p| p + 1),
-        },
-        Error::InvalidAge {
-            field,
-            position,
-            value,
-        } => Error::InvalidAge {
-            field,
-            position: position + 1,
-            value,
-        },
-        Error::InvalidCip { reason, position } => Error::InvalidCip {
-            reason,
-            position: position + 1,
-        },
-        Error::InvalidTraitCode {
-            field,
-            kind,
-            position,
-            value,
-        } => Error::InvalidTraitCode {
-            field,
-            kind,
-            position: position + 1,
-            value,
-        },
-        Error::UnknownCategory { category, position } => Error::UnknownCategory {
-            category,
-            position: position + 1,
-        },
-        Error::DuplicateCategory {
-            category,
-            positions,
-            entries,
-        } => Error::DuplicateCategory {
-            category,
-            positions: positions.map(|p| p + 1),
-            entries,
-        },
-        Error::DuplicateEntryName { name, positions } => Error::DuplicateEntryName {
-            name,
-            positions: positions.map(|p| p + 1),
-        },
-        Error::EmptyCategoryGroup { group, position } => Error::EmptyCategoryGroup {
-            group,
-            position: position + 1,
-        },
-        Error::ReservedGroupName { group, position } => Error::ReservedGroupName {
-            group,
-            position: position + 1,
-        },
-        Error::InvalidStatus { position, value } => Error::InvalidStatus {
-            position: position + 1,
-            value,
-        },
-        Error::EntryNotBeforeAge {
-            position,
-            entry,
-            age,
-        } => Error::EntryNotBeforeAge {
-            position: position + 1,
-            entry,
-            age,
-        },
-        other => other,
-    }
-}
-
-/// Whether a core field holds 0-based indices, which R reports 1-based.
-///
-/// pedigree-graph's R binding uses the same rule by name, so a pedigree
-/// error reads the same from either package.
-fn is_index_field(name: &str) -> bool {
-    matches!(
-        name,
-        "row" | "rows" | "column" | "columns" | "position" | "positions"
-    ) || ["_row", "_rows", "_column", "_columns"]
-        .iter()
-        .any(|suffix| name.ends_with(suffix))
 }
 
 /// The largest magnitude a double holds exactly.
@@ -244,11 +146,10 @@ pub fn integer64(values: &[i64]) -> Robj {
     out
 }
 
-fn field_robj(name: &str, value: FieldValue) -> Robj {
-    let shift = i64::from(is_index_field(name));
+fn field_robj(value: FieldValue) -> Robj {
     match value {
-        FieldValue::Int(n) => int_values(vec![n + shift]),
-        FieldValue::Ints(v) => int_values(v.into_iter().map(|n| n + shift).collect()),
+        FieldValue::Int(n) => int_values(vec![n]),
+        FieldValue::Ints(v) => int_values(v),
         FieldValue::Float(x) => x.into(),
         FieldValue::Str(s) => s.into(),
         FieldValue::Text(s) => s.into(),
@@ -260,19 +161,4 @@ fn field_robj(name: &str, value: FieldValue) -> Robj {
 /// A binding's value, or its failure as the list `.pgp_call()` signals.
 pub fn finish(result: HostResult<Robj>) -> Robj {
     result.unwrap_or_else(HostError::into_robj)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_index_field;
-
-    #[test]
-    fn index_fields_are_named_rows_columns_or_positions() {
-        for name in ["row", "rows", "position", "positions", "child_row"] {
-            assert!(is_index_field(name), "{name}");
-        }
-        for name in ["id", "field", "value", "expected_length", "twin_id"] {
-            assert!(!is_index_field(name), "{name}");
-        }
-    }
 }

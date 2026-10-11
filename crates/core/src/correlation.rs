@@ -90,7 +90,7 @@ pub fn tetrachoric_pairs(x: &[f64], y: &[f64]) -> Result<Tetrachoric, Error> {
         _ => Err(Error::InvalidTraitCode {
             field,
             kind: TraitKind::Binary,
-            position,
+            position: position.into(),
             value,
         }),
     };

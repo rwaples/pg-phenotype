@@ -102,10 +102,12 @@ test_that("invalid input raises the core's conditions", {
     relative_pairs_correlation(ped, trait(v), categories = list(G = c("MO", "GP"))),
     "validation", "mixed_category_group"
   )
-  expect_pgp_error(
+  err <- expect_pgp_error(
     relative_pairs_correlation(ped, trait(v), categories = list(G = character())),
     "validation", "empty_category_group"
   )
+  expect_identical(err$fields$position, 1)
+  expect_match(conditionMessage(err), "(categories[1]) is empty", fixed = TRUE)
   err <- expect_pgp_error(
     relative_pairs_correlation(ped, trait(v), categories = list(G = "FS", G = "MHS")),
     "validation", "duplicate_entry_name"

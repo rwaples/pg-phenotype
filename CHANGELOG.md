@@ -5,6 +5,13 @@
 - The tetrachoric ADR is renumbered 0006 -> 0011, because the Pedigree ADR
   also had 0006 (#11).  The Relative-Pair Correlation's `method` entry
   `estimators` now cites ADR 0011.  A test fails on a duplicate ADR number.
+- In Rust, `Error`'s positional fields hold a `Position`, and
+  `Error::fields` and the new `Error::message` take an `IndexBase` (`Zero`
+  for Python and Rust, `One` for R); `Display` is `message(IndexBase::Zero)`.
+  Each host now gets its message and fields from one rule, so a new
+  positional pg-phenotype error cannot report one base in R's message and
+  another in its fields.  A pedigree error's message is still
+  pedigree-graph's, 0-based in R as well.  Python and R output is unchanged.
 
 ## v0.3.0
 

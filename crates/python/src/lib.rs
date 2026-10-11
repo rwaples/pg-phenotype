@@ -5,7 +5,7 @@
 //! crosses as `RuntimeError`, as `configure_threads` raises it.
 
 use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
-use pg_phenotype_core::error::{Class, FieldValue};
+use pg_phenotype_core::error::{Class, FieldValue, IndexBase};
 use pg_phenotype_core::pafgrs::{self, BivParams, Cip, Interpolation};
 use pg_phenotype_core::{threads, Error, PedigreeArg, PedigreeInput, Trait, TraitKind};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyValueError};
@@ -49,21 +49,21 @@ fn field_object(py: Python<'_>, value: FieldValue) -> PyResult<Py<PyAny>> {
 
 pub(crate) fn to_pyerr(py: Python<'_>, err: Error) -> PyErr {
     if err.code() == "thread_pool_conflict" {
-        return PyRuntimeError::new_err(err.to_string());
+        return PyRuntimeError::new_err(err.message(IndexBase::Zero));
     }
     let class_name = match err.class() {
         Class::Validation => "ValidationError",
         Class::Parameter => "ParameterError",
         Class::Resource => "ResourceError",
-        Class::Usage => return PyValueError::new_err(err.to_string()),
+        Class::Usage => return PyValueError::new_err(err.message(IndexBase::Zero)),
     };
     let raise = || -> PyResult<PyErr> {
         let fields = PyDict::new(py);
-        for (name, value) in err.fields() {
+        for (name, value) in err.fields(IndexBase::Zero) {
             fields.set_item(name, field_object(py, value)?)?;
         }
         let class = py.import("pg_phenotype._errors")?.getattr(class_name)?;
-        let instance = class.call((err.code(), err.to_string()), Some(&fields))?;
+        let instance = class.call((err.code(), err.message(IndexBase::Zero)), Some(&fields))?;
         Ok(PyErr::from_value(instance))
     };
     raise().unwrap_or_else(|e| e)

@@ -2,7 +2,7 @@
 //! share (ADR 0006).
 
 use crate::assortative::{mate_networks, mating_pairs, MatingPairs};
-use crate::error::Error;
+use crate::error::{Error, Position};
 use crate::input::PedigreeInput;
 use pedigree_graph_core::graph::{self, Columns, IdIndex, Limits, SexEncoding};
 use pedigree_graph_core::relationships;
@@ -92,8 +92,14 @@ impl Pedigree {
             index,
             self.len(),
             ids,
-            |id, position| Error::UnknownId { id, position },
-            |id, positions| Error::DuplicateLookupId { id, positions },
+            |id, position| Error::UnknownId {
+                id,
+                position: position.into(),
+            },
+            |id, positions| Error::DuplicateLookupId {
+                id,
+                positions: positions.map(Position::from),
+            },
         )
     }
 
@@ -328,21 +334,21 @@ mod tests {
             ped.rows(&[10, 99]).unwrap_err(),
             Error::UnknownId {
                 id: 99,
-                position: 1
+                position: 1.into()
             }
         );
         assert_eq!(
             ped.rows(&[-1]).unwrap_err(),
             Error::UnknownId {
                 id: -1,
-                position: 0
+                position: 0.into()
             }
         );
         assert_eq!(
             ped.rows(&[31, 10, 31]).unwrap_err(),
             Error::DuplicateLookupId {
                 id: 31,
-                positions: [0, 2]
+                positions: [0.into(), 2.into()]
             }
         );
         let err = ped.align(&[10, 11], &[1.0], f64::NAN).unwrap_err();

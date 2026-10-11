@@ -18,6 +18,14 @@ and reject an id that is not a row's or is listed twice.  A method given pedigre
 instead checks them into a Pedigree for that call alone.
 _Avoid_: graph, pedigree frame
 
+**Position**:
+Where an entry sits in a list the caller passed (probands, ids, categories,
+a CIP table) or among a Pedigree's rows.  Python and Rust count positions
+from 0, R from 1, and an error reports them as its host counts, except
+the message of a pedigree error, which pedigree-graph writes from 0.  A level
+code is a value, not a Position.
+_Avoid_: index (for a caller-facing place), offset
+
 **Trait**:
 One phenotype column aligned to pedigree rows, missing where unknown, with a
 kind: continuous, binary, ordinal or categorical.  A trait is values only;
