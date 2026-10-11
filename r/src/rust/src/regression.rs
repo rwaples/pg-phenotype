@@ -1,11 +1,11 @@
 //! `regression_parent_offspring()`: the regressions as nested lists, the
 //! core's `to_value` tree that the Python binding converts too.
 
-use crate::assortative::to_robj;
 use crate::errors::{finish, HostResult};
 use crate::input;
 use crate::pedigree::Source;
 use crate::threads;
+use crate::value::to_robj;
 use extendr_api::prelude::*;
 use pg_phenotype_core::assortative::Strata;
 use pg_phenotype_core::regression;

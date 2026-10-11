@@ -19,6 +19,7 @@ mod regression;
 mod relative_pairs;
 #[cfg(feature = "test-hooks")]
 mod test_hooks;
+mod value;
 
 /// A proband's relative rows and their kinship to it.
 type Relatives<'py> = (Bound<'py, PyArray1<u32>>, Bound<'py, PyArray1<f32>>);

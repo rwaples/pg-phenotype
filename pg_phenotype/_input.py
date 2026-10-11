@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
-from pg_phenotype._errors import ValidationError
+from pg_phenotype._errors import ParameterError, ValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -213,3 +213,21 @@ def strata(stratum: object) -> tuple[np.ndarray, np.ndarray]:
     # Unknown rows carry label 0, which the core ignores under `known`.
     labels[~known] = 0
     return np.ascontiguousarray(labels), np.ascontiguousarray(known)
+
+
+_INT64 = (-(2**63), 2**63 - 1)
+
+
+def count(name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be an int, got {value!r}")
+    value = int(value)
+    if not _INT64[0] <= value <= _INT64[1]:
+        raise ParameterError(
+            "parameter_out_of_range",
+            f"{name} = {value} is outside the int64 range",
+            name=name,
+            value=float(value),
+            domain="[-2^63, 2^63)",
+        )
+    return value

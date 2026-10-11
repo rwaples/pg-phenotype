@@ -19,8 +19,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from pg_phenotype import _native
-from pg_phenotype._errors import ParameterError
-from pg_phenotype._input import strata
+from pg_phenotype._input import count, strata
 from pg_phenotype._memory import release_free_memory
 from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._threads import thread_budget
@@ -41,8 +40,6 @@ __all__ = [
     "WithinPerson",
     "mate_correlation",
 ]
-
-_INT64 = (-(2**63), 2**63 - 1)
 
 
 @dataclass(frozen=True)
@@ -267,21 +264,6 @@ def _cell(raw: dict) -> Cell:
     )
 
 
-def _count(name: str, value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
-        raise TypeError(f"{name} must be an int, got {value!r}")
-    value = int(value)
-    if not _INT64[0] <= value <= _INT64[1]:
-        raise ParameterError(
-            "parameter_out_of_range",
-            f"{name} = {value} is outside the int64 range",
-            name=name,
-            value=float(value),
-            domain="[-2^63, 2^63)",
-        )
-    return value
-
-
 def mate_correlation(
     pedigree: object,
     traits: Trait | Sequence[Trait],
@@ -364,10 +346,10 @@ def mate_correlation(
         native_traits,
         labels,
         known,
-        permutations=None if permutations is None else _count("permutations", permutations),
-        bootstrap=_count("bootstrap", bootstrap),
-        seed=_count("seed", seed),
-        min_stratum_networks=_count("min_stratum_networks", min_stratum_networks),
+        permutations=None if permutations is None else count("permutations", permutations),
+        bootstrap=count("bootstrap", bootstrap),
+        seed=count("seed", seed),
+        min_stratum_networks=count("min_stratum_networks", min_stratum_networks),
         spearman=bool(spearman),
         inference=bool(inference),
         threads=thread_budget(),
