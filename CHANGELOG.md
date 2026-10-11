@@ -25,9 +25,10 @@ correlates one trait between the members of each Relationship Category's
 Relative Pairs, or a named Category Group's (`{"PO": ["MO", "FO"]}`), one
 cell each; the default is every category up to degree 3.  A continuous
 trait gets Pearson's r, a binary trait the tetrachoric (primary, ADR
-0011's fit) and phi.  A symmetric category's pairs enter in both orders,
-so its correlation is intraclass and row-order free; a directed one's enter
-once, in its roles' order.  Each cell reports `n`, `n_dropped`, and a
+0011's fit, numbered 0006 in this release) and phi.  A symmetric
+category's pairs enter in both orders, so its correlation is intraclass and
+row-order free; a directed one's enter once, in its roles' order.  Each
+cell reports `n`, `n_dropped`, and a
 binary cell's Concordance (symmetric) or 2 x 2 table (directed).  A value
 is `None` only when undefined, with a reason; there is no pair floor and no
 SE yet ([ADR 0009](docs/adr/0009-relative-pair-correlation.md)).  Pairs
@@ -182,7 +183,8 @@ unchanged.
   cluster) and a Wald CI on the Fisher-z scale.  Pairs with a missing
   value are dropped and counted.  New error codes: `pair_length_mismatch`,
   and `invalid_table` from the hosts.  `docs/gates/tetrachoric` compares it
-  with simACE's `tetrachoric_from_table` (ADR 0011).
+  with simACE's `tetrachoric_from_table` (ADR 0011, numbered 0006 in this
+  release).
 - Tetrachoric and polychoric fits no longer stop far from the maximum after
   a Newton overshoot.  Newton could step to where a populated cell's
   probability is rounding noise or floored at 1e-300.  The score and

@@ -3,6 +3,7 @@
 **Status:** accepted
 **Date:** 2026-10-09
 **Context:** issue #2; simACE issue #48
+**Renumbered:** from ADR 0006 (#11); v0.3.0 and earlier cite it as 0006
 
 ## Context
 
