@@ -29,10 +29,12 @@ mod lineage;
 pub(crate) mod normal;
 pub mod pafgrs;
 pub mod pedigree;
+pub mod polychoric;
 pub mod regression;
 pub mod relative_pairs;
 pub mod threads;
 pub mod value;
+pub mod wald;
 
 pub use error::Error;
 pub use input::{PedigreeInput, Trait, TraitKind};

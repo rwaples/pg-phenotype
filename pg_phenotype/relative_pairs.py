@@ -24,11 +24,11 @@ from types import MappingProxyType
 import numpy as np
 
 from pg_phenotype import _native
+from pg_phenotype._input import count
 from pg_phenotype._memory import release_free_memory
 from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._threads import thread_budget
 from pg_phenotype._trait import Trait
-from pg_phenotype.assortative import _count
 
 __all__ = ["Cell", "Estimate", "RelativePairCorrelation", "correlation"]
 
@@ -231,7 +231,7 @@ def correlation(
     if not isinstance(trait, Trait):
         raise TypeError(f"trait must be a pg_phenotype.Trait, got {type(trait).__name__}")
     entries = _entries(categories)
-    budget = _count("memory_budget_bytes", memory_budget_bytes)
+    budget = count("memory_budget_bytes", memory_budget_bytes)
     native = native_pedigree(pedigree)
     release_free_memory()
     raw = _native.relative_pairs_correlation(

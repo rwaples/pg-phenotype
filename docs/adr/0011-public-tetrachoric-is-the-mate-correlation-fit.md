@@ -1,6 +1,7 @@
 # ADR 0011: The public tetrachoric is the Mate Correlation's fit
 
-**Status:** accepted
+**Status:** accepted; amended 2026-10-11 (the fit is the Polychoric Fit in
+`crates/core/src/polychoric/`, which the Mate Correlation also runs)
 **Date:** 2026-10-09
 **Context:** issue #2; simACE issue #48
 **Renumbered:** from ADR 0006 (#11); v0.3.0 and earlier cite it as 0006
@@ -23,8 +24,13 @@ treats the thresholds as known and uses the wrong Fisher information
 
 - `pg_phenotype_core::correlation::tetrachoric` (Python
   `pg_phenotype.correlation.tetrachoric`, R `correlation_tetrachoric`)
-  runs the Mate Correlation's code on one 2 x 2 table: the same `Tables`,
-  the same Newton and Brent fit, the same `boundary` flag and reasons.  It
+  runs the Polychoric Fit the Mate Correlation runs, on one 2 x 2 table:
+  the same `Tables`, the same Newton and Brent fit, the same `boundary`
+  flag and reasons.  The fit has its own module, `polychoric`, and its
+  own `Reason`: the fit's five reasons, none of the Mate Correlation's
+  network, bootstrap or permutation reasons.  `empty_category` stays
+  among them though a table whose levels are the ones it shows never
+  gives it.  It
   does not reproduce simACE's numerics.
 - The SE is the two-step sandwich with every pair its own cluster,
   `sqrt(n/(n-1) * sum n_ij IF_ij^2)`: the Mate Correlation's sandwich when

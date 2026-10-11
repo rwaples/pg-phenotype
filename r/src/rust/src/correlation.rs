@@ -1,9 +1,9 @@
 //! `correlation_tetrachoric()`: a 2 x 2 table's tetrachoric correlation as a
 //! named list, the core's `to_value` tree that the Python binding converts too.
 
-use crate::assortative::to_robj;
 use crate::errors::{finish, HostError, HostResult};
 use crate::input;
+use crate::value::to_robj;
 use extendr_api::prelude::*;
 use pg_phenotype_core::correlation;
 

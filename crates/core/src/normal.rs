@@ -3,7 +3,7 @@
 //! `cdf` and `sf` take Cephes `ndtr`'s branches (`erf` near the centre,
 //! `erfc` in the tails) on libm's `erf` and `erfc`, so they agree with
 //! SciPy's `ndtr` to a few ulp, not bit for bit; assortative mating, which
-//! must match SciPy's bits, has its own Cephes port (`assortative::cephes`).
+//! must match SciPy's bits, has its own Cephes port (`polychoric::cephes`).
 //! `quantile` is Wichura's AS241, the algorithm and coefficients of R's
 //! `qnorm`, so a threshold here is the one PAFGRS computes; assortative
 //! mating evaluates the same coefficients with pedsum's rounding

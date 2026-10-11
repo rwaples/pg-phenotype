@@ -1,53 +1,14 @@
 //! `assortative_mate_correlation()`: the Mate Correlation as nested lists,
 //! the core's `to_value` tree that the Python binding converts too.
 
-use crate::errors::{finish, int_values, HostError, HostResult};
+use crate::errors::{finish, HostError, HostResult};
 use crate::input;
 use crate::pedigree::Source;
 use crate::threads;
+use crate::value::to_robj;
 use extendr_api::prelude::*;
 use pg_phenotype_core::assortative::{self, Settings, Strata};
-use pg_phenotype_core::value::Value;
 use pg_phenotype_core::Trait;
-
-/// A core result tree as nested R lists and vectors, `NULL` where Python
-/// has `None`.
-pub(crate) fn to_robj(value: &Value) -> Robj {
-    match value {
-        Value::Null => ().into_robj(),
-        Value::Bool(v) => (*v).into(),
-        Value::Count(n) => counts(&[*n]),
-        Value::Int(v) => int_values(vec![*v]),
-        Value::Float(v) => (*v).into(),
-        Value::Str(v) => (*v).into(),
-        Value::Text(v) => v.as_str().into(),
-        Value::Floats(v) => Doubles::from_values(v.iter().copied()).into_robj(),
-        Value::Counts(v) => counts(v),
-        Value::List(items) => List::from_values(items.iter().map(to_robj)).into_robj(),
-        Value::Map(entries) => {
-            let (names, values): (Vec<&str>, Vec<Robj>) =
-                entries.iter().map(|(k, v)| (*k, to_robj(v))).unzip();
-            List::from_names_and_values(names, values)
-                .expect("names and values of one length")
-                .into_robj()
-        }
-    }
-}
-
-/// Counts as an R integer vector, or through [`int_values`] (a double, or
-/// `integer64` past 2^53) when one passes R's integer range.
-fn counts(values: &[u64]) -> Robj {
-    let small: Option<Vec<i32>> = values.iter().map(|&n| i32::try_from(n).ok()).collect();
-    match small {
-        Some(small) => Integers::from_values(small).into_robj(),
-        None => int_values(
-            values
-                .iter()
-                .map(|&n| i64::try_from(n).unwrap_or(i64::MAX))
-                .collect(),
-        ),
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 fn mate_correlation_impl(

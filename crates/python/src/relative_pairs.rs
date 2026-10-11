@@ -2,7 +2,7 @@
 //! dicts of plain values (the core's `to_value` tree), which
 //! `pg_phenotype.relative_pairs` turns into frozen dataclasses.
 
-use crate::assortative::to_object;
+use crate::value::to_object;
 use crate::{checked_pool, to_pyerr, trait_kind, PedigreeSource};
 use numpy::PyReadonlyArray1;
 use pg_phenotype_core::relative_pairs::{self, Entry};

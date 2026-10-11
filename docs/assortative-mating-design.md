@@ -11,7 +11,9 @@ The code lives in `crates/core/src/assortative/`.  `sample.rs` builds the
 Mating Pairs, Mate Networks and strata. `estimators.rs` holds the point
 fits. `sandwich.rs`, `bootstrap.rs` and `permutation.rs` hold the
 inference. `kernels.rs` holds every pass over a cell's pairs, and `mod.rs`
-assembles a cell.
+assembles a cell.  The Polychoric Fit behind the tetrachoric and
+polychoric estimators, its influence and pedsum's primitives live in
+`crates/core/src/polychoric/`, which the public tetrachoric shares.
 
 ## The Mate Network is the cluster
 

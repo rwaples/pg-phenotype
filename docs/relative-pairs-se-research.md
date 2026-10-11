@@ -280,7 +280,7 @@ Section 5.1 gives:
   Journal of Statistics* 2005;33(3):335–356, doi:10.1002/cjs.5540330303 [meta].
 
 The two-step version replaces u by the threshold-corrected IF, as pg-phenotype already does
-(`crates/core/src/assortative/sandwich.rs:14-53`, `threshold_correction` and `CellInfluence::at`) [read].
+(`crates/core/src/polychoric/influence.rs:10-49`, `threshold_correction` and `CellInfluence::at`) [read].
 
 What applied studies do:
 - **Speed D, Evans DM.** "Estimating disease heritability from complex pedigrees allowing for ascertainment
@@ -347,7 +347,7 @@ Phi on 0/1 data is the same thing, with x² = x.
 ### Two-step tetrachoric
 
 The IF is a function of the cell only. The threshold correction comes from the table margins
-(`sandwich.rs:47-53`). So:
+(`influence.rs:43-49`). So:
 
     Φ_key = Σ_c n_key(c) · IF(c)
 

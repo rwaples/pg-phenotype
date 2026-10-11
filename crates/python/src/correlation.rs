@@ -2,8 +2,8 @@
 //! values (the core's `to_value` tree), which `pg_phenotype.correlation`
 //! turns into a frozen dataclass.
 
-use crate::assortative::to_object;
 use crate::to_pyerr;
+use crate::value::to_object;
 use numpy::PyReadonlyArray1;
 use pg_phenotype_core::correlation;
 use pyo3::prelude::*;

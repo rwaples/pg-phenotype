@@ -16,6 +16,7 @@ mod regression;
 mod relative_pairs;
 mod test_hooks;
 mod threads;
+mod value;
 
 use errors::{finish, HostError};
 use extendr_api::prelude::*;

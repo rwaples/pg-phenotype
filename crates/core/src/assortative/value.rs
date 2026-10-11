@@ -5,9 +5,9 @@
 //! unavailable `se`, `ci` or `p` is `null` with its `*_unavailable_reason`.
 
 use super::result::{
-    Cell, Draws, Estimate, EstimatorResult, MateCorrelation, Permutation, Point, Reason,
-    WithinPerson,
+    Cell, Draws, Estimate, EstimatorResult, MateCorrelation, Permutation, Reason, WithinPerson,
 };
+use crate::polychoric::Point;
 use crate::value::Value;
 
 type Entries = Vec<(&'static str, Value)>;

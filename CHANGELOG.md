@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The Polychoric Fit, the tetrachoric and polychoric fit the Mate
+  Correlation and the public tetrachoric share, has its own module,
+  `polychoric`, with pedsum's primitives (ADR 0005, 0011 amended).  Results
+  are bit-identical.  Code that needs updating, in Rust only:
+  `correlation::Tetrachoric` and `correlation::Estimate` carry
+  `polychoric::Reason` (boundary, constant_margin, empty_category,
+  no_complete_pairs, sandwich_undefined), and `relative_pairs::Reason::Fit`
+  wraps it, in place of `assortative::Reason`; `assortative::Reason`
+  converts from it.  `Ci`, `CiMethod` and `CiScale` live in `wald`, and
+  `Point` in `polychoric`; `assortative` re-exports all four.  The reason
+  names hosts see are unchanged.
 - The tetrachoric ADR is renumbered 0006 -> 0011, because the Pedigree ADR
   also had 0006 (#11).  The Relative-Pair Correlation's `method` entry
   `estimators` now cites ADR 0011.  A test fails on a duplicate ADR number.

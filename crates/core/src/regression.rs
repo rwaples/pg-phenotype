@@ -8,12 +8,13 @@
 //! Mating Pair is a network of its own.
 
 use crate::assortative::sandwich::cluster_se;
-use crate::assortative::{check_strata, Strata, CI_LEVEL, WALD_Z};
+use crate::assortative::{check_strata, Strata};
 use crate::error::Error;
 use crate::input::{Trait, ValueRule};
 use crate::normal;
 use crate::pedigree::{Pedigree, PedigreeArg};
 use crate::value::Value;
+use crate::wald::{CI_LEVEL, WALD_Z};
 
 /// The trait's field name, as errors report it.
 const FIELD: &str = "trait";

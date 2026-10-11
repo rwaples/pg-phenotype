@@ -1,19 +1,18 @@
 //! Correlation estimators on their own, without a pedigree: the tetrachoric
 //! correlation of a 2 x 2 table.
 //!
-//! The fit, its boundary flag and its SE are the Mate Correlation's
-//! (ADR 0011): two-step maximum likelihood on the assortative-mating
-//! numerics (ADR 0005), and the two-step sandwich with every pair its own
-//! cluster.
+//! The fit and its boundary flag are the Polychoric Fit the Mate
+//! Correlation also runs (ADR 0011): two-step maximum likelihood on
+//! pedsum's numerics (ADR 0005).  The SE is the two-step sandwich with every
+//! pair its own cluster.
 
-use crate::assortative::estimators::Tables;
-use crate::assortative::fit::newton_rho;
-use crate::assortative::kernels::{Grid, Status, Table};
-use crate::assortative::sandwich::{cell_influence, wald_ci};
-use crate::assortative::{Ci, CiMethod, CiScale, Point, Reason};
 use crate::error::Error;
 use crate::input::TraitKind;
+use crate::polychoric::fit::newton_rho;
+use crate::polychoric::table::{Grid, Table};
+use crate::polychoric::{cell_influence, Point, Reason, Tables};
 use crate::value::Value;
+use crate::wald::{wald_ci, Ci, CiMethod, CiScale, CI_LEVEL};
 
 /// The largest count a table takes: 2^53, the last integer every count's
 /// `f64` holds exactly.
@@ -139,8 +138,8 @@ fn fitted(table: [[u64; 2]; 2]) -> Result<(Tables, Point), Reason> {
         cols: 2,
         data: margin.data.iter().map(|&v| v > 0.0).collect(),
     };
-    let (rows, cols) = (shown(counts.mother_margin()), shown(counts.father_margin()));
-    let tables = Tables::from_counts(counts, &rows, &cols).map_err(Status::reason)?;
+    let (rows, cols) = (shown(counts.row_margin()), shown(counts.col_margin()));
+    let tables = Tables::from_counts(counts, &rows, &cols)?;
     let point = newton_rho(
         |r| tables.terms(r),
         |r| tables.nll(r),
@@ -231,7 +230,7 @@ impl Tetrachoric {
             }
         }
         out.extend([
-            ("ci_level", crate::assortative::CI_LEVEL.into()),
+            ("ci_level", CI_LEVEL.into()),
             ("se_method", SE_METHOD.into()),
         ]);
         Value::Map(out)

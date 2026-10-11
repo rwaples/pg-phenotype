@@ -48,7 +48,7 @@ deliberate fix of a pedsum fragility:
 | latent (tetrachoric, polychoric, biserial, polyserial) value, SE, CI | 1e-7, Brent's `xatol` | 3.2e-10 (stratified polychoric CI) |
 
 The primitives are bit-identical to SciPy and numba on a 3110-value grid
-(`crates/core/src/assortative/primitives_parity.rs`): SciPy's cephes `ndtr`
+(`crates/core/src/polychoric/primitives_parity.rs`): SciPy's cephes `ndtr`
 and xsf `owens_t`, glibc's `erfc` under the kernels' normal CDF, AS 241,
 Phi2, phi2 and its rho-derivative, and SciPy's bounded Brent.  What remains
 is summation order: pedsum sums the latent NLL and score with NumPy's BLAS

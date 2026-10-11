@@ -1,6 +1,8 @@
 # ADR 0005: Assortative mating reproduces pedsum's numerics
 
-**Status:** accepted
+**Status:** accepted; amended 2026-10-11 (the primitives live in
+`crates/core/src/polychoric/`, the Polychoric Fit's module; `ndtri` shares
+`normal.rs`'s AS 241 coefficients, as it has since 3a210de)
 **Date:** 2026-10-07
 **Context:** simACE `plans/pg-phenotype-assortative-v2.md`, decisions D1-D3, D6
 
@@ -23,17 +25,19 @@ boundary flag, and those are part of the parity contract.
 
 ## Decision
 
-The assortative module carries its own copies of the primitives pedsum
-uses, ported for bit-identical results, in preference to sharing
-`normal.rs`:
+Assortative mating runs on ports of the primitives pedsum uses, made for
+bit-identical results, in preference to `normal.rs`'s.  They live in
+`crates/core/src/polychoric/` with the Polychoric Fit, which the Tetrachoric
+shares (ADR 0011):
 
 - `cephes.rs`: SciPy's cephes `ndtr`, `erf`, `erfc` and `expm1`, and xsf's
   `owens_t` (Patefield & Tandy), from xsf `f7b85f5` as vendored by SciPy
   1.18.1.  It also holds glibc 2.39's `erfc`
   (`sysdeps/ieee754/dbl-64/s_erf.c`), on the platform `exp`, which the
   kernels' normal CDF calls as numba does.
-- `kernels::ndtri`: AS 241 in pedsum's operation order, which rounds
-  differently from `normal::quantile`.
+- `table::ndtri`: AS 241 in pedsum's operation order
+  (`normal::as241` with `As241Rounding::Pedsum`).  The coefficients are the
+  ones `normal::quantile` uses for R's `qnorm`; the two roundings differ.
 - `fit::minimize_bounded`: SciPy 1.18.1's `_minimize_scalar_bounded`.
 - The Wald `z` is SciPy's `ndtri(0.975)`, one ulp above AS 241's.
 - Sums keep pedsum's order where pedsum fixes it: fixed blocks of 16,384
@@ -57,9 +61,10 @@ pedsum commit), not against a live pedsum.
   pedsum's, inside Brent's 1e-7 tolerance.  The parity tests allow 1e-7 for
   latent estimates and 1e-12 (relative) for closed-form ones.
 - Two normal-distribution modules now exist side by side.  `normal.rs`
-  stays R's `qnorm` for PA-FGRS. `cephes.rs` and `kernels::ndtri` stay
-  pedsum's for assortative mating.  Merging them would change one
-  method's results to match the other's oracle.
+  stays R's `qnorm` for PA-FGRS. `cephes.rs` and `table::ndtri` stay
+  pedsum's for assortative mating, `ndtri` by its rounding alone.
+  Merging them would change one method's results to match the other's
+  oracle.
 - The ports match glibc and SciPy at the versions named above, on Linux.
   A platform with another C library, or a SciPy that changes `owens_t`,
   can differ from pedsum by an ulp. The goldens then show it.
