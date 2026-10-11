@@ -50,8 +50,11 @@ simACE and undefined in pg-phenotype.
 - **simACE's validation** (8 comparisons): up to 3.1e-7 relative
   (r^2 on `n2000_g4_am` A1 + C1 + E1).  simACE stores A, C and E as float32
   and forms the midparent in float32.  Redoing that in NumPy and fitting
-  with `scipy.stats.linregress` reproduces simACE's numbers exactly
-  (`simace_validate_float32`).  pg-phenotype works in float64.  The gate's
+  with `scipy.stats.linregress` reproduces simACE's numbers exactly on the
+  AVX2 machine that wrote the golden, and to the last float32 bit or so
+  where AVX-512 orders NumPy's float32 sums differently
+  (`simace_validate_float32`).  Every value simACE stored is a float32.
+  pg-phenotype works in float64.  The gate's
   tolerance there is 1e-6 relative.
 
 ## SE

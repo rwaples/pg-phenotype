@@ -162,6 +162,7 @@ fn score_univariate_impl(
 
 /// Univariate scores of every proband, in the pool.
 #[extendr]
+#[allow(clippy::too_many_arguments)]
 fn pafgrs_score_univariate(
     prep: Robj,
     values: Robj,

@@ -215,4 +215,9 @@ def test_gate_validation_gaps_are_simaces_float32_midparent() -> None:
             if redone is None:
                 assert "slope" not in want
                 continue
-            assert redone == pytest.approx((want["slope"], want["intercept"], want["r_squared"]), rel=1e-14)
+            fit = (want["slope"], want["intercept"], want["r_squared"])
+            # simACE fits in float32: every value it stored is a float32.
+            assert all(float(np.float32(v)) == v for v in fit), (sc["name"], key, fit)
+            # The redo is bit for bit on the AVX2 machine that wrote the golden; AVX-512
+            # orders NumPy's float32 sums differently, which moves a value by an ulp.
+            assert redone == pytest.approx(fit, rel=0, abs=4 * np.finfo(np.float32).eps)
