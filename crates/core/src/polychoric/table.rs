@@ -55,30 +55,30 @@ impl<T: Copy> Grid<T> {
     }
 }
 
-/// Weighted pair counts by (mother stratum, father stratum, mother level, father level).
+/// Weighted pair counts by (row stratum, column stratum, row level, column level).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Table {
-    pub n_ms: usize,
-    pub n_fs: usize,
-    pub k_m: usize,
-    pub k_f: usize,
+    pub n_row_strata: usize,
+    pub n_col_strata: usize,
+    pub k_row: usize,
+    pub k_col: usize,
     pub data: Vec<f64>,
 }
 
 impl Table {
-    pub fn zeros(n_ms: usize, n_fs: usize, k_m: usize, k_f: usize) -> Table {
+    pub fn zeros(n_row_strata: usize, n_col_strata: usize, k_row: usize, k_col: usize) -> Table {
         Table {
-            n_ms,
-            n_fs,
-            k_m,
-            k_f,
-            data: vec![0.0; n_ms * n_fs * k_m * k_f],
+            n_row_strata,
+            n_col_strata,
+            k_row,
+            k_col,
+            data: vec![0.0; n_row_strata * n_col_strata * k_row * k_col],
         }
     }
 
     #[inline]
     pub fn index(&self, s: usize, u: usize, i: usize, j: usize) -> usize {
-        ((s * self.n_fs + u) * self.k_m + i) * self.k_f + j
+        ((s * self.n_col_strata + u) * self.k_row + i) * self.k_col + j
     }
 
     #[inline]
@@ -86,14 +86,14 @@ impl Table {
         self.data[self.index(s, u, i, j)]
     }
 
-    /// Mother margin by (mother stratum, mother level).
-    pub fn mother_margin(&self) -> Grid<f64> {
-        let mut out = Grid::filled(self.n_ms, self.k_m, 0.0);
-        for s in 0..self.n_ms {
-            for i in 0..self.k_m {
+    /// Row margin by (row stratum, row level).
+    pub fn row_margin(&self) -> Grid<f64> {
+        let mut out = Grid::filled(self.n_row_strata, self.k_row, 0.0);
+        for s in 0..self.n_row_strata {
+            for i in 0..self.k_row {
                 let mut v = 0.0;
-                for u in 0..self.n_fs {
-                    for j in 0..self.k_f {
+                for u in 0..self.n_col_strata {
+                    for j in 0..self.k_col {
                         v += self.at(s, u, i, j);
                     }
                 }
@@ -103,14 +103,14 @@ impl Table {
         out
     }
 
-    /// Father margin by (father stratum, father level).
-    pub fn father_margin(&self) -> Grid<f64> {
-        let mut out = Grid::filled(self.n_fs, self.k_f, 0.0);
-        for u in 0..self.n_fs {
-            for j in 0..self.k_f {
+    /// Column margin by (column stratum, column level).
+    pub fn col_margin(&self) -> Grid<f64> {
+        let mut out = Grid::filled(self.n_col_strata, self.k_col, 0.0);
+        for u in 0..self.n_col_strata {
+            for j in 0..self.k_col {
                 let mut v = 0.0;
-                for s in 0..self.n_ms {
-                    for i in 0..self.k_m {
+                for s in 0..self.n_row_strata {
+                    for i in 0..self.k_row {
                         v += self.at(s, u, i, j);
                     }
                 }
@@ -120,14 +120,14 @@ impl Table {
         out
     }
 
-    /// The same counts as one mother and one father stratum.
+    /// The same counts as one row and one column stratum.
     pub fn pooled(&self) -> Table {
-        let mut out = Table::zeros(1, 1, self.k_m, self.k_f);
-        for s in 0..self.n_ms {
-            for u in 0..self.n_fs {
-                for i in 0..self.k_m {
-                    for j in 0..self.k_f {
-                        out.data[i * self.k_f + j] += self.at(s, u, i, j);
+        let mut out = Table::zeros(1, 1, self.k_row, self.k_col);
+        for s in 0..self.n_row_strata {
+            for u in 0..self.n_col_strata {
+                for i in 0..self.k_row {
+                    for j in 0..self.k_col {
+                        out.data[i * self.k_col + j] += self.at(s, u, i, j);
                     }
                 }
             }
@@ -135,10 +135,12 @@ impl Table {
         out
     }
 
-    /// Total weight of one (mother stratum, father stratum) table.
+    /// Total weight of one (row stratum, column stratum) table.
     pub fn stratum_total(&self, s: usize, u: usize) -> f64 {
         let start = self.index(s, u, 0, 0);
-        self.data[start..start + self.k_m * self.k_f].iter().sum()
+        self.data[start..start + self.k_row * self.k_col]
+            .iter()
+            .sum()
     }
 }
 

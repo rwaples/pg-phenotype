@@ -97,32 +97,32 @@ pub(crate) struct Tables {
     pub n: Table,
     pub a: Grid<f64>,
     pub b: Grid<f64>,
-    /// Populated (mother stratum, father stratum), row-major.
+    /// Populated (row stratum, column stratum), row-major.
     pub combos: Vec<(usize, usize)>,
 }
 
 impl Tables {
     pub fn from_counts(
         n: Table,
-        m_levels: &Grid<bool>,
-        f_levels: &Grid<bool>,
+        row_levels: &Grid<bool>,
+        col_levels: &Grid<bool>,
     ) -> Result<Tables, NoFit> {
         if !n.data.iter().any(|&v| v != 0.0) {
             return Err(NoFit::NoPairs);
         }
-        let (m_margin, f_margin) = (n.mother_margin(), n.father_margin());
-        for (margin, levels) in [(&m_margin, m_levels), (&f_margin, f_levels)] {
+        let (row_margin, col_margin) = (n.row_margin(), n.col_margin());
+        for (margin, levels) in [(&row_margin, row_levels), (&col_margin, col_levels)] {
             if let Some(no_fit) = margin_status(margin, levels) {
                 return Err(no_fit);
             }
         }
-        let combos = (0..n.n_ms)
-            .flat_map(|s| (0..n.n_fs).map(move |u| (s, u)))
+        let combos = (0..n.n_row_strata)
+            .flat_map(|s| (0..n.n_col_strata).map(move |u| (s, u)))
             .filter(|&(s, u)| n.stratum_total(s, u) > 0.0)
             .collect();
         Ok(Tables {
-            a: thresholds(&m_margin),
-            b: thresholds(&f_margin),
+            a: thresholds(&row_margin),
+            b: thresholds(&col_margin),
             n,
             combos,
         })
@@ -170,8 +170,8 @@ impl Tables {
             let cdf = self.grid(combo, |h, k| bvn::cdf(h, k, rho));
             let pdf = self.grid(combo, |h, k| bvn::pdf_and_drho(h, k, rho).0);
             let drho = self.grid(combo, |h, k| bvn::pdf_and_drho(h, k, rho).1);
-            for i in 0..self.n.k_m {
-                for j in 0..self.n.k_f {
+            for i in 0..self.n.k_row {
+                for j in 0..self.n.k_col {
                     let count = self.n.at(combo.0, combo.1, i, j);
                     if count > 0.0 {
                         let pi = corner(&cdf, i, j).max(TINY);
@@ -214,8 +214,8 @@ impl Tables {
         for &combo in &self.combos {
             let (s, u) = combo;
             let cdf = self.grid(combo, |h, k| bvn::cdf(h, k, rho));
-            for i in 0..self.n.k_m {
-                for j in 0..self.n.k_f {
+            for i in 0..self.n.k_row {
+                for j in 0..self.n.k_col {
                     let count = self.n.at(s, u, i, j);
                     if count > 0.0 {
                         let mut pi = corner(&cdf, i, j);

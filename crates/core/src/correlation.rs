@@ -138,7 +138,7 @@ fn fitted(table: [[u64; 2]; 2]) -> Result<(Tables, Point), Reason> {
         cols: 2,
         data: margin.data.iter().map(|&v| v > 0.0).collect(),
     };
-    let (rows, cols) = (shown(counts.mother_margin()), shown(counts.father_margin()));
+    let (rows, cols) = (shown(counts.row_margin()), shown(counts.col_margin()));
     let tables = Tables::from_counts(counts, &rows, &cols)?;
     let point = newton_rho(
         |r| tables.terms(r),

@@ -30,9 +30,9 @@ fn threshold_correction(a_rho_tau: &Grid<f64>, tau: &Grid<f64>, n_stratum: &[f64
 
 /// Influence on the two-step polychoric ρ̂ of one pair, by its cell.
 pub(crate) struct CellInfluence {
-    /// Per (mother stratum, father stratum), the cells' scores; `None` when unpopulated.
+    /// Per (row stratum, column stratum), the cells' scores; `None` when unpopulated.
     score: Vec<Option<Grid<f64>>>,
-    n_fs: usize,
+    n_col_strata: usize,
     correction_a: Grid<f64>,
     correction_b: Grid<f64>,
     a_rr: f64,
@@ -41,7 +41,7 @@ pub(crate) struct CellInfluence {
 impl CellInfluence {
     /// The influence of a pair in cell `(i, j)` of stratum combination `(s, u)`.
     pub fn at(&self, s: usize, u: usize, i: usize, j: usize) -> f64 {
-        let score = self.score[s * self.n_fs + u]
+        let score = self.score[s * self.n_col_strata + u]
             .as_ref()
             .map_or(0.0, |g| g.at(i, j));
         (score - (self.correction_a.at(s, i) + self.correction_b.at(u, j))) / -self.a_rr
@@ -50,7 +50,7 @@ impl CellInfluence {
 
 /// The two-step polychoric influence of each cell of `tables` at `rho`.
 pub(crate) fn cell_influence(tables: &Tables, rho: f64) -> Result<CellInfluence, Reason> {
-    let (k_m, k_f) = (tables.n.k_m, tables.n.k_f);
+    let (k_row, k_col) = (tables.n.k_row, tables.n.k_col);
     let q = (1.0 - rho) * (1.0 + rho);
     struct Combo {
         score: Grid<f64>,
@@ -90,10 +90,10 @@ pub(crate) fn cell_influence(tables: &Tables, rho: f64) -> Result<CellInfluence,
         let d_pdf_k = tables.grid((s, u), |h, k| {
             -bvn::pdf_and_drho(h, k, rho).0 * (fin(k) - rho * fin(h)) / q
         });
-        let mut pi = Grid::filled(k_m, k_f, 0.0);
-        let mut score = Grid::filled(k_m, k_f, 0.0);
-        for i in 0..k_m {
-            for j in 0..k_f {
+        let mut pi = Grid::filled(k_row, k_col, 0.0);
+        let mut score = Grid::filled(k_row, k_col, 0.0);
+        for i in 0..k_row {
+            for j in 0..k_col {
                 let c = |g: &Grid<f64>| {
                     g.at(i + 1, j + 1) - g.at(i, j + 1) - g.at(i + 1, j) + g.at(i, j)
                 };
@@ -109,11 +109,11 @@ pub(crate) fn cell_influence(tables: &Tables, rho: f64) -> Result<CellInfluence,
             }
         }
         // Σ_cells n ∂score/∂τ per threshold of each side (Olsson 1979 eqs 10, 12).
-        let mut cross_a = vec![0.0; k_m + 1];
-        let mut cross_b = vec![0.0; k_f + 1];
-        for i in 0..k_m {
+        let mut cross_a = vec![0.0; k_row + 1];
+        let mut cross_b = vec![0.0; k_col + 1];
+        for i in 0..k_row {
             let (mut upper, mut lower) = (0.0, 0.0);
-            for j in 0..k_f {
+            for j in 0..k_col {
                 let n = tables.n.at(s, u, i, j);
                 if n == 0.0 {
                     continue;
@@ -129,9 +129,9 @@ pub(crate) fn cell_influence(tables: &Tables, rho: f64) -> Result<CellInfluence,
             cross_a[i + 1] += upper;
             cross_a[i] += lower;
         }
-        for j in 0..k_f {
+        for j in 0..k_col {
             let (mut upper, mut lower) = (0.0, 0.0);
-            for i in 0..k_m {
+            for i in 0..k_row {
                 let n = tables.n.at(s, u, i, j);
                 if n == 0.0 {
                     continue;
@@ -167,21 +167,21 @@ pub(crate) fn cell_influence(tables: &Tables, rho: f64) -> Result<CellInfluence,
             *a_rho_b.at_mut(u, t) += v;
         }
     }
-    let n_m: Vec<f64> = (0..n.n_ms)
-        .map(|s| (0..n.n_fs).map(|u| n.stratum_total(s, u)).sum())
+    let n_m: Vec<f64> = (0..n.n_row_strata)
+        .map(|s| (0..n.n_col_strata).map(|u| n.stratum_total(s, u)).sum())
         .collect();
-    let n_f: Vec<f64> = (0..n.n_fs)
-        .map(|u| (0..n.n_ms).map(|s| n.stratum_total(s, u)).sum())
+    let n_f: Vec<f64> = (0..n.n_col_strata)
+        .map(|u| (0..n.n_row_strata).map(|s| n.stratum_total(s, u)).sum())
         .collect();
     let correction_a = threshold_correction(&a_rho_a, &tables.a, &n_m);
     let correction_b = threshold_correction(&a_rho_b, &tables.b, &n_f);
-    let mut score = vec![None; n.n_ms * n.n_fs];
+    let mut score = vec![None; n.n_row_strata * n.n_col_strata];
     for (&(s, u), combo) in tables.combos.iter().zip(combos) {
-        score[s * n.n_fs + u] = Some(combo.score);
+        score[s * n.n_col_strata + u] = Some(combo.score);
     }
     Ok(CellInfluence {
         score,
-        n_fs: n.n_fs,
+        n_col_strata: n.n_col_strata,
         correction_a,
         correction_b,
         a_rr,
