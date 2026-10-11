@@ -1,13 +1,8 @@
 //! A Polychoric Fit's table: weighted counts by stratum and level, each
 //! side's thresholds, and the checks a table must pass to be fitted.
 
-use super::cephes::{c_erfc, kernel_ndtr};
-use std::f64::consts::SQRT_2;
-
 /// The floor of a cell probability before its log.
 pub(crate) const TINY: f64 = 1e-300;
-/// ρ is searched, and a one-step draw clipped, to `(-LATENT_BOUND, LATENT_BOUND)`.
-pub(crate) const LATENT_BOUND: f64 = 0.9999;
 
 /// pedsum's kernel `ndtri` (Wichura 1988, AS 241 PPND16), `±inf` at `p = 0, 1`:
 /// R's coefficients with pedsum's rounding.
@@ -165,15 +160,6 @@ pub(crate) fn thresholds(margin: &Grid<f64>) -> Grid<f64> {
         }
     }
     out
-}
-
-/// `Φ(upper) − Φ(lower)` without cancellation in the upper tail.
-#[inline]
-pub(crate) fn interval_mass(upper: f64, lower: f64) -> f64 {
-    if lower > 0.0 {
-        return 0.5 * (c_erfc(lower / SQRT_2) - c_erfc(upper / SQRT_2));
-    }
-    kernel_ndtr(upper) - kernel_ndtr(lower)
 }
 
 /// pedsum `_check_levels`: a level a stratum shows that this margin lacks

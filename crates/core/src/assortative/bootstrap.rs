@@ -15,7 +15,8 @@ use super::kernels::{
 use super::result::{Draws, Estimator, Reason};
 use super::rng::{network_multiplicities, network_weights};
 use super::sample::{n_codes, pooled_levels, CellPairs};
-use crate::polychoric::table::{margin_status, thresholds, Grid, Table, LATENT_BOUND};
+use crate::polychoric::fit::LATENT_BOUND;
+use crate::polychoric::table::{margin_status, thresholds, Grid, Table};
 use crate::polychoric::Tables;
 use rayon::prelude::*;
 use std::collections::BTreeMap;

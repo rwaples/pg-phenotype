@@ -1,9 +1,10 @@
 //! Fitting ρ of a latent correlation: Newton on the analytic score, with
 //! SciPy's bounded Brent as the fallback, and the boundary flag.
 
-use super::table::LATENT_BOUND;
 use super::Point;
 
+/// ρ is searched, and a one-step draw clipped, to `(-LATENT_BOUND, LATENT_BOUND)`.
+pub(crate) const LATENT_BOUND: f64 = 0.9999;
 /// A fit within this distance of a bound is flagged (pedsum decision 9).
 pub(crate) const BOUNDARY_MARGIN: f64 = 1e-3;
 /// So is one whose NLL the nearer bound matches to this relative tolerance.

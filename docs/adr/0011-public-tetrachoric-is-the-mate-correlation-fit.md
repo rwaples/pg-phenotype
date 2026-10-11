@@ -27,8 +27,10 @@ treats the thresholds as known and uses the wrong Fisher information
   runs the Polychoric Fit the Mate Correlation runs, on one 2 x 2 table:
   the same `Tables`, the same Newton and Brent fit, the same `boundary`
   flag and reasons.  The fit has its own module, `polychoric`, and its
-  own `Reason`, so the Tetrachoric's type admits no Mate Correlation
-  reason.  It
+  own `Reason`: the fit's five reasons, none of the Mate Correlation's
+  network, bootstrap or permutation reasons.  `empty_category` stays
+  among them though a table whose levels are the ones it shows never
+  gives it.  It
   does not reproduce simACE's numerics.
 - The SE is the two-step sandwich with every pair its own cluster,
   `sqrt(n/(n-1) * sum n_ij IF_ij^2)`: the Mate Correlation's sandwich when

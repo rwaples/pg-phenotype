@@ -62,8 +62,9 @@ pedsum commit), not against a live pedsum.
   latent estimates and 1e-12 (relative) for closed-form ones.
 - Two normal-distribution modules now exist side by side.  `normal.rs`
   stays R's `qnorm` for PA-FGRS. `cephes.rs` and `table::ndtri` stay
-  pedsum's for assortative mating, `ndtri` by its rounding alone.  Merging them would change one
-  method's results to match the other's oracle.
+  pedsum's for assortative mating, `ndtri` by its rounding alone.
+  Merging them would change one method's results to match the other's
+  oracle.
 - The ports match glibc and SciPy at the versions named above, on Linux.
   A platform with another C library, or a SciPy that changes `owens_t`,
   can differ from pedsum by an ulp. The goldens then show it.

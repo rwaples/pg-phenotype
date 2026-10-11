@@ -2,7 +2,7 @@
 //! each estimator, clustered by network (pedsum `assortative_mating.py:575-659`,
 //! `:726-816`, `:1311-1352`).
 
-use super::estimators::{tables, two_by_two, Serial, Sides};
+use super::estimators::{cell_tables, two_by_two, Serial, Sides};
 use super::kernels::{
     inverse_sd, pearson_influence, polyserial_influence, stratum_moments, Side, Status,
 };
@@ -20,7 +20,7 @@ fn polychoric_influence(
     w: &[f64],
     rho: f64,
 ) -> Result<Vec<f64>, Reason> {
-    let tables = tables(pairs, m_levels, f_levels, w).map_err(Status::reason)?;
+    let tables = cell_tables(pairs, m_levels, f_levels, w).map_err(Status::reason)?;
     let influence = cell_influence(&tables, rho)?;
     Ok((0..pairs.len())
         .map(|p| {

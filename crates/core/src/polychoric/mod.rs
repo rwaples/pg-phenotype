@@ -238,7 +238,7 @@ impl Tables {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use table::LATENT_BOUND;
+    use fit::LATENT_BOUND;
 
     fn tables(counts: [f64; 4]) -> Tables {
         let mut n = Table::zeros(1, 1, 2, 2);

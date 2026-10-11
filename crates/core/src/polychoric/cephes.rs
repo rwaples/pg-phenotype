@@ -150,6 +150,17 @@ pub(crate) fn kernel_ndtr(x: f64) -> f64 {
     0.5 * c_erfc(-x / std::f64::consts::SQRT_2)
 }
 
+/// `Φ(upper) − Φ(lower)` without cancellation in the upper tail.
+#[inline]
+pub(crate) fn interval_mass(upper: f64, lower: f64) -> f64 {
+    if lower > 0.0 {
+        return 0.5
+            * (c_erfc(lower / std::f64::consts::SQRT_2)
+                - c_erfc(upper / std::f64::consts::SQRT_2));
+    }
+    kernel_ndtr(upper) - kernel_ndtr(lower)
+}
+
 #[allow(clippy::excessive_precision)]
 const ERX: f64 = 8.45062911510467529297e-01;
 #[allow(clippy::excessive_precision)]

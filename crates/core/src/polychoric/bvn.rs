@@ -1,8 +1,7 @@
 //! The standard bivariate normal: Φ2 by Owen's T, φ2 and ∂φ2/∂ρ
 //! (pedsum `assortative_mating.py:352-409`).
 
-use super::cephes::{ndtr, owens_t};
-use super::table::interval_mass;
+use super::cephes::{interval_mass, ndtr, owens_t};
 use std::f64::consts::PI;
 
 /// Owen's `T(h, a)` with `T(h, ±inf) = ±Φ(-|h|) / 2`.

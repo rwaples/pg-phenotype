@@ -91,8 +91,8 @@ fn bounded_brent_retraces_scipy() {
                 nfev += 1.0;
                 (x - c) * (x - c) + amp * (5.0 * x).sin()
             },
-            -table::LATENT_BOUND,
-            table::LATENT_BOUND,
+            -fit::LATENT_BOUND,
+            fit::LATENT_BOUND,
             1e-7,
         );
         assert_eq!((x, fun, nfev), (row[2], row[3], row[4]), "c {c} amp {amp}");

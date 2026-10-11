@@ -124,7 +124,7 @@ pub(crate) fn polychoric(
     w: &[f64],
     start: Option<f64>,
 ) -> Fitted {
-    let tables = tables(pairs, m_levels, f_levels, w)?;
+    let tables = cell_tables(pairs, m_levels, f_levels, w)?;
     Ok(newton_rho(
         |r| tables.terms(r),
         |r| tables.nll(r),
@@ -308,7 +308,7 @@ fn primary(stratified: bool, pairs: &CellPairs, w: &[f64], start: Option<f64>) -
 }
 
 /// A cell's [`Tables`] from its pairs under weights `w`.
-pub(crate) fn tables(
+pub(crate) fn cell_tables(
     pairs: &CellPairs,
     m_levels: &Grid<bool>,
     f_levels: &Grid<bool>,

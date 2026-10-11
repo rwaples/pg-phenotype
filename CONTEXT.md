@@ -98,8 +98,8 @@ The latent correlation of a table of two ordered sides, by two-step
 maximum likelihood: each side's thresholds from its own margins, then
 the correlation of a bivariate normal cut at them.  On a 2 x 2 table
 it is the tetrachoric.  A fit is at a **boundary** when it lies at
-the search bound or on a likelihood plateau reaching it; its SE and
-CI are then withheld.
+the search bound or on a likelihood plateau reaching it; its sandwich
+SE and Wald CI are then withheld.
 _Avoid_: latent fit, tetrachoric fit (for tables larger than 2 x 2)
 
 **Mate Correlation**:

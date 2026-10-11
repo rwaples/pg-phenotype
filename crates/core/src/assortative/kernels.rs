@@ -8,15 +8,16 @@
 //! uses equals the parallel form a point fit uses.
 
 use super::result::Reason;
-use crate::polychoric::cephes::kernel_ndtr;
+use crate::polychoric::cephes::{interval_mass, kernel_ndtr};
 use crate::polychoric::fit::Terms;
-use crate::polychoric::table::{interval_mass, thresholds, Grid, NoFit, Table, TINY};
+use crate::polychoric::table::{thresholds, Grid, NoFit, Table, TINY};
 use rayon::prelude::*;
 use std::f64::consts::PI;
 use std::ops::Range;
 
 /// Pairs per reduction block.
 pub(crate) const BLOCK: usize = 1 << 14;
+
 #[inline]
 pub(crate) fn sqrt_2pi() -> f64 {
     (2.0 * PI).sqrt()
