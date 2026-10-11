@@ -10,6 +10,8 @@ with `spearman=True`, and `permutations` defaults to `None`; a numeric
 input given as text is a `TypeError`; in Rust, `mate_correlation` and
 `prepare` take a `PedigreeArg`.
 
+- pedigree-graph-core stays pinned at pedigree-graph's v0.12.3 tag.
+
 Relative-Pair Correlation (#1, unit 1):
 `pg_phenotype.relative_pairs.correlation` (R:
 `relative_pairs_correlation()`, Rust: `relative_pairs::correlation`)
