@@ -52,9 +52,9 @@ simACE and undefined in pg-phenotype.
   and forms the midparent in float32.  Redoing that in NumPy and fitting
   with `scipy.stats.linregress` reproduces simACE's numbers
   (`simace_validate_float32`): exactly on the AVX2 machine that wrote the
-  golden, and within 4 float32 ulps where AVX-512 orders NumPy's float32
-  sums differently (CI saw 1 to 2), counting the intercept's ulps at the
-  scale of `ybar - slope * xbar`
+  golden, and within 16 float32 ulps where AVX-512 or ARM orders NumPy's
+  float32 sums differently (CI saw up to 2 on x86_64 and 6 on arm64),
+  counting the intercept's ulps at the scale of `ybar - slope * xbar`
   (`test_gate_validation_gaps_are_simaces_float32_midparent`).  Every value
   simACE stored is a float32.  pg-phenotype works in float64.  The gate's
   tolerance there is 1e-6 relative.

@@ -216,6 +216,7 @@ def test_gate_simace_undefined_cases_are_its_rules() -> None:
 
 
 def test_gate_validation_gaps_are_simaces_float32_midparent() -> None:
+    ulps = {}
     for sc in load()["scenarios"]:
         for key in ("A1", "P1"):
             redone = simace_validate_float32(sc, key)
@@ -226,11 +227,13 @@ def test_gate_validation_gaps_are_simaces_float32_midparent() -> None:
             fit = (want["slope"], want["intercept"], want["r_squared"])
             # simACE fits in float32, as does the redo: every value is a float32.
             assert all(float(np.float32(v)) == v for v in (*fit, *redone)), (sc["name"], key, fit, redone)
-            # The redo is bit for bit on the AVX2 machine that wrote the golden; AVX-512
-            # orders NumPy's float32 sums differently (CI: 1, 2 and 1 ulps).  Ulps are
-            # counted at each value's scale; the intercept's is that of ybar - slope * xbar.
+            # The redo is bit for bit on the AVX2 machine that wrote the golden.  AVX-512
+            # and ARM order NumPy's float32 sums differently: CI saw up to 2 ulps on
+            # x86_64 and 6 on aarch64 and macOS arm64.  Ulps are counted at each value's
+            # scale; the intercept's is that of ybar - slope * xbar.
             x, y = simace_validate_xy(sc, key)
             xbar, ybar = float(x.mean()), float(y.mean())
             scales = (fit[0], max(abs(ybar), abs(fit[0] * xbar)), fit[2])
-            for got, exp, scale in zip(redone, fit, scales, strict=True):
-                assert abs(got - exp) <= 4 * np.spacing(np.float32(abs(scale))), (sc["name"], key, got, exp)
+            for field, got, exp, scale in zip(("slope", "intercept", "r_squared"), redone, fit, scales, strict=True):
+                ulps[sc["name"], key, field] = abs(got - exp) / float(np.spacing(np.float32(abs(scale))))
+    assert max(ulps.values()) <= 16, ulps
