@@ -141,13 +141,11 @@ def gaps(c: Comparison) -> dict[str, float]:
     }
 
 
-def simace_validate_float32(scenario: dict, key: str) -> tuple[float, float, float] | None:
-    """simACE's validation regression redone: a float32 midparent, then ``linregress``.
+def simace_validate_xy(scenario: dict, key: str) -> tuple[np.ndarray, np.ndarray] | None:
+    """simACE's validation regression inputs: the float32 midparent and child values.
 
-    Returns (slope, intercept, r^2), or ``None`` under the 100-offspring floor.
+    Returns ``None`` under the 100-offspring floor.
     """
-    from scipy.stats import linregress
-
     p = scenario["pedigree"]
     row = {int(i): r for r, i in enumerate(p["id"])}
     kids = [r for r, (m, f) in enumerate(zip(p["mother"], p["father"], strict=True)) if m in row and f in row]
@@ -156,5 +154,18 @@ def simace_validate_float32(scenario: dict, key: str) -> tuple[float, float, flo
     v = np.asarray(scenario["values"][key], dtype=np.float32)
     mothers = [row[p["mother"][r]] for r in kids]
     fathers = [row[p["father"][r]] for r in kids]
-    fit = linregress((v[mothers] + v[fathers]) / 2, v[kids])
+    return (v[mothers] + v[fathers]) / 2, v[kids]
+
+
+def simace_validate_float32(scenario: dict, key: str) -> tuple[float, float, float] | None:
+    """simACE's validation regression redone: a float32 midparent, then ``linregress``.
+
+    Returns (slope, intercept, r^2), or ``None`` under the 100-offspring floor.
+    """
+    from scipy.stats import linregress
+
+    xy = simace_validate_xy(scenario, key)
+    if xy is None:
+        return None
+    fit = linregress(*xy)
     return float(fit.slope), float(fit.intercept), float(fit.rvalue**2)

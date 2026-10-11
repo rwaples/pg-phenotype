@@ -14,7 +14,15 @@ import pg_phenotype as pgp
 from pg_phenotype.regression import parent_offspring
 from tests.oracle.po_regression_reference import PARENTS, regress
 from tests.pedigrees import random_pedigree
-from tests.po_regression_golden import REL, comparisons, gaps, load, simace_validate_float32, tolerance
+from tests.po_regression_golden import (
+    REL,
+    comparisons,
+    gaps,
+    load,
+    simace_validate_float32,
+    simace_validate_xy,
+    tolerance,
+)
 
 if TYPE_CHECKING:
     from pg_phenotype.regression import Fit
@@ -216,8 +224,13 @@ def test_gate_validation_gaps_are_simaces_float32_midparent() -> None:
                 assert "slope" not in want
                 continue
             fit = (want["slope"], want["intercept"], want["r_squared"])
-            # simACE fits in float32: every value it stored is a float32.
-            assert all(float(np.float32(v)) == v for v in fit), (sc["name"], key, fit)
+            # simACE fits in float32, as does the redo: every value is a float32.
+            assert all(float(np.float32(v)) == v for v in (*fit, *redone)), (sc["name"], key, fit, redone)
             # The redo is bit for bit on the AVX2 machine that wrote the golden; AVX-512
-            # orders NumPy's float32 sums differently, which moves a value by an ulp.
-            assert redone == pytest.approx(fit, rel=0, abs=4 * np.finfo(np.float32).eps)
+            # orders NumPy's float32 sums differently (CI: 1, 2 and 1 ulps).  Ulps are
+            # counted at each value's scale; the intercept's is that of ybar - slope * xbar.
+            x, y = simace_validate_xy(sc, key)
+            xbar, ybar = float(x.mean()), float(y.mean())
+            scales = (fit[0], max(abs(ybar), abs(fit[0] * xbar)), fit[2])
+            for got, exp, scale in zip(redone, fit, scales, strict=True):
+                assert abs(got - exp) <= 4 * np.spacing(np.float32(abs(scale))), (sc["name"], key, got, exp)
