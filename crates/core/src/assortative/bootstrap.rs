@@ -7,14 +7,16 @@
 //! takes one Newton step from the observed ρ̂ with the draw's score and the
 //! full-sample Hessian.  A draw whose Hessian is not positive is refit in full.
 
-use super::estimators::{argsort, point, table_shape, Serial, Sides, Tables};
+use super::estimators::{argsort, point, table_shape, Serial, Sides};
 use super::kernels::{
-    count_table, inverse_sd, margin, margin_status, pearson, sorted_ranks_into, stratum_moments,
-    thresholds, Grid, Moments, Polyserial, Status, Table, LATENT_BOUND,
+    count_table, inverse_sd, margin, pearson, sorted_ranks_into, stratum_moments, Moments,
+    Polyserial, Status,
 };
 use super::result::{Draws, Estimator, Reason};
 use super::rng::{network_multiplicities, network_weights};
 use super::sample::{n_codes, pooled_levels, CellPairs};
+use crate::polychoric::table::{margin_status, thresholds, Grid, Table, LATENT_BOUND};
+use crate::polychoric::Tables;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 
@@ -345,7 +347,9 @@ fn polyserial_form(
     levels: &Grid<bool>,
     w: &[f64],
 ) -> Draw {
-    if let Some(status) = continuous_status(moments).or_else(|| margin_status(y_margin, levels)) {
+    if let Some(status) =
+        continuous_status(moments).or_else(|| margin_status(y_margin, levels).map(Status::from))
+    {
         return Draw::Failed(status);
     }
     if !(hess > 0.0) {
@@ -499,7 +503,7 @@ fn polychoric_step(
     rho: f64,
 ) -> Draw {
     match Tables::from_counts(table, m_levels, f_levels) {
-        Err(status) => Draw::Failed(status),
+        Err(no_fit) => Draw::Failed(no_fit.into()),
         Ok(_) if !(observed_hess > 0.0) => Draw::Refit,
         Ok(t) => {
             let (grad, _) = t.grad_hess(rho);

@@ -9,9 +9,10 @@
 //! the father side is refit per draw.  Draws run in batches and each tested
 //! form stops at its `h`-th exceedance (Besag & Clifford 1991, closed scheme).
 
-use super::kernels::{latent_means, margin, margin_status, Grid, Status};
+use super::kernels::{latent_means, margin, Status};
 use super::rng::shuffle_index;
 use super::sample::CellPairs;
+use crate::polychoric::table::{margin_status, Grid};
 use rayon::prelude::*;
 
 /// Draws in the first batch; a later batch at least doubles the draws so far.
@@ -674,8 +675,8 @@ fn discrete_cell(
             *pooled_levels.at_mut(0, c) = shown;
         }
     }
-    let status_crude = margin_status(&pooled, &pooled_levels);
-    let status_strat = margin_status(&counts, levels);
+    let status_crude = margin_status(&pooled, &pooled_levels).map(Status::from);
+    let status_strat = margin_status(&counts, levels).map(Status::from);
     let e_crude = latent_means(&pooled);
     let e_strat = latent_means(&counts);
     let (mut ss_crude, mut ss_strat, mut cross_crude, mut cross_strat) = (0.0, 0.0, 0.0, 0.0);

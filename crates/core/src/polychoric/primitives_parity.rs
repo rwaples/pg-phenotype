@@ -1,7 +1,7 @@
 //! The primitives against SciPy and pedsum's kernels at the oracle pin
 //! (`tools/make_pedsum_am_primitives.py`, values as IEEE-754 bits).
 
-use super::{bvn, cephes, fit, kernels};
+use super::{bvn, cephes, fit, table};
 
 const PRIMITIVES: &str =
     include_str!("../../../../tests/golden/pedsum_am_142adf300d5b/primitives.txt");
@@ -63,7 +63,7 @@ fn kernel_normal_functions_match_numba() {
         worst("kernel_ndtr", |a| vec![cephes::kernel_ndtr(a[0])], 1).0,
         0
     );
-    assert_eq!(worst("ndtri", |a| vec![kernels::ndtri(a[0])], 1).0, 0);
+    assert_eq!(worst("ndtri", |a| vec![table::ndtri(a[0])], 1).0, 0);
 }
 
 #[test]
@@ -91,8 +91,8 @@ fn bounded_brent_retraces_scipy() {
                 nfev += 1.0;
                 (x - c) * (x - c) + amp * (5.0 * x).sin()
             },
-            -kernels::LATENT_BOUND,
-            kernels::LATENT_BOUND,
+            -table::LATENT_BOUND,
+            table::LATENT_BOUND,
             1e-7,
         );
         assert_eq!((x, fun, nfev), (row[2], row[3], row[4]), "c {c} amp {amp}");

@@ -4,6 +4,7 @@
 //! is missing are alternatives, so each is a `Result`: never a value and a
 //! reason together, never neither.
 
+use crate::polychoric::{self, Point};
 use crate::wald::{Ci, CiScale};
 
 /// A cell estimator, as pedsum names it.
@@ -128,14 +129,6 @@ impl Reason {
     }
 }
 
-/// A defined point estimate.  `boundary` is set for a latent correlation
-/// only: whether ρ̂ sits at, or on a likelihood plateau reaching, a bound.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Point {
-    pub value: f64,
-    pub boundary: Option<bool>,
-}
-
 /// Draws requested, how many gave a value, and why the others did not.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Draws {
@@ -179,6 +172,18 @@ pub struct Permutation {
     pub stopped_early: bool,
     pub draws_used: u64,
     pub sequential_h: u64,
+}
+
+impl From<polychoric::Reason> for Reason {
+    fn from(reason: polychoric::Reason) -> Reason {
+        match reason {
+            polychoric::Reason::Boundary => Reason::Boundary,
+            polychoric::Reason::ConstantMargin => Reason::ConstantMargin,
+            polychoric::Reason::EmptyCategory => Reason::EmptyCategory,
+            polychoric::Reason::NoCompletePairs => Reason::NoCompletePairs,
+            polychoric::Reason::SandwichUndefined => Reason::SandwichUndefined,
+        }
+    }
 }
 
 /// A defined estimate with its inference.
@@ -350,5 +355,12 @@ mod tests {
         sorted.sort_unstable();
         assert_eq!(names, sorted);
         assert!(Reason::ALL.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn fit_reasons_keep_their_names() {
+        for reason in crate::polychoric::Reason::ALL {
+            assert_eq!(Reason::from(reason).name(), reason.name());
+        }
     }
 }

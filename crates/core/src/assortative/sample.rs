@@ -4,7 +4,8 @@
 //! `pedigree_ops.py:112-131`).
 
 use super::input::Strata;
-use super::kernels::{stratum_moments, Grid};
+use super::kernels::stratum_moments;
+use crate::polychoric::table::Grid;
 use std::borrow::Cow;
 
 /// A pedigree's Mating Pairs, as rows: pair `p` is `(mothers[p], fathers[p])`.

@@ -14,21 +14,15 @@
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
 mod bootstrap;
-mod bvn;
-mod cephes;
-pub(crate) mod estimators;
-pub(crate) mod fit;
+mod estimators;
 mod input;
-pub(crate) mod kernels;
+mod kernels;
 mod permutation;
 mod result;
 mod rng;
 mod sample;
 pub(crate) mod sandwich;
 mod value;
-
-#[cfg(test)]
-mod primitives_parity;
 
 use crate::error::Error;
 use crate::input::Trait;
@@ -39,14 +33,15 @@ use permutation::{NullDraw, Packed, SEQUENTIAL_H};
 use sample::{distinct_rows, drop_thin_strata, network_summary, stratum_codes, CellPairs, Kept};
 use std::borrow::Cow;
 
+pub use crate::polychoric::Point;
 use crate::wald::{wald_ci, CI_LEVEL};
 pub use crate::wald::{Ci, CiMethod, CiScale};
 pub(crate) use input::check_strata;
 pub use input::{Settings, Strata, DEFAULT_PERMUTATIONS};
 pub use result::{
     Cell, Draws, Dropped, Estimate, Estimator, EstimatorResult, MateCorrelation, Method,
-    Permutation, PermutationStatistic, Point, Reason, Sample, SettingsEcho, Stratified,
-    WithinPerson, WithinPersonPair, METHOD,
+    Permutation, PermutationStatistic, Reason, Sample, SettingsEcho, Stratified, WithinPerson,
+    WithinPersonPair, METHOD,
 };
 pub(crate) use sample::{mate_networks, mating_pairs, MatingPairs};
 

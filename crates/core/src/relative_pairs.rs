@@ -8,11 +8,11 @@
 //! its tetrachoric fits one threshold; a directed category's pairs enter
 //! once, in its roles' order.  There is no SE yet (ADR 0009).
 
-use crate::assortative::Reason as FitReason;
 use crate::correlation;
 use crate::error::Error;
 use crate::input::{Trait, TraitKind, ValueRule};
 use crate::pedigree::PedigreeArg;
+use crate::polychoric::Reason as FitReason;
 use crate::value::Value;
 use pedigree_graph_core::error::Error as PgError;
 use pedigree_graph_core::relationships::{
