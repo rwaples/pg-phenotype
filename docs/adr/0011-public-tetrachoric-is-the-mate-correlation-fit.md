@@ -1,4 +1,4 @@
-# ADR 0006: The public tetrachoric is the Mate Correlation's fit
+# ADR 0011: The public tetrachoric is the Mate Correlation's fit
 
 **Status:** accepted
 **Date:** 2026-10-09

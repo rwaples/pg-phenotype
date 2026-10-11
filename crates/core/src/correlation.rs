@@ -2,7 +2,7 @@
 //! correlation of a 2 x 2 table.
 //!
 //! The fit, its boundary flag and its SE are the Mate Correlation's
-//! (ADR 0006): two-step maximum likelihood on the assortative-mating
+//! (ADR 0011): two-step maximum likelihood on the assortative-mating
 //! numerics (ADR 0005), and the two-step sandwich with every pair its own
 //! cluster.
 

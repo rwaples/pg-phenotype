@@ -61,7 +61,7 @@ fits one connected pedigree (`docs/relative-pairs-se-research.md`).
   undefined (`no_complete_pairs`, `constant_margin`, `constant_value`), with
   that reason.  Callers keep their own floors on `n`.  A requested category
   with no pairs still gets its cell, with `n = 0`.
-- The tetrachoric is ADR 0006's fit (the same `Tables`, Newton and Brent,
+- The tetrachoric is ADR 0011's fit (the same `Tables`, Newton and Brent,
   and boundary flag) on the fitted table.
 - No SE or CI in the first unit.  The cluster design is chosen by a
   calibration study: naive-pair, person (dyadic), Mate Network and Mate
@@ -90,7 +90,7 @@ Rejected:
   symmetric category.
 - Single entry with pooled margins.  It gives the same point estimates as
   double entry, but it needs its own equal-threshold fit in place of ADR
-  0006's.
+  0011's.
 - Quantizing the raw values.  Four sibling values near 1e12 spaced 0.01
   apart all round to one integer, and Pearson reports a constant trait.
 - An SE with every pair its own cluster, labelled as such.  It is known to

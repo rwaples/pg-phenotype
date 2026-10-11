@@ -27,7 +27,7 @@ GOLDEN = Path(__file__).resolve().parent / "golden" / "simace_relative_pairs_635
 REL_ORACLE = 1e-12
 #: A directed category's Pearson and phi against simACE.
 ABS_SIMACE = 1e-12
-#: A directed category's tetrachoric against simACE (ADR 0006's gate: 1.13e-7).
+#: A directed category's tetrachoric against simACE (ADR 0011's gate: 1.13e-7).
 ABS_SIMACE_TETRACHORIC = 1.2e-7
 #: simACE's ``_MIN_PAIRS``: below it, simACE reports no estimate.
 SIMACE_MIN_PAIRS = 10

@@ -98,7 +98,7 @@ res.value, res.se, res.ci, res.boundary, res.reason
 
 The Mate Correlation's tetrachoric fit on one table: two-step maximum
 likelihood, a `boundary` flag, and the two-step sandwich SE with each pair
-its own cluster ([ADR 0006](docs/adr/0006-public-tetrachoric-is-the-mate-correlation-fit.md)).
+its own cluster ([ADR 0011](docs/adr/0011-public-tetrachoric-is-the-mate-correlation-fit.md)).
 
 ### Parent-offspring regression
 

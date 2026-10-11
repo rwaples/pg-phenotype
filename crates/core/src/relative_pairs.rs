@@ -600,7 +600,7 @@ fn cell(request: Request, table: &MomentsTable<'_>, kind: TraitKind) -> Result<C
     })
 }
 
-/// ADR 0006's two-step point estimate of the table, without its SE.
+/// ADR 0011's two-step point estimate of the table, without its SE.
 fn tetrachoric(table: [[u64; 2]; 2]) -> Estimate {
     let point = correlation::point(table);
     Estimate {
@@ -637,7 +637,7 @@ const METHOD: [(&str, &str); 4] = [
     ),
     (
         "estimators",
-        "continuous: pearson; binary: tetrachoric (primary, ADR 0006's two-step fit) and phi",
+        "continuous: pearson; binary: tetrachoric (primary, ADR 0011's two-step fit) and phi",
     ),
     (
         "quantization",
