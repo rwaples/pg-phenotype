@@ -9,11 +9,12 @@
 use crate::assortative::estimators::Tables;
 use crate::assortative::fit::newton_rho;
 use crate::assortative::kernels::{Grid, Status, Table};
-use crate::assortative::sandwich::{cell_influence, wald_ci};
-use crate::assortative::{Ci, CiMethod, CiScale, Point, Reason};
+use crate::assortative::sandwich::cell_influence;
+use crate::assortative::{Point, Reason};
 use crate::error::Error;
 use crate::input::TraitKind;
 use crate::value::Value;
+use crate::wald::{wald_ci, Ci, CiMethod, CiScale, CI_LEVEL};
 
 /// The largest count a table takes: 2^53, the last integer every count's
 /// `f64` holds exactly.
@@ -231,7 +232,7 @@ impl Tetrachoric {
             }
         }
         out.extend([
-            ("ci_level", crate::assortative::CI_LEVEL.into()),
+            ("ci_level", CI_LEVEL.into()),
             ("se_method", SE_METHOD.into()),
         ]);
         Value::Map(out)

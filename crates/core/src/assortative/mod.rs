@@ -39,23 +39,16 @@ use permutation::{NullDraw, Packed, SEQUENTIAL_H};
 use sample::{distinct_rows, drop_thin_strata, network_summary, stratum_codes, CellPairs, Kept};
 use std::borrow::Cow;
 
+use crate::wald::{wald_ci, CI_LEVEL};
+pub use crate::wald::{Ci, CiMethod, CiScale};
 pub(crate) use input::check_strata;
 pub use input::{Settings, Strata, DEFAULT_PERMUTATIONS};
 pub use result::{
-    Cell, Ci, CiMethod, CiScale, Draws, Dropped, Estimate, Estimator, EstimatorResult,
-    MateCorrelation, Method, Permutation, PermutationStatistic, Point, Reason, Sample,
-    SettingsEcho, Stratified, WithinPerson, WithinPersonPair, METHOD,
+    Cell, Draws, Dropped, Estimate, Estimator, EstimatorResult, MateCorrelation, Method,
+    Permutation, PermutationStatistic, Point, Reason, Sample, SettingsEcho, Stratified,
+    WithinPerson, WithinPersonPair, METHOD,
 };
 pub(crate) use sample::{mate_networks, mating_pairs, MatingPairs};
-
-/// The confidence level of every interval.
-pub(crate) const CI_LEVEL: f64 = 0.95;
-
-/// The two-sided normal quantile of [`CI_LEVEL`] for Wald intervals: SciPy's
-/// cephes `ndtri((1 + 0.95) / 2)`, as pedsum computes it, one ulp above the
-/// kernels' AS 241.  A literal for parity; `ci_level_and_wald_z_agree` ties
-/// it to `CI_LEVEL`.
-pub(crate) const WALD_Z: f64 = 1.959_963_984_540_054;
 
 /// A cell kind's estimators: the crude ones, primary first, and the
 /// stratified form of the primary (pedsum `CELL_ESTIMATORS`).
@@ -641,7 +634,7 @@ fn infer(
                 )
             } else {
                 let ci = se.map(|se| Ci {
-                    bounds: sandwich::wald_ci(point.value, se, est.ci_scale()),
+                    bounds: wald_ci(point.value, se, est.ci_scale()),
                     method: CiMethod::Sandwich,
                 });
                 (None, ci)
@@ -743,19 +736,5 @@ fn within_person(columns: &[input::Column<'_>], ids: &[i64], pair_rows: &[usize]
         n: n as u64,
         outcome: estimators::point(estimator, false, &people, &vec![1.0; n], None)
             .map_err(kernels::Status::reason),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ci_level_and_wald_z_agree() {
-        let z = kernels::ndtri(0.5 + CI_LEVEL / 2.0);
-        assert!(
-            (z - WALD_Z).abs() <= 2.0 * f64::EPSILON * WALD_Z,
-            "{z} vs {WALD_Z}"
-        );
     }
 }

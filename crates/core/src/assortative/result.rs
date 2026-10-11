@@ -4,6 +4,8 @@
 //! is missing are alternatives, so each is a `Result`: never a value and a
 //! reason together, never neither.
 
+use crate::wald::{Ci, CiScale};
+
 /// A cell estimator, as pedsum names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Estimator {
@@ -16,15 +18,6 @@ pub enum Estimator {
     Polychoric,
     Biserial,
     Polyserial,
-}
-
-/// The scale of an estimator's sandwich SE and Wald interval.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CiScale {
-    /// Fisher z, `atanh` of a correlation.
-    FisherZ,
-    /// `log` of the odds ratio.
-    Log,
 }
 
 impl Estimator {
@@ -141,32 +134,6 @@ impl Reason {
 pub struct Point {
     pub value: f64,
     pub boundary: Option<bool>,
-}
-
-/// How a CI was built.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CiMethod {
-    /// Percentile interval of the Mate Network bootstrap.
-    Bootstrap,
-    /// Wald interval from the sandwich SE, on the estimator's [`CiScale`].
-    Sandwich,
-}
-
-impl CiMethod {
-    /// The name hosts use.
-    pub fn name(self) -> &'static str {
-        match self {
-            CiMethod::Bootstrap => "bootstrap",
-            CiMethod::Sandwich => "sandwich",
-        }
-    }
-}
-
-/// An interval at the result's `ci_level` and how it was built.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Ci {
-    pub bounds: [f64; 2],
-    pub method: CiMethod,
 }
 
 /// Draws requested, how many gave a value, and why the others did not.

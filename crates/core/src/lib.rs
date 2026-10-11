@@ -33,6 +33,7 @@ pub mod regression;
 pub mod relative_pairs;
 pub mod threads;
 pub mod value;
+pub mod wald;
 
 pub use error::Error;
 pub use input::{PedigreeInput, Trait, TraitKind};

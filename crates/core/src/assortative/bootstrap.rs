@@ -640,7 +640,7 @@ pub(crate) fn record(
         Err(Reason::TooManyFailedDraws)
     } else {
         valid.sort_by(f64::total_cmp);
-        let tail = (1.0 - super::CI_LEVEL) / 2.0;
+        let tail = (1.0 - crate::wald::CI_LEVEL) / 2.0;
         Ok([inverted_cdf(&valid, tail), inverted_cdf(&valid, 1.0 - tail)])
     };
     (counts, ci)

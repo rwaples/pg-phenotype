@@ -8,8 +8,9 @@ use super::estimators::{two_by_two, Serial, Sides, Tables};
 use super::kernels::{
     inverse_sd, pearson_influence, polyserial_influence, stratum_moments, Grid, Side, Status, TINY,
 };
-use super::result::{CiScale, Estimator, Point, Reason};
+use super::result::{Estimator, Point, Reason};
 use super::sample::CellPairs;
+use crate::wald::CiScale;
 
 /// `A_ρτ A_ττ⁻¹ ψ_τ` per (stratum, level) of one discrete side.
 fn threshold_correction(a_rho_tau: &Grid<f64>, tau: &Grid<f64>, n_stratum: &[f64]) -> Grid<f64> {
@@ -336,18 +337,5 @@ pub(crate) fn sandwich_se(
         Ok(se)
     } else {
         Err(Reason::SandwichUndefined)
-    }
-}
-
-/// The [`CI_LEVEL`](super::CI_LEVEL) Wald interval on the Fisher-z or the log scale.
-pub(crate) fn wald_ci(value: f64, se: f64, scale: CiScale) -> [f64; 2] {
-    let z = super::WALD_Z;
-    match scale {
-        CiScale::Log => [(value.ln() - z * se).exp(), (value.ln() + z * se).exp()],
-        CiScale::FisherZ => {
-            let centre = value.atanh();
-            let half = z * se / ((1.0 - value) * (1.0 + value));
-            [(centre - half).tanh(), (centre + half).tanh()]
-        }
     }
 }
