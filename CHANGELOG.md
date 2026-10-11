@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.3.0
+
+New methods: the Relative-Pair Correlation, parent-offspring regression, a
+public tetrachoric correlation, and an Aalen-Johansen PA-FGRS CIP.  A
+`Pedigree` validates a pedigree once for several calls and looks up rows by
+id.  Code that needs updating: `mate_correlation` computes Spearman only
+with `spearman=True`, and `permutations` defaults to `None`; a numeric
+input given as text is a `TypeError`; in Rust, `mate_correlation` and
+`prepare` take a `PedigreeArg`.
 
 Relative-Pair Correlation (#1, unit 1):
 `pg_phenotype.relative_pairs.correlation` (R:
