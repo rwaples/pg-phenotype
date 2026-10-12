@@ -1,61 +1,70 @@
-"""``release_free_memory``: free heap pages go back to the system before native work."""
+"""Every native call that computes in the pool hands free heap pages back first (``crossing.rs``)."""
 
 from __future__ import annotations
 
-import sys
+import os
 
 import numpy as np
+import pytest
 
-from pg_phenotype import Trait, _memory
-from pg_phenotype import assortative as am
+from pg_phenotype import Pedigree, Trait, _native, assortative, pafgrs, regression, relative_pairs
 
-
-def test_release_free_memory_runs_and_finds_glibc_on_linux():
-    """It is safe to call anywhere; on glibc Linux it binds ``malloc_trim``."""
-    _memory.release_free_memory()
-    if sys.platform.startswith("linux") and _memory._MALLOC_TRIM is None:
-        import platform
-
-        assert platform.libc_ver()[0] != "glibc"
+PEDIGREE = {"id": np.arange(1, 7), "mother": [-1, -1, -1, -1, 1, 1], "father": [-1, -1, -1, -1, 3, 3]}
+VALUES = Trait([0.1, 0.9, 0.4, 0.2, 0.3, 0.6])
+STATUS = Trait([1.0, 0.0, 0.0, 1.0, np.nan, 0.0])
+AGE = [50.0, 60.0, 40.0, 70.0, np.nan, 20.0]
+CIP = pafgrs.Cip([0.0, 80.0], [0.0, 0.1])
 
 
-def test_mate_correlation_releases_free_memory_first(monkeypatch):
-    """``mate_correlation`` hands free memory back once, before the pool allocates."""
-    calls = []
-    monkeypatch.setattr(am, "release_free_memory", lambda: calls.append(1))
-    ids = np.arange(1, 7)
-    pedigree = {"id": ids, "mother": [-1, -1, -1, -1, 1, 2], "father": [-1, -1, -1, -1, 3, 4]}
-    am.mate_correlation(pedigree, Trait([0.1, 0.9, 0.4, 0.2, np.nan, np.nan]), permutations=0)
-    assert calls == [1]
+def _score_univariate(prep):
+    return pafgrs.score_univariate(prep, STATUS, age=AGE, cip=CIP, h2=0.5)
 
 
-def test_pedigree_releases_free_memory_before_building(monkeypatch):
-    """``Pedigree`` hands free memory back once, after reading the columns and before the native build."""
-    from pg_phenotype import Pedigree, _pedigree
-
-    calls = []
-    monkeypatch.setattr(_pedigree, "release_free_memory", lambda: calls.append(1))
-    Pedigree({"id": np.arange(1, 4), "mother": [-1, -1, 1], "father": [-1, -1, 2]})
-    assert calls == [1]
+def _score_bivariate(prep):
+    return pafgrs.score_bivariate(prep, (STATUS, STATUS), age=(AGE, AGE), cip=(CIP, CIP), h2=(0.5, 0.4), rg=0.3)
 
 
-def test_parent_offspring_releases_free_memory_first(monkeypatch):
-    """``parent_offspring`` hands free memory back once, before the native call."""
-    from pg_phenotype import regression
+#: Each crossing native callable, as a public call of it.  A score is called
+#: with a Prep built outside the counted call.
+CROSSING = {
+    "Pedigree": lambda prep: Pedigree(PEDIGREE),
+    "prepare": lambda prep: pafgrs.prepare(PEDIGREE),
+    "score_univariate": _score_univariate,
+    "score_bivariate": _score_bivariate,
+    "mate_correlation": lambda prep: assortative.mate_correlation(PEDIGREE, VALUES, permutations=0),
+    "parent_offspring": lambda prep: regression.parent_offspring(PEDIGREE, VALUES),
+    "relative_pairs_correlation": lambda prep: relative_pairs.correlation(PEDIGREE, VALUES),
+}
 
-    calls = []
-    monkeypatch.setattr(regression, "release_free_memory", lambda: calls.append(1))
-    pedigree = {"id": np.arange(1, 7), "mother": [-1, -1, -1, -1, 1, 2], "father": [-1, -1, -1, -1, 3, 4]}
-    regression.parent_offspring(pedigree, Trait([0.1, 0.9, 0.4, 0.2, 0.3, 0.6]))
-    assert calls == [1]
+#: Native callables that do not compute in the pool, and so do not release.
+NOT_CROSSING = {
+    "Prep",
+    "check_cip",
+    "cip_aalen_johansen",
+    "configure_threads",
+    "core_version",
+    "pg_core_rev",
+    "tetrachoric_pairs",
+    "tetrachoric_table",
+    "thread_budget",
+    "trait_kinds",
+}
 
 
-def test_relative_pairs_correlation_releases_free_memory_first(monkeypatch):
-    """``relative_pairs.correlation`` hands free memory back once, before the native call."""
-    from pg_phenotype import relative_pairs
+def test_every_native_callable_is_classified():
+    """A new native callable must be listed as crossing (and so tested below) or not."""
+    public = {name for name in dir(_native) if not name.startswith("_") and callable(getattr(_native, name))}
+    assert public == CROSSING.keys() | NOT_CROSSING
 
-    calls = []
-    monkeypatch.setattr(relative_pairs, "release_free_memory", lambda: calls.append(1))
-    pedigree = {"id": np.arange(1, 7), "mother": [-1, -1, -1, -1, 1, 1], "father": [-1, -1, -1, -1, 3, 3]}
-    relative_pairs.correlation(pedigree, Trait([0.1, 0.9, 0.4, 0.2, 0.3, 0.6]))
-    assert calls == [1]
+
+@pytest.mark.parametrize("name", CROSSING)
+def test_a_crossing_releases_free_memory_once(name):
+    count = getattr(_native, "_release_count", None)
+    if count is None:
+        if os.environ.get("PG_PHENOTYPE_REQUIRE_TEST_HOOKS") == "1":
+            pytest.fail("the extension was built without the test-hooks feature")
+        pytest.skip("installed wheel without test hooks")
+    prep = pafgrs.prepare(PEDIGREE)
+    before = count()
+    CROSSING[name](prep)
+    assert count() == before + 1

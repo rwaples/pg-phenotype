@@ -11,3 +11,9 @@ pub(crate) fn _panic_for_test() {
         panic!("pg-phenotype test hook: deliberate panic");
     }
 }
+
+/// How many times a crossing has released free memory in this process.
+#[pyfunction]
+pub(crate) fn _release_count() -> usize {
+    crate::crossing::RELEASES.load(std::sync::atomic::Ordering::Relaxed)
+}

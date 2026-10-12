@@ -70,7 +70,7 @@ import sys
 sys.path.insert(0, {root!r})
 from tests.assortative_golden import GATE_NAMES, NAMES
 from tests.assortative_parity import run, load
-print(repr([run(load(n), threads={threads}) for n in NAMES if n in {names!r}]))
+print(repr([run(load(n)) for n in NAMES if n in {names!r}]))
 """
 
 
@@ -79,7 +79,8 @@ def test_results_do_not_depend_on_the_thread_count():
     names = ["cont_bin_boot", "bin_ord_depth_boot", "ord_cont_birthyear_boot", "strong_assort"]
     out = [
         subprocess.run(
-            [sys.executable, "-c", _RUN.format(root=root, threads=t, names=names)],
+            [sys.executable, "-c", _RUN.format(root=root, names=names)],
+            env={**os.environ, "PG_PHENOTYPE_THREADS": str(t)},
             capture_output=True,
             text=True,
             check=True,

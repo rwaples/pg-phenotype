@@ -9,6 +9,7 @@ are passed beside it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -16,10 +17,10 @@ import numpy as np
 from pg_phenotype import _native
 from pg_phenotype._input import floats, id_array
 from pg_phenotype._pedigree import native_pedigree
-from pg_phenotype._threads import thread_budget
+from pg_phenotype._trait import checked
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from pg_phenotype._trait import Trait
 
@@ -56,12 +57,7 @@ def prepare(pedigree: object, *, ndegree: int = 2, probands: Sequence[int] | np.
     """
     native = native_pedigree(pedigree)
     proband_ids = None if probands is None else id_array(probands, "probands")
-    return _native.prepare(
-        native,
-        ndegree=ndegree,
-        probands=proband_ids,
-        threads=thread_budget(),
-    )
+    return _native.prepare(native, ndegree=ndegree, probands=proband_ids)
 
 
 @dataclass(frozen=True)
@@ -146,7 +142,7 @@ class UnivariateScores:
     est: np.ndarray
     var: np.ndarray
     n_relatives: np.ndarray
-    metadata: dict[str, object]
+    metadata: Mapping[str, object]
 
     def to_dict(self) -> dict[str, np.ndarray]:
         """The per-proband columns."""
@@ -166,23 +162,12 @@ class BivariateScores:
     n_relatives: np.ndarray
     n_obs1: np.ndarray
     n_obs2: np.ndarray
-    metadata: dict[str, object]
+    metadata: Mapping[str, object]
 
     def to_dict(self) -> dict[str, np.ndarray]:
         """The per-proband columns."""
         names = ("id", "est1", "est2", "var1", "var2", "cov12", "n_relatives", "n_obs1", "n_obs2")
         return {name: getattr(self, name) for name in names}
-
-
-def _metadata(prep: _native.Prep, n_probands: int) -> dict[str, object]:
-    from pg_phenotype import __version__
-
-    return {
-        "n_probands": n_probands,
-        "ndegree": prep.ndegree,
-        "pg_phenotype_version": __version__,
-        "pedigree_graph_core_rev": _native.pg_core_rev(),
-    }
 
 
 def score_univariate(prep: _native.Prep, trait: Trait, *, age: object, cip: Cip, h2: float) -> UnivariateScores:
@@ -208,22 +193,14 @@ def score_univariate(prep: _native.Prep, trait: Trait, *, age: object, cip: Cip,
             the pedigree's, a value outside {0, 1}, or a negative or
             infinite age.
     """
-    raw = _native.score_univariate(
-        prep,
-        trait.values,
-        trait.kind,
-        floats(age, "age"),
-        cip._native(),
-        h2=float(h2),
-        threads=thread_budget(),
-    )
-    metadata = _metadata(prep, len(raw["id"]))
-    metadata |= {
+    raw = _native.score_univariate(prep, checked(trait), floats(age, "age"), cip._native(), h2=float(h2))
+    metadata = MappingProxyType({
         "h2": float(h2),
         "prevalence": cip.prevalence,
         "threshold": raw["threshold"],
         "controls_without_age": raw["controls_without_age"],
-    }
+        **raw["metadata"],
+    })  # fmt: skip
     return UnivariateScores(
         id=raw["id"], est=raw["est"], var=raw["var"], n_relatives=raw["n_relatives"], metadata=metadata
     )
@@ -262,30 +239,23 @@ def score_bivariate(
     """
     if not len(traits) == len(age) == len(cip) == len(h2) == 2:
         raise ValueError("score_bivariate takes exactly two traits, ages, CIP tables and h2 values")
-    t1, t2 = traits
     raw = _native.score_bivariate(
         prep,
-        t1.values,
-        t1.kind,
-        floats(age[0], "age1"),
-        t2.values,
-        t2.kind,
-        floats(age[1], "age2"),
-        cip[0]._native(),
-        cip[1]._native(),
+        (checked(traits[0], "traits[0]"), checked(traits[1], "traits[1]")),
+        (floats(age[0], "age1"), floats(age[1], "age2")),
+        (cip[0]._native(), cip[1]._native()),
         h2=(float(h2[0]), float(h2[1])),
         rg=float(rg),
         rho_within=None if rho_within is None else float(rho_within),
-        threads=thread_budget(),
     )
-    metadata = _metadata(prep, len(raw["id"]))
-    metadata |= {
+    metadata = MappingProxyType({
         "h2": (float(h2[0]), float(h2[1])),
         "rg": float(rg),
         "rho_within": raw["rho_within"],
         "prevalence": (cip[0].prevalence, cip[1].prevalence),
         "threshold": tuple(raw["threshold"]),
         "controls_without_age": tuple(raw["controls_without_age"]),
-    }
+        **raw["metadata"],
+    })  # fmt: skip
     columns = ("id", "est1", "est2", "var1", "var2", "cov12", "n_relatives", "n_obs1", "n_obs2")
     return BivariateScores(**{c: raw[c] for c in columns}, metadata=metadata)

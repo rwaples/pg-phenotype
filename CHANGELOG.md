@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Every Python call that computes in the thread pool, and the `Pedigree`
+  constructor, hands the process's free heap pages back to the system
+  first (`malloc_trim`, glibc only): `pafgrs.prepare` and both score
+  functions now do, as `Pedigree`, `mate_correlation`, `parent_offspring`
+  and `relative_pairs.correlation` did.  The release moved from each
+  wrapper into the native binding's one crossing module, which every
+  method's call goes through.  Its memory effect is measured only for
+  `mate_correlation` (v0.1.1).
+- `mate_correlation`, `pafgrs.score_univariate` and
+  `pafgrs.score_bivariate` raise `TypeError` naming the argument
+  (`traits[1] must be a pg_phenotype.Trait, got ndarray`) for an argument
+  that is not a `Trait`, where they raised `AttributeError`, as
+  `parent_offspring` and `relative_pairs.correlation` did.
+- PA-FGRS scores' `metadata` is a read-only mapping, as every other
+  method's is, in R's order: the parameters, `prevalence`, `threshold`,
+  `controls_without_age`, `n_probands`, `ndegree`, then the versions.  Code
+  that needs updating: code that changed a score's `metadata` in place.
+- The `pg_phenotype_version` in a result's metadata is the native
+  binding's version, as in R; `tests/test_version.py` keeps it equal to the
+  distribution's.
+- Private `_native` signatures: methods take a `Trait` whole and strata as
+  one `(labels, known)` pair, `score_bivariate` takes its traits, ages and
+  CIP tables as pairs, and none takes `threads`; the binding reads the
+  committed thread budget, as R's does.
 - The Polychoric Fit, the tetrachoric and polychoric fit the Mate
   Correlation and the public tetrachoric share, has its own module,
   `polychoric`, with pedsum's primitives (ADR 0005, 0011 amended).  Results

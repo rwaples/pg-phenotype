@@ -834,6 +834,17 @@ def test_spearman_must_be_a_bool():
         mate_correlation(ped, traits[:1], permutations=0, spearman=1)
 
 
+def test_traits_must_be_traits():
+    ped, traits, _ = _frame_traits(2, 20)
+    with pytest.raises(TypeError, match=r"traits must be a pg_phenotype\.Trait or a sequence of them, got int"):
+        mate_correlation(ped, 3, permutations=0)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match=r"traits\[0\] must be a pg_phenotype\.Trait, got float"):
+        mate_correlation(ped, traits[0].values, permutations=0)  # type: ignore[arg-type]
+    assert mate_correlation(ped, (t for t in traits[:1]), permutations=0).cells
+    with pytest.raises(TypeError, match=r"traits\[1\] must be a pg_phenotype\.Trait, got ndarray"):
+        mate_correlation(ped, [traits[0], traits[1].values], permutations=0)  # type: ignore[list-item]
+
+
 def test_spearman_ci_needs_the_bootstrap():
     """pedsum test_spearman_ci_needs_the_bootstrap: no sandwich for Spearman, the bootstrap gives it a percentile CI."""
     ped, traits, _ = _frame_traits(2, 120)
@@ -1051,10 +1062,9 @@ def test_dataclass_fields_are_the_core_tree_keys():
     labels = np.where(np.isnan(strata), 0, strata).astype(np.int64)
     raw = _native.mate_correlation(
         (ped["id"], ped["mother"], ped["father"], None, None),
-        [(np.ascontiguousarray(x), "continuous", None), (np.ascontiguousarray(bb), "binary", None)],
-        labels, ~np.isnan(strata),
+        [Trait(x, kind="continuous"), Trait(bb, kind="binary")],
+        (labels, ~np.isnan(strata)),
         permutations=19, bootstrap=19, seed=0, min_stratum_networks=2, spearman=True, inference=True,
-        threads=1,
     )  # fmt: skip
 
     def names(cls):

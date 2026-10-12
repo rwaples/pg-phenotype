@@ -20,10 +20,8 @@ import numpy as np
 
 from pg_phenotype import _native
 from pg_phenotype._input import count, strata
-from pg_phenotype._memory import release_free_memory
 from pg_phenotype._pedigree import native_pedigree
-from pg_phenotype._threads import thread_budget
-from pg_phenotype._trait import Trait
+from pg_phenotype._trait import Trait, checked
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -329,30 +327,30 @@ def mate_correlation(
             inference, *min_stratum_networks* below 1, or an integer outside
             int64.
     """
-    from pg_phenotype import __version__
-
     native = native_pedigree(pedigree)
-    trait_list = [traits] if isinstance(traits, Trait) else list(traits)
-    native_traits = [
-        (np.ascontiguousarray(t.values), t.kind, None if t.levels is None else len(t.levels)) for t in trait_list
-    ]
-    labels, known = (None, None) if stratum is None else strata(stratum)
+    if isinstance(traits, Trait):
+        trait_list = [traits]
+    else:
+        try:
+            given = list(traits)
+        except TypeError:
+            name = type(traits).__name__
+            raise TypeError(f"traits must be a pg_phenotype.Trait or a sequence of them, got {name}") from None
+        trait_list = [checked(t, f"traits[{i}]") for i, t in enumerate(given)]
+    stratum_arrays = None if stratum is None else strata(stratum)
     for name, flag in (("spearman", spearman), ("inference", inference)):
         if not isinstance(flag, (bool, np.bool_)):
             raise TypeError(f"{name} must be a bool, got {flag!r}")
-    release_free_memory()
     raw = _native.mate_correlation(
         native,
-        native_traits,
-        labels,
-        known,
+        trait_list,
+        stratum_arrays,
         permutations=None if permutations is None else count("permutations", permutations),
         bootstrap=count("bootstrap", bootstrap),
         seed=count("seed", seed),
         min_stratum_networks=count("min_stratum_networks", min_stratum_networks),
         spearman=bool(spearman),
         inference=bool(inference),
-        threads=thread_budget(),
     )
     s = raw["sample"]
     within = raw["within_person"]
@@ -364,7 +362,5 @@ def mate_correlation(
         else MappingProxyType({sex: WithinPerson(**w) for sex, w in within.items()}),
         settings=MappingProxyType(dict(raw["settings"])),
         method=MappingProxyType(dict(raw["method"])),
-        metadata=MappingProxyType(
-            {"pg_phenotype_version": __version__, "pedigree_graph_core_rev": _native.pg_core_rev()}
-        ),
+        metadata=MappingProxyType(raw["metadata"]),
     )

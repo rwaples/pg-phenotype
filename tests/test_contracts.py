@@ -279,6 +279,39 @@ def test_metadata_names_versions(case):
     assert meta["ndegree"] == 2
 
 
+def test_metadata_is_read_only_in_rs_order(case):
+    """The parameters, then the counts, then the versions, as R's metadata attribute lists them."""
+    ped, t1, t2 = case
+    prep = pafgrs.prepare(ped, ndegree=2)
+    uni = pafgrs.score_univariate(prep, t1.trait, age=t1.age, cip=t1.cip, h2=0.4).metadata
+    biv = pafgrs.score_bivariate(
+        prep, (t1.trait, t2.trait), age=(t1.age, t2.age), cip=(t1.cip, t2.cip), h2=(0.4, 0.3), rg=0.2
+    ).metadata
+    tail = [
+        "threshold",
+        "controls_without_age",
+        "n_probands",
+        "ndegree",
+        "pg_phenotype_version",
+        "pedigree_graph_core_rev",
+    ]
+    assert list(uni) == ["h2", "prevalence", *tail]
+    assert list(biv) == ["h2", "rg", "rho_within", "prevalence", *tail]
+    with pytest.raises(TypeError):
+        uni["h2"] = 0.5  # type: ignore[index]
+
+
+def test_scores_take_traits(case):
+    ped, t1, t2 = case
+    prep = pafgrs.prepare(ped)
+    with pytest.raises(TypeError, match=r"trait must be a pg_phenotype\.Trait, got ndarray"):
+        pafgrs.score_univariate(prep, t1.affected, age=t1.age, cip=t1.cip, h2=0.4)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match=r"traits\[1\] must be a pg_phenotype\.Trait, got ndarray"):
+        pafgrs.score_bivariate(
+            prep, (t1.trait, t2.affected), age=(t1.age, t2.age), cip=(t1.cip, t2.cip), h2=(0.4, 0.3), rg=0.2
+        )  # type: ignore[arg-type]
+
+
 _SCORES = """
 import sys, numpy as np
 from pg_phenotype import pafgrs
@@ -315,11 +348,16 @@ def test_scores_are_identical_across_thread_budgets():
 def test_a_pool_built_for_another_budget_raises_runtime_error():
     code = (
         "import numpy as np\n"
-        "from pg_phenotype import _native\n"
-        "ped = [np.array(v, dtype=np.int64) for v in ([1, 2], [-1, -1], [-1, -1])]\n"
-        "_native.prepare((*ped, None, None), ndegree=1, probands=None, threads=1)\n"
+        "import pg_phenotype\n"
+        "from pg_phenotype import pafgrs\n"
+        "from pg_phenotype._threads import _reset_thread_state\n"
+        "ped = {'id': np.array([1, 2]), 'mother': np.array([-1, -1]), 'father': np.array([-1, -1])}\n"
+        "pg_phenotype.configure_threads(1)\n"
+        "pafgrs.prepare(ped, ndegree=1)\n"
+        "_reset_thread_state()\n"
+        "pg_phenotype.configure_threads(2)\n"
         "try:\n"
-        "    _native.prepare((*ped, None, None), ndegree=1, probands=None, threads=2)\n"
+        "    pafgrs.prepare(ped, ndegree=1)\n"
         "except RuntimeError as e:\n"
         "    print('RuntimeError', e)\n"
     )

@@ -89,6 +89,13 @@ class Trait:
         object.__setattr__(self, "levels", levels)
 
 
+def checked(trait: object, name: str = "trait") -> Trait:
+    """*trait*, or ``TypeError`` naming the caller's parameter when it is not a :class:`Trait`."""
+    if not isinstance(trait, Trait):
+        raise TypeError(f"{name} must be a pg_phenotype.Trait, got {type(trait).__name__}")
+    return trait
+
+
 def _pd_categorical_type() -> tuple[type, ...]:
     """Pandas's categorical dtype, or nothing when pandas is not installed."""
     try:

@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, NoReturn
 
 from pg_phenotype import _native
 from pg_phenotype._input import floats, id_array, pedigree_arrays
-from pg_phenotype._memory import release_free_memory
 
 if TYPE_CHECKING:
     import numpy as np
@@ -42,9 +41,7 @@ class Pedigree:
     __slots__ = ("_native",)
 
     def __init__(self, pedigree: object) -> None:
-        arrays = pedigree_arrays(pedigree)
-        release_free_memory()
-        self._native = _native.Pedigree(*arrays)
+        self._native = _native.Pedigree(*pedigree_arrays(pedigree))
 
     def __len__(self) -> int:
         return len(self._native)
