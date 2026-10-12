@@ -26,6 +26,17 @@
   one `(labels, known)` pair, `score_bivariate` takes its traits, ages and
   CIP tables as pairs, and none takes `threads`; the binding reads the
   committed thread budget, as R's does.
+- In R, `pedigree()`, `pafgrs_prepare()`, both score functions,
+  `assortative_mate_correlation()`, `regression_parent_offspring()` and
+  `relative_pairs_correlation()` hand free heap pages back to the system
+  before they compute, through the same crossing module as Python; R
+  released none.  Its memory effect in R is not measured.
+- R's PA-FGRS score metadata comes with the scores, so a score no longer
+  makes a second native call for `n_probands` and `ndegree`.  Its values
+  and order are unchanged.
+- The R binding's private native routines take the pedigree as one
+  argument (a `pedigree()` pointer or the column list) and each `trait()`
+  and `pafgrs_cip()` whole.
 - The Polychoric Fit, the tetrachoric and polychoric fit the Mate
   Correlation and the public tetrachoric share, has its own module,
   `polychoric`, with pedsum's primitives (ADR 0005, 0011 amended).  Results

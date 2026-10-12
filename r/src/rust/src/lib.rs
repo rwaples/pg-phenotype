@@ -2,12 +2,12 @@
 //!
 //! Every exported function returns its value or, on failure, the classed
 //! list the R wrapper `.pgp_call()` signals (`errors.rs`).  Nothing here
-//! raises into R.  Work runs in the core pool sized by the package thread
-//! budget (`threads.rs`).  Each method is a module, as in the core
+//! raises into R.  A method crosses into the core through `crossing.rs`.  Each method is a module, as in the core
 //! ([`pafgrs`]).
 
 mod assortative;
 mod correlation;
+mod crossing;
 mod errors;
 mod input;
 mod pafgrs;

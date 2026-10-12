@@ -45,15 +45,11 @@
 #' @export
 relative_pairs_correlation <- function(pedigree, trait, categories = NULL, memory_budget_bytes = 2^30) {
   call <- sys.call()
-  args <- .pgp_pedigree_args(pedigree, call)
+  pedigree <- .pgp_pedigree_arg(pedigree, call)
   .pgp_check_class(trait, "pgphenotype_trait", "trait", "trait()", call)
   entries <- .pgp_category_entries(categories, call)
   budget <- .pgp_number(memory_budget_bytes, "memory_budget_bytes", call)
-  n_levels <- if (is.null(trait$levels)) NA_real_ else as.double(length(trait$levels))
-  raw <- .pgp_call(do.call(.native_relative_pairs_correlation, c(args, list(
-    trait$values, trait$kind, n_levels, entries$names, entries$members, budget
-  ))), call)
-  raw$metadata <- list(pg_phenotype_version = pgphenotype_version(), pedigree_graph_core_rev = pg_core_rev())
+  raw <- .pgp_call(.native_relative_pairs_correlation(pedigree, trait, entries$names, entries$members, budget), call)
   structure(raw, class = "pgphenotype_relative_pairs")
 }
 

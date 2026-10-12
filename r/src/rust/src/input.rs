@@ -228,6 +228,36 @@ pub fn handle<'a, T: 'static>(robj: &'a Robj, name: &str, maker: &str) -> HostRe
     ptr.try_addr().map_err(|_| wrong())
 }
 
+/// The elements `names` of the list `robj`, which `maker` returned: a usage
+/// error for another object.
+pub fn elements<const N: usize>(
+    robj: &Robj,
+    name: &str,
+    maker: &str,
+    names: [&str; N],
+) -> HostResult<[Robj; N]> {
+    let wrong = || HostError::usage(format!("`{name}` must come from {maker}"));
+    let list = robj.as_list().ok_or_else(wrong)?;
+    let mut found: [Option<Robj>; N] = std::array::from_fn(|_| None);
+    for (key, value) in list.iter() {
+        if let Some(i) = names.iter().position(|n| *n == key) {
+            found[i] = Some(value);
+        }
+    }
+    let found = found
+        .into_iter()
+        .map(|value| value.ok_or_else(wrong))
+        .collect::<HostResult<Vec<_>>>()?;
+    <[Robj; N]>::try_from(found).map_err(|_| wrong())
+}
+
+/// The `N` elements of a list the R wrapper built.
+pub fn list_of<const N: usize>(robj: &Robj, name: &str) -> HostResult<[Robj; N]> {
+    let wrong = || HostError::usage(format!("{name} must be a list of {N}"));
+    let list = robj.as_list().ok_or_else(wrong)?;
+    <[Robj; N]>::try_from(list.values().collect::<Vec<_>>()).map_err(|_| wrong())
+}
+
 /// The pedigree columns, coerced; `twin` and `sex` are optional.
 pub struct Pedigree {
     pub ids: Coerced,

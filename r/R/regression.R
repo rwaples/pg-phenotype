@@ -39,13 +39,9 @@
 #' @export
 regression_parent_offspring <- function(pedigree, trait, stratum = NULL) {
   call <- sys.call()
-  args <- .pgp_pedigree_args(pedigree, call)
+  pedigree <- .pgp_pedigree_arg(pedigree, call)
   .pgp_check_class(trait, "pgphenotype_trait", "trait", "trait()", call)
-  n_levels <- if (is.null(trait$levels)) NA_real_ else as.double(length(trait$levels))
-  raw <- .pgp_call(do.call(.native_regression_parent_offspring, c(args, list(
-    trait$values, trait$kind, n_levels, stratum
-  ))), call)
-  raw$metadata <- list(pg_phenotype_version = pgphenotype_version(), pedigree_graph_core_rev = pg_core_rev())
+  raw <- .pgp_call(.native_regression_parent_offspring(pedigree, trait, stratum), call)
   structure(raw, class = "pgphenotype_parent_offspring")
 }
 

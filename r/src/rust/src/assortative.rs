@@ -1,51 +1,39 @@
 //! `assortative_mate_correlation()`: the Mate Correlation as nested lists,
 //! the core's `to_value` tree that the Python binding converts too.
 
-use crate::errors::{finish, HostError, HostResult};
+use crate::crossing::{self, TraitArg};
+use crate::errors::{finish, HostResult};
 use crate::input;
 use crate::pedigree::Source;
-use crate::threads;
-use crate::value::to_robj;
 use extendr_api::prelude::*;
 use pg_phenotype_core::assortative::{self, Settings, Strata};
-use pg_phenotype_core::Trait;
 
-#[allow(clippy::too_many_arguments)]
 fn mate_correlation_impl(
-    ptr: &Robj,
-    columns: [Robj; 5],
-    values: &List,
-    kinds: &Robj,
-    n_levels: &Robj,
+    pedigree: &Robj,
+    traits: &List,
     stratum: &Robj,
     counts: [&Robj; 4],
     spearman: bool,
     inference: bool,
 ) -> HostResult<Robj> {
-    let pedigree = Source::read(ptr, columns)?;
+    let pedigree = Source::read(pedigree)?;
     let [permutations, bootstrap, seed, min_stratum_networks] = counts;
     let whole =
         |name: &'static str, x: &Robj| input::number(name, x).and_then(|v| input::whole(name, v));
-    let n_levels = input::doubles("n_levels", n_levels)?;
-    let kinds = kinds
-        .as_str_vector()
-        .ok_or_else(|| HostError::usage("a trait must come from trait()".to_string()))?;
-    let value_robjs: Vec<Robj> = values.values().collect();
-    let traits = value_robjs
+    let traits = traits
+        .values()
+        .map(|t| TraitArg::read(&t))
+        .collect::<HostResult<Vec<_>>>()?;
+    let traits = traits
         .iter()
-        .zip(&kinds)
-        .zip(n_levels)
-        .map(|((v, k), &n)| {
-            Ok(Trait {
-                values: input::doubles("trait", v)?,
-                kind: input::trait_kind(k)?,
-                n_levels: (!n.is_nan()).then_some(n as usize),
-            })
-        })
+        .map(TraitArg::get)
         .collect::<HostResult<Vec<_>>>()?;
     let strata = (!stratum.is_null())
         .then(|| input::strata(stratum))
         .transpose()?;
+    let strata = strata
+        .as_ref()
+        .map(|(labels, known)| Strata { labels, known });
     let settings = Settings {
         permutations: (!permutations.is_null())
             .then(|| whole("permutations", permutations))
@@ -56,34 +44,19 @@ fn mate_correlation_impl(
         spearman,
         inference,
     };
-    let pool = threads::pool()?;
-    let result = pool.install(|| {
-        assortative::mate_correlation(
-            pedigree.arg(),
-            &traits,
-            strata
-                .as_ref()
-                .map(|(labels, known)| Strata { labels, known }),
-            settings,
-        )
+    let result = crossing::run(|| {
+        assortative::mate_correlation(pedigree.arg(), &traits, strata, settings)
+            .map(|r| r.to_value())
     })?;
-    Ok(to_robj(&result.to_value()))
+    crossing::result(result)
 }
 
-/// The Mate Correlation of one or two traits, in the pool, over a
-/// `pedigree()` pointer or, when it is `NULL`, the columns.
+/// The Mate Correlation of one or two traits, in the pool.
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn assortative_mate_correlation(
     pedigree: Robj,
-    id: Robj,
-    mother: Robj,
-    father: Robj,
-    twin: Robj,
-    sex: Robj,
-    values: List,
-    kinds: Robj,
-    n_levels: Robj,
+    traits: List,
     stratum: Robj,
     permutations: Robj,
     bootstrap: Robj,
@@ -94,10 +67,7 @@ fn assortative_mate_correlation(
 ) -> Robj {
     finish(mate_correlation_impl(
         &pedigree,
-        [id, mother, father, twin, sex],
-        &values,
-        &kinds,
-        &n_levels,
+        &traits,
         &stratum,
         [&permutations, &bootstrap, &seed, &min_stratum_networks],
         spearman,
