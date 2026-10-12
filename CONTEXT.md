@@ -32,6 +32,16 @@ kind: continuous, binary, ordinal or categorical.  A trait is values only;
 what a method needs beyond them (an age, a CIP) it takes separately.
 _Avoid_: phenotype column, variable
 
+**Admission**:
+The checks a method makes of a Trait before reading it, in one order for
+every method: its length, its kind, each present value, then, for a
+method that needs the trait to vary (the Mate Correlation), a present
+value, two distinct values, and every level taken.  Each method declares
+the kinds it reads; one that reads a single kind reports a trait of
+another as a kind mismatch.  A method checks its other columns (an age,
+strata) after the trait.
+_Avoid_: validation (of a trait), value rule
+
 **Proband**:
 A pedigree row that receives a score.  Every row by default; `probands=`
 restricts the set.

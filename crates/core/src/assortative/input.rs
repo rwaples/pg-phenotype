@@ -1,7 +1,7 @@
 //! The input boundary: traits, strata and settings checked once, then trusted.
 
 use crate::error::Error;
-use crate::input::{Trait, TraitKind, ValueRule};
+use crate::input::{admit, Admits, Admitted, Trait, TraitKind};
 
 /// Field names of the traits, as errors report them.
 const FIELDS: [&str; 2] = ["traits[0]", "traits[1]"];
@@ -132,45 +132,19 @@ impl Settings {
     }
 }
 
-/// How a checked trait's values are read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Kind {
-    Continuous,
-    /// Codes 0 and 1.
-    Binary,
-    /// Codes `0..k`, every one taken by some row.
-    Ordinal {
-        k: usize,
-    },
-}
+/// Continuous, binary or ordinal, strict: a cell needs each trait to vary
+/// and, for a discrete one, every level taken.
+const ADMITS: Admits = Admits::new(
+    &[TraitKind::Continuous, TraitKind::Binary, TraitKind::Ordinal],
+    true,
+);
 
-impl Kind {
-    /// The number of level codes of a discrete trait.
-    pub fn levels(self) -> Option<usize> {
-        match self {
-            Kind::Continuous => None,
-            Kind::Binary => Some(2),
-            Kind::Ordinal { k } => Some(k),
-        }
-    }
-}
-
-/// A trait that passed [`check_traits`].
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Column<'a> {
-    /// One value per row, NaN where missing.
-    pub values: &'a [f64],
-    pub kind: Kind,
-}
-
-/// Check one or two traits against `n_rows` (D4, D8, D9).
-///
-/// Per trait, in order: length, kind, values, all missing, constant, then
-/// every level used.
+/// Check one or two traits against `n_rows` (D4, D8, D9): their count, then
+/// each trait's Admission in turn.
 pub(crate) fn check_traits<'a>(
     traits: &[Trait<'a>],
     n_rows: usize,
-) -> Result<Vec<Column<'a>>, Error> {
+) -> Result<Vec<Admitted<'a>>, Error> {
     if traits.is_empty() || traits.len() > 2 {
         return Err(Error::TraitCount {
             actual: traits.len(),
@@ -181,77 +155,8 @@ pub(crate) fn check_traits<'a>(
     traits
         .iter()
         .zip(FIELDS)
-        .map(|(t, field)| check_trait(*t, field, n_rows))
+        .map(|(t, field)| admit(*t, field, n_rows, ADMITS))
         .collect()
-}
-
-fn check_trait<'a>(t: Trait<'a>, field: &'static str, n_rows: usize) -> Result<Column<'a>, Error> {
-    let rule = ValueRule::of(&t, field, n_rows)?;
-    let declared = match t.kind {
-        TraitKind::Continuous => None,
-        _ => t.n_levels,
-    };
-    let mut first: Option<f64> = None;
-    let mut constant = true;
-    let mut max_code = 0.0_f64;
-    let mut n_present = 0usize;
-    for (position, &value) in t.values.iter().enumerate() {
-        if value.is_nan() {
-            continue;
-        }
-        n_present += 1;
-        rule.check(position, value)?;
-        match first {
-            None => first = Some(value),
-            Some(f) => constant &= f == value,
-        }
-        max_code = max_code.max(value);
-    }
-    let Some(value) = first else {
-        return Err(Error::AllMissingTrait { field });
-    };
-    if constant {
-        return Err(Error::ConstantTrait { field, value });
-    }
-    let kind = match t.kind {
-        TraitKind::Continuous => {
-            return Ok(Column {
-                values: t.values,
-                kind: Kind::Continuous,
-            })
-        }
-        TraitKind::Binary => Kind::Binary,
-        _ => Kind::Ordinal {
-            // Saturating: a huge code fails the level check below before `k`
-            // is used.
-            k: declared.unwrap_or((max_code as usize).saturating_add(1)),
-        },
-    };
-    // A binary trait declared with more than two levels leaves one unused.
-    let k = declared.or(kind.levels()).unwrap_or(0);
-    // `n_present` values take at most `n_present` levels, so the first unused
-    // level is at most `n_present`: the bitmap never needs more slots than
-    // that, whatever the codes or the declared count.
-    let mut used = vec![false; k.min(n_present + 1)];
-    for &value in t.values.iter().filter(|v| !v.is_nan()) {
-        if let Some(slot) = used.get_mut(value as usize) {
-            *slot = true;
-        }
-    }
-    if let Some(level) = used.iter().position(|&u| !u) {
-        return Err(match declared {
-            Some(n_levels) => Error::UnusedLevel {
-                field,
-                level,
-                n_levels,
-            },
-            None => Error::SparseOrdinalCodes { field, level },
-        });
-    }
-    Ok(Column {
-        values: t.values,
-        kind,
-    })
 }
 
 /// Check that `strata` has one label per row.
@@ -270,6 +175,7 @@ pub(crate) fn check_strata(strata: Strata<'_>, n_rows: usize) -> Result<(), Erro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::Kind;
 
     const NA: f64 = f64::NAN;
 
@@ -306,115 +212,33 @@ mod tests {
         }
     }
 
-    fn code(traits: &[Trait<'_>], n: usize) -> &'static str {
-        check_traits(traits, n).unwrap_err().code()
-    }
-
     #[test]
-    fn counts_lengths_and_kinds() {
+    fn one_or_two_traits_each_admitted_strictly() {
         let v = [0.0, 1.0];
         let b = t(&v, TraitKind::Binary, None);
-        assert_eq!(code(&[], 2), "trait_count");
-        assert_eq!(code(&[b, b, b], 2), "trait_count");
-        assert_eq!(code(&[b], 3), "trait_length_mismatch");
+        let err = |traits: &[Trait<'_>], n| check_traits(traits, n).unwrap_err();
+        assert_eq!(err(&[], 2).code(), "trait_count");
+        assert_eq!(err(&[b, b, b], 2).code(), "trait_count");
+        // The count comes before any trait.
+        assert_eq!(err(&[b, b, b], 3).code(), "trait_count");
         assert_eq!(
-            code(&[t(&v, TraitKind::Categorical, None)], 2),
-            "unsupported_trait_kind"
+            err(&[b, t(&[1.0, 1.0], TraitKind::Binary, None)], 2),
+            Error::ConstantTrait {
+                field: "traits[1]",
+                value: 1.0
+            }
+        );
+        assert_eq!(
+            err(&[t(&[NA, NA], TraitKind::Continuous, None), b], 2),
+            Error::AllMissingTrait { field: "traits[0]" }
+        );
+        assert_eq!(
+            err(&[t(&[0.0, 2.0], TraitKind::Ordinal, None)], 2).code(),
+            "sparse_ordinal_codes"
         );
         let ok = check_traits(&[b, t(&v, TraitKind::Ordinal, None)], 2).unwrap();
         assert_eq!(ok[0].kind, Kind::Binary);
         assert_eq!(ok[1].kind, Kind::Ordinal { k: 2 });
-    }
-
-    #[test]
-    fn values_must_be_codes_or_finite() {
-        assert_eq!(
-            code(&[t(&[0.0, 2.0], TraitKind::Binary, None)], 2),
-            "invalid_trait_value"
-        );
-        assert_eq!(
-            code(&[t(&[0.0, 0.5], TraitKind::Ordinal, None)], 2),
-            "invalid_trait_value"
-        );
-        assert_eq!(
-            code(&[t(&[0.0, -1.0], TraitKind::Ordinal, None)], 2),
-            "invalid_trait_value"
-        );
-        assert_eq!(
-            code(&[t(&[0.0, 3.0], TraitKind::Ordinal, Some(3))], 2),
-            "invalid_trait_value"
-        );
-        assert_eq!(
-            code(&[t(&[0.0, f64::INFINITY], TraitKind::Continuous, None)], 2),
-            "invalid_trait_value"
-        );
-    }
-
-    #[test]
-    fn missing_constant_then_levels() {
-        assert_eq!(
-            code(&[t(&[NA, NA], TraitKind::Continuous, None)], 2),
-            "all_missing_trait"
-        );
-        assert_eq!(
-            code(&[t(&[1.0, NA, 1.0], TraitKind::Binary, None)], 3),
-            "constant_trait"
-        );
-        assert_eq!(
-            code(&[t(&[2.0, 2.0], TraitKind::Ordinal, Some(5))], 2),
-            "constant_trait"
-        );
-        assert_eq!(
-            code(&[t(&[10.0, 20.0, 40.0], TraitKind::Ordinal, None)], 3),
-            "sparse_ordinal_codes"
-        );
-        assert_eq!(
-            code(&[t(&[0.0, 2.0], TraitKind::Ordinal, None)], 2),
-            "sparse_ordinal_codes"
-        );
-        let err = check_traits(&[t(&[0.0, 1.0], TraitKind::Ordinal, Some(3))], 2).unwrap_err();
-        assert_eq!(
-            err,
-            Error::UnusedLevel {
-                field: "traits[0]",
-                level: 2,
-                n_levels: 3
-            }
-        );
-        assert_eq!(
-            code(&[t(&[0.0, 1.0], TraitKind::Binary, Some(3))], 2),
-            "unused_level"
-        );
-        let ok = check_traits(&[t(&[0.0, 2.0, NA, 1.0], TraitKind::Ordinal, Some(3))], 4).unwrap();
-        assert_eq!(ok[0].kind, Kind::Ordinal { k: 3 });
-    }
-
-    #[test]
-    fn huge_codes_and_level_counts_are_rejected_without_allocating() {
-        // Undeclared levels: the bitmap would have been sized by the code.
-        let err = check_traits(&[t(&[0.0, 1e12], TraitKind::Ordinal, None)], 2).unwrap_err();
-        assert_eq!(
-            err,
-            Error::SparseOrdinalCodes {
-                field: "traits[0]",
-                level: 1
-            }
-        );
-        assert_eq!(
-            code(&[t(&[0.0, 1e300], TraitKind::Ordinal, None)], 2),
-            "sparse_ordinal_codes"
-        );
-        // A huge declared count reports the first unused level.
-        let err =
-            check_traits(&[t(&[0.0, 1.0], TraitKind::Ordinal, Some(usize::MAX))], 2).unwrap_err();
-        assert_eq!(
-            err,
-            Error::UnusedLevel {
-                field: "traits[0]",
-                level: 2,
-                n_levels: usize::MAX
-            }
-        );
     }
 
     #[test]
