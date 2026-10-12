@@ -189,8 +189,9 @@ def score_univariate(prep: _native.Prep, trait: Trait, *, age: object, cip: Cip,
 
     Raises:
         ParameterError: *h2* out of range (checked before any work).
-        ValidationError: A trait that is not binary, a length that is not
-            the pedigree's, a value outside {0, 1}, or a negative or
+        ValidationError: In order: a trait whose length is not the
+            pedigree's, a trait that is not binary, a value outside {0, 1},
+            an age whose length is not the pedigree's, or a negative or
             infinite age.
     """
     raw = _native.score_univariate(prep, checked(trait), floats(age, "age"), cip._native(), h2=float(h2))

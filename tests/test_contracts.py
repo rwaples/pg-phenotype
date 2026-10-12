@@ -246,6 +246,24 @@ def test_trait_length_is_checked():
 
 
 @pytest.mark.parametrize(
+    ("values", "kind", "age", "code", "fields"),
+    [
+        ([1.5, 2.0], "continuous", [10.0, 10.0, 10.0], "trait_length_mismatch", {"field": "trait"}),
+        ([1.0, 2.0, 0.0], "binary", [10.0, 10.0], "invalid_trait_value", {"field": "trait", "position": 1}),
+        ([1.0, 0.0, 2.0], "binary", [-1.0, 10.0, 10.0], "invalid_trait_value", {"field": "trait", "position": 2}),
+    ],
+)
+def test_the_trait_is_checked_before_its_age(values, kind, age, code, fields):
+    ped = {"id": [1, 2, 3], "mother": [-1, -1, -1], "father": [-1, -1, -1]}
+    trait = pg_phenotype.Trait(np.array(values), kind=kind)
+    cip = pafgrs.Cip([0.0, 1.0], [0.0, 0.1])
+    with pytest.raises(pg_phenotype.ValidationError) as err:
+        pafgrs.score_univariate(pafgrs.prepare(ped), trait, age=age, cip=cip, h2=0.5)
+    assert err.value.code == code
+    assert dict(err.value.fields).items() >= fields.items()
+
+
+@pytest.mark.parametrize(
     ("ages", "cip", "reason", "position"),
     [
         ([0.0, 1.0], [0.0, 1.0], "cip_out_of_range", 1),

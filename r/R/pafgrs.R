@@ -160,10 +160,11 @@ print.pgphenotype_pafgrs_cip <- function(x, ...) {
 #'   weight > 0).  A proband with no informative relative gets `est = 0`,
 #'   `var = h2`.  `attr(, "metadata")` is a list: `h2`, `prevalence`,
 #'   `threshold`, `controls_without_age`, `n_probands`, `ndegree`,
-#'   `pg_phenotype_version` and `pedigree_graph_core_rev`.  A trait that is
-#'   not binary is a `pgphenotype_validation_error` with code
-#'   `trait_kind_mismatch`; a value outside \{0, 1\} gives
-#'   `invalid_trait_value`.
+#'   `pg_phenotype_version` and `pedigree_graph_core_rev`.  A
+#'   `pgphenotype_validation_error`, in order: `trait_length_mismatch` for a
+#'   trait that is not the pedigree's length, `trait_kind_mismatch` for one
+#'   that is not binary, `invalid_trait_value` for a value outside
+#'   \{0, 1\}, then `trait_length_mismatch` and `invalid_age` for the age.
 #' @examples
 #' ped <- data.frame(id = 1:4, mother = c(NA, NA, 1, 1), father = c(NA, NA, 2, 2))
 #' pafgrs_score_univariate(

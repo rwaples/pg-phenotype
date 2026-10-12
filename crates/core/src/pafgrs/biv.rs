@@ -112,8 +112,8 @@ struct One {
 ///
 /// # Errors
 ///
-/// Each trait's kind, length, value, and age errors; the parameters were
-/// checked when `params` was built.
+/// Each trait's length, kind and value errors, then its age's; the
+/// parameters were checked when `params` was built.
 pub fn score_bivariate(
     prep: &Prep,
     values: [Trait<'_>; 2],

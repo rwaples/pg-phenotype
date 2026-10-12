@@ -58,6 +58,19 @@
   positional pg-phenotype error cannot report one base in R's message and
   another in its fields.  A pedigree error's message is still
   pedigree-graph's, 0-based in R as well.  Python and R output is unchanged.
+- Every method checks a trait in one order, its Admission: the length,
+  the kind, each present value, then (the Mate Correlation alone) present,
+  not constant, every level taken.  PA-FGRS scoring now follows it and
+  checks the age after the trait, so a call with two faults reports a
+  different one: a trait of the wrong length and kind raises
+  `trait_length_mismatch` (was `trait_kind_mismatch`); a bad status value
+  with an age of the wrong length, or with a bad age in any row, raises
+  `invalid_trait_value` (was the age's `trait_length_mismatch` or
+  `invalid_age` when the bad age's row came first).  A call with one
+  fault raises what it did.  In Rust, PA-FGRS also bounds a binary
+  trait's codes by `Trait::n_levels`, as the other methods do; a Python or
+  R trait never carries a code beyond its levels, so their output is
+  unchanged.
 
 ## v0.3.0
 

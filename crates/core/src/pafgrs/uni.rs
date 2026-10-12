@@ -41,7 +41,7 @@ pub(crate) fn check_h2(name: &'static str, h2: f64) -> Result<(), Error> {
 /// # Errors
 ///
 /// [`Error::ParameterOutOfRange`] for `h2` outside `(0, 1]`, checked first;
-/// then the trait's kind, length, value, and age errors.
+/// then the trait's length, kind and value errors, then its age's.
 pub fn score_univariate(
     prep: &Prep,
     values: Trait<'_>,

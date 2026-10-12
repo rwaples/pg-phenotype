@@ -3,7 +3,7 @@
 
 use super::pa::Obs;
 use crate::error::{CipProblem, Error};
-use crate::input::{Trait, TraitKind};
+use crate::input::{admit, Admits, Trait, TraitKind};
 use crate::normal;
 
 /// How a [`Cip`] reads between its ages.
@@ -140,12 +140,16 @@ pub(crate) struct Observed {
     pub(crate) controls_without_age: usize,
 }
 
+/// Binary alone: a status is a case or a control.
+const ADMITS: Admits = Admits::new(&[TraitKind::Binary], false);
+
 impl Observed {
     /// # Errors
     ///
-    /// [`Error::TraitKindMismatch`] for a trait that is not binary, then
-    /// [`Error::TraitLength`], [`Error::InvalidTraitCode`], and
-    /// [`Error::InvalidAge`], with `fields` naming the trait and age.
+    /// The trait's Admission: [`Error::TraitLength`],
+    /// [`Error::TraitKindMismatch`] for a trait that is not binary, and
+    /// [`Error::InvalidTraitCode`]; then the age's [`Error::TraitLength`]
+    /// and [`Error::InvalidAge`], with `fields` naming the trait and age.
     ///
     /// `age` is the age at onset for a case and at last observation for a
     /// control, NaN when unknown.
@@ -157,26 +161,18 @@ impl Observed {
         fields: [&'static str; 2],
     ) -> Result<Observed, Error> {
         let [status_field, age_field] = fields;
-        if values.kind != TraitKind::Binary {
-            return Err(Error::TraitKindMismatch {
-                field: status_field,
-                expected: TraitKind::Binary,
-                actual: values.kind,
+        let status = admit(values, status_field, n_rows, ADMITS)?.values;
+        if age.len() != n_rows {
+            return Err(Error::TraitLength {
+                field: age_field,
+                expected_length: n_rows,
+                actual_length: age.len(),
             });
-        }
-        for (field, len) in [(status_field, values.values.len()), (age_field, age.len())] {
-            if len != n_rows {
-                return Err(Error::TraitLength {
-                    field,
-                    expected_length: n_rows,
-                    actual_length: len,
-                });
-            }
         }
         let mut affected = vec![false; n_rows];
         let mut w = vec![0.0; n_rows];
         let mut controls_without_age = 0;
-        for (row, (&s, &age)) in values.values.iter().zip(age).enumerate() {
+        for (row, (&s, &age)) in status.iter().zip(age).enumerate() {
             if !age.is_nan() && !(age.is_finite() && age >= 0.0) {
                 return Err(Error::InvalidAge {
                     field: age_field,
@@ -184,9 +180,8 @@ impl Observed {
                     value: age,
                 });
             }
-            if s.is_nan() {
-                continue;
-            }
+            // Admitted binary: a missing status (NaN) observes nothing.
+            debug_assert!(s.is_nan() || s == 0.0 || s == 1.0);
             if s == 1.0 {
                 affected[row] = true;
                 w[row] = 1.0;
@@ -196,13 +191,6 @@ impl Observed {
                 } else {
                     w[row] = cip.w(age);
                 }
-            } else {
-                return Err(Error::InvalidTraitCode {
-                    field: status_field,
-                    kind: TraitKind::Binary,
-                    position: row.into(),
-                    value: s,
-                });
             }
         }
         Ok(Observed {
@@ -353,5 +341,29 @@ mod tests {
         };
         let err = Observed::new(continuous, &[1.0], &cip(), 1, ["s", "a"]).unwrap_err();
         assert_eq!(err.code(), "trait_kind_mismatch");
+    }
+
+    /// The trait's Admission, then its age: a call with both wrong reports
+    /// the trait's error, whichever row holds it.
+    #[test]
+    fn the_status_is_checked_before_the_age() {
+        let code = |status: &[f64], age: &[f64]| {
+            Observed::new(binary(status), age, &cip(), 3, ["s", "a"])
+                .unwrap_err()
+                .code()
+        };
+        assert_eq!(code(&[1.0, 0.0], &[1.0, 1.0, 1.0]), "trait_length_mismatch");
+        assert_eq!(code(&[1.0, 2.0, 0.0], &[1.0, 1.0]), "invalid_trait_value");
+        assert_eq!(
+            code(&[1.0, 0.0, 2.0], &[-1.0, 1.0, 1.0]),
+            "invalid_trait_value"
+        );
+        let continuous = Trait {
+            values: &[1.5],
+            kind: TraitKind::Continuous,
+            n_levels: None,
+        };
+        let err = Observed::new(continuous, &[1.0], &cip(), 3, ["s", "a"]).unwrap_err();
+        assert_eq!(err.code(), "trait_length_mismatch");
     }
 }
