@@ -179,12 +179,7 @@ pafgrs_score_univariate <- function(prep, trait, age, cip, h2) {
   age <- .pgp_doubles(age, "age", call)
   h2 <- .pgp_number(h2, "h2", call)
   raw <- .pgp_call(.native_pafgrs_score_univariate(prep, trait, age, cip, h2), call)
-  metadata <- c(
-    list(h2 = h2, prevalence = raw$prevalence, threshold = raw$threshold,
-         controls_without_age = raw$controls_without_age),
-    raw$metadata
-  )
-  .pgp_frame(raw[c("id", "est", "var", "n_relatives")], metadata)
+  .pgp_frame(raw[c("id", "est", "var", "n_relatives")], raw$metadata)
 }
 
 #' Bivariate PA-FGRS scores
@@ -238,11 +233,6 @@ pafgrs_score_bivariate <- function(prep, traits, ages, cips, h2, rg, rho_within 
   raw <- .pgp_call(.native_pafgrs_score_bivariate(
     prep, traits, list(age1, age2), cips, h2, rg, rho_within
   ), call)
-  metadata <- c(
-    list(h2 = h2, rg = rg, rho_within = raw$rho_within, prevalence = raw$prevalence,
-         threshold = raw$threshold, controls_without_age = raw$controls_without_age),
-    raw$metadata
-  )
   columns <- c("id", "est1", "est2", "var1", "var2", "cov12", "n_relatives", "n_obs1", "n_obs2")
-  .pgp_frame(raw[columns], metadata)
+  .pgp_frame(raw[columns], raw$metadata)
 }

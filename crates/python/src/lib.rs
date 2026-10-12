@@ -7,7 +7,6 @@
 use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
 use pg_phenotype_core::error::{Class, FieldValue, IndexBase};
 use pg_phenotype_core::pafgrs::{self, BivParams, Cip, Interpolation};
-use pg_phenotype_core::value::Value;
 use pg_phenotype_core::{threads, Error, PedigreeArg, PedigreeInput, TraitKind};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -368,14 +367,6 @@ fn cip_aalen_johansen<'py>(
         .map_err(|e| to_pyerr(py, e))
 }
 
-/// The score metadata the core knows: the probands scored and the degree.
-fn score_metadata(prep: &Prep, n_probands: usize) -> Value {
-    crossing::metadata(vec![
-        ("n_probands", (n_probands as u64).into()),
-        ("ndegree", u64::from(prep.inner.ndegree()).into()),
-    ])
-}
-
 /// Univariate scores of every proband, in the pool.
 #[pyfunction]
 #[pyo3(signature = (prep, trait_, age, cip, /, *, h2))]
@@ -394,13 +385,11 @@ fn score_univariate<'py>(
         pafgrs::score_univariate(&prep.inner, trait_, age, &cip, h2)
     })?;
     let out = PyDict::new(py);
-    let metadata = score_metadata(prep, scores.ids.len());
+    let metadata = crossing::metadata(scores.metadata());
     out.set_item("id", scores.ids.into_pyarray(py))?;
     out.set_item("est", f64_array(py, scores.est))?;
     out.set_item("var", f64_array(py, scores.var))?;
     out.set_item("n_relatives", scores.n_relatives.into_pyarray(py))?;
-    out.set_item("controls_without_age", scores.controls_without_age)?;
-    out.set_item("threshold", scores.threshold)?;
     out.set_item("metadata", value::to_object(py, &metadata)?)?;
     Ok(out)
 }
@@ -428,7 +417,7 @@ fn score_bivariate<'py>(
         pafgrs::score_bivariate(&prep.inner, values, ages, [&cip1, &cip2], params)
     })?;
     let out = PyDict::new(py);
-    let metadata = score_metadata(prep, scores.ids.len());
+    let metadata = crossing::metadata(scores.metadata());
     let [est1, est2] = scores.est;
     let [var1, var2] = scores.var;
     let [n_obs1, n_obs2] = scores.n_obs;
@@ -441,9 +430,6 @@ fn score_bivariate<'py>(
     out.set_item("n_relatives", scores.n_relatives.into_pyarray(py))?;
     out.set_item("n_obs1", n_obs1.into_pyarray(py))?;
     out.set_item("n_obs2", n_obs2.into_pyarray(py))?;
-    out.set_item("controls_without_age", scores.controls_without_age.to_vec())?;
-    out.set_item("threshold", scores.threshold.to_vec())?;
-    out.set_item("rho_within", params.rho_within())?;
     out.set_item("metadata", value::to_object(py, &metadata)?)?;
     Ok(out)
 }

@@ -31,9 +31,15 @@
   `relative_pairs_correlation()` hand free heap pages back to the system
   before they compute, through the same crossing module as Python; R
   released none.  Its memory effect in R is not measured.
-- R's PA-FGRS score metadata comes with the scores, so a score no longer
-  makes a second native call for `n_probands` and `ndegree`.  Its values
-  and order are unchanged.
+- PA-FGRS score metadata comes with the scores, its keys written once in
+  the core for both hosts: the parameters, `prevalence`, `threshold`,
+  `controls_without_age`, `n_probands` and `ndegree`.  R no longer makes a
+  second native call for `n_probands` and `ndegree`, and the private
+  native score functions no longer return `threshold`,
+  `controls_without_age`, `rho_within` or `prevalence` beside the
+  metadata.  Values, types and order are unchanged, except that R's
+  `controls_without_age` follows the rule for counts in R metadata: a
+  double, not an overflowed integer, past R's integer range.
 - The R binding's private native routines take the pedigree as one
   argument (a `pedigree()` pointer or the column list) and each `trait()`
   and `pafgrs_cip()` whole.

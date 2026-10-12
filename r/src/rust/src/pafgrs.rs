@@ -106,14 +106,6 @@ fn cip_table(cip: &Robj) -> HostResult<Cip> {
     cip_of([&ages, &values, &interpolation])
 }
 
-/// The score metadata the core knows: the probands scored and the degree.
-fn score_metadata(prep: &Prep, n_probands: usize) -> Robj {
-    to_robj(&crossing::metadata(vec![
-        ("n_probands", (n_probands as u64).into()),
-        ("ndegree", u64::from(prep.ndegree()).into()),
-    ]))
-}
-
 fn counts(values: &[u32]) -> Robj {
     Integers::from_values(values.iter().map(|&v| v as i32)).into_robj()
 }
@@ -132,15 +124,12 @@ fn score_univariate_impl(
     let trait_ = trait_.get()?;
     let age = input::doubles("age", age)?;
     let s = crossing::run(|| pafgrs::score_univariate(&h.prep, trait_, age, &cip, h2))?;
-    let metadata = score_metadata(&h.prep, s.ids.len());
+    let metadata = to_robj(&crossing::metadata(s.metadata()));
     Ok(list!(
         id = h.id_type.to_robj(&s.ids),
         est = s.est,
         var = s.var,
         n_relatives = counts(&s.n_relatives),
-        controls_without_age = s.controls_without_age as i32,
-        threshold = s.threshold,
-        prevalence = cip.prevalence(),
         metadata = metadata
     )
     .into_robj())
@@ -183,7 +172,7 @@ fn score_bivariate_impl(
     let s = crossing::run(|| {
         pafgrs::score_bivariate(&h.prep, values, ages, [&cip[0], &cip[1]], params)
     })?;
-    let metadata = score_metadata(&h.prep, s.ids.len());
+    let metadata = to_robj(&crossing::metadata(s.metadata()));
     let [est1, est2] = s.est;
     let [var1, var2] = s.var;
     Ok(list!(
@@ -196,10 +185,6 @@ fn score_bivariate_impl(
         n_relatives = counts(&s.n_relatives),
         n_obs1 = counts(&s.n_obs[0]),
         n_obs2 = counts(&s.n_obs[1]),
-        controls_without_age = s.controls_without_age.map(|c| c as i32).to_vec(),
-        threshold = s.threshold.to_vec(),
-        prevalence = vec![cip[0].prevalence(), cip[1].prevalence()],
-        rho_within = params.rho_within(),
         metadata = metadata
     )
     .into_robj())

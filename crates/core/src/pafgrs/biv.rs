@@ -7,6 +7,7 @@ use super::prep::{Prep, Relatives};
 use super::uni::check_h2;
 use crate::error::{Error, Inconsistency};
 use crate::input::Trait;
+use crate::value::Value;
 
 /// Slack on the positive-semidefinite check of [`BivParams::new`], so a
 /// `rho_within` computed at the boundary in floating point is not rejected
@@ -94,8 +95,33 @@ pub struct BivScores {
     pub n_relatives: Vec<u32>,
     /// Observations per trait.
     pub n_obs: [Vec<u32>; 2],
-    pub controls_without_age: [usize; 2],
+    /// The parameters scored with, `rho_within` as used.
+    pub params: BivParams,
+    pub prevalence: [f64; 2],
     pub threshold: [f64; 2],
+    pub controls_without_age: [usize; 2],
+    pub ndegree: u8,
+}
+
+impl BivScores {
+    /// The result's metadata, in the hosts' key order; each binding adds
+    /// the versions.
+    pub fn metadata(&self) -> Vec<(&'static str, Value)> {
+        let p = &self.params;
+        vec![
+            ("h2", Value::Floats(p.h2().to_vec())),
+            ("rg", p.rg().into()),
+            ("rho_within", p.rho_within().into()),
+            ("prevalence", Value::Floats(self.prevalence.to_vec())),
+            ("threshold", Value::Floats(self.threshold.to_vec())),
+            (
+                "controls_without_age",
+                Value::Counts(self.controls_without_age.map(|c| c as u64).to_vec()),
+            ),
+            ("n_probands", (self.ids.len() as u64).into()),
+            ("ndegree", u64::from(self.ndegree).into()),
+        ]
+    }
 }
 
 /// The result of one proband.
@@ -146,8 +172,11 @@ pub fn score_bivariate(
         cov12: one.iter().map(|o| o.cov12).collect(),
         n_relatives: one.iter().map(|o| o.n_relatives).collect(),
         n_obs: [0, 1].map(|t| one.iter().map(|o| o.n_obs[t]).collect()),
-        controls_without_age: [obs[0].controls_without_age, obs[1].controls_without_age],
+        params,
+        prevalence: cips.map(Cip::prevalence),
         threshold: [obs[0].threshold, obs[1].threshold],
+        controls_without_age: [obs[0].controls_without_age, obs[1].controls_without_age],
+        ndegree: prep.ndegree(),
     })
 }
 
@@ -267,5 +296,35 @@ impl Scratch {
             n_relatives: n as u32,
             n_obs,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pafgrs::uni::tests::{case, keys, AGE};
+
+    #[test]
+    fn metadata_follows_the_hosts_key_order() {
+        let (prep, cip, status) = case();
+        let params = BivParams::new([0.5, 0.4], 0.3, None).unwrap();
+        let biv = score_bivariate(&prep, [status; 2], [&AGE; 2], [&cip; 2], params).unwrap();
+        let meta = biv.metadata();
+        assert_eq!(
+            keys(&meta),
+            [
+                "h2",
+                "rg",
+                "rho_within",
+                "prevalence",
+                "threshold",
+                "controls_without_age",
+                "n_probands",
+                "ndegree"
+            ]
+        );
+        assert_eq!(meta[0].1, Value::Floats(vec![0.5, 0.4]));
+        assert_eq!(meta[2].1, Value::Float(params.rho_within()));
+        assert_eq!(meta[5].1, Value::Counts(vec![1, 1]));
     }
 }

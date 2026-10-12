@@ -2,6 +2,12 @@
 //!
 //! The keys and their order are the result's contract (Python dict keys,
 //! R list names); a host maps each variant onto its own types once.
+//!
+//! Per-proband columns (PA-FGRS scores) stay outside the tree, and only
+//! their metadata goes through it.  Python moves each column into a numpy
+//! array without a copy, which a walk over a borrowed tree would add (40 MB
+//! for one `f64` column of 5M probands), and R gives ids the storage type
+//! of the ids the Pedigree was given, which no leaf knows.
 
 /// One node of a result.
 #[derive(Clone, Debug, PartialEq)]

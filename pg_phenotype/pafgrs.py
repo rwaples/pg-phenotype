@@ -195,15 +195,12 @@ def score_univariate(prep: _native.Prep, trait: Trait, *, age: object, cip: Cip,
             infinite age.
     """
     raw = _native.score_univariate(prep, checked(trait), floats(age, "age"), cip._native(), h2=float(h2))
-    metadata = MappingProxyType({
-        "h2": float(h2),
-        "prevalence": cip.prevalence,
-        "threshold": raw["threshold"],
-        "controls_without_age": raw["controls_without_age"],
-        **raw["metadata"],
-    })  # fmt: skip
     return UnivariateScores(
-        id=raw["id"], est=raw["est"], var=raw["var"], n_relatives=raw["n_relatives"], metadata=metadata
+        id=raw["id"],
+        est=raw["est"],
+        var=raw["var"],
+        n_relatives=raw["n_relatives"],
+        metadata=MappingProxyType(raw["metadata"]),
     )
 
 
@@ -249,14 +246,7 @@ def score_bivariate(
         rg=float(rg),
         rho_within=None if rho_within is None else float(rho_within),
     )
-    metadata = MappingProxyType({
-        "h2": (float(h2[0]), float(h2[1])),
-        "rg": float(rg),
-        "rho_within": raw["rho_within"],
-        "prevalence": (cip[0].prevalence, cip[1].prevalence),
-        "threshold": tuple(raw["threshold"]),
-        "controls_without_age": tuple(raw["controls_without_age"]),
-        **raw["metadata"],
-    })  # fmt: skip
+    metadata = raw["metadata"]
+    metadata["controls_without_age"] = tuple(metadata["controls_without_age"])
     columns = ("id", "est1", "est2", "var1", "var2", "cov12", "n_relatives", "n_obs1", "n_obs2")
-    return BivariateScores(**{c: raw[c] for c in columns}, metadata=metadata)
+    return BivariateScores(**{c: raw[c] for c in columns}, metadata=MappingProxyType(metadata))

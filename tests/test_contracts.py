@@ -315,6 +315,9 @@ def test_metadata_is_read_only_in_rs_order(case):
     ]
     assert list(uni) == ["h2", "prevalence", *tail]
     assert list(biv) == ["h2", "rg", "rho_within", "prevalence", *tail]
+    for key in ("h2", "prevalence", "threshold", "controls_without_age"):
+        assert type(biv[key]) is tuple, key
+    assert type(uni["controls_without_age"]) is int
     with pytest.raises(TypeError):
         uni["h2"] = 0.5  # type: ignore[index]
 
