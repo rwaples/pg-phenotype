@@ -10,7 +10,7 @@
 
 use crate::correlation;
 use crate::error::Error;
-use crate::input::{Trait, TraitKind, ValueRule};
+use crate::input::{admit, Admits, Trait, TraitKind};
 use crate::pedigree::PedigreeArg;
 use crate::polychoric::Reason as FitReason;
 use crate::value::Value;
@@ -24,6 +24,10 @@ use std::num::NonZeroUsize;
 
 /// The trait's field name, as errors report it.
 const FIELD: &str = "trait";
+
+/// Continuous or binary; an all-missing or constant trait is not an error
+/// here: its cells carry a reason.
+const ADMITS: Admits = Admits::new(&[TraitKind::Continuous, TraitKind::Binary], false);
 
 /// The deepest degree the default request covers.
 pub const DEFAULT_DEGREE: u8 = 3;
@@ -186,7 +190,7 @@ pub fn correlation(
 ) -> Result<RelativePairCorrelation, Error> {
     let pedigree = pedigree.resolve()?;
     let n_rows = pedigree.len();
-    check_trait(trait_, n_rows)?;
+    admit(trait_, FIELD, n_rows, ADMITS)?;
     let requests = match categories {
         Some(entries) => resolve(entries)?,
         None => default_requests(),
@@ -244,25 +248,6 @@ pub fn correlation(
         result.cells.push(cell(request, &summed, trait_.kind)?);
     }
     Ok(result)
-}
-
-/// The trait's checks: its length and kind (categorical raises in
-/// [`ValueRule::of`], ordinal here), then every present value.  An
-/// all-missing or constant trait is not an error: its cells carry a reason.
-fn check_trait(t: Trait<'_>, n_rows: usize) -> Result<(), Error> {
-    let rule = ValueRule::of(&t, FIELD, n_rows)?;
-    if t.kind == TraitKind::Ordinal {
-        return Err(Error::UnsupportedTraitKind {
-            field: FIELD,
-            kind: t.kind,
-        });
-    }
-    for (position, &value) in t.values.iter().enumerate() {
-        if !value.is_nan() {
-            rule.check(position, value)?;
-        }
-    }
-    Ok(())
 }
 
 /// Each category up to [`DEFAULT_DEGREE`], one entry each, in registry order.

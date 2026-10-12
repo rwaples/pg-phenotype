@@ -65,69 +65,6 @@ pub struct Trait<'a> {
     pub n_levels: Option<usize>,
 }
 
-/// What a present value of a continuous, binary or ordinal trait must be:
-/// finite, or a level code `0..k` (binary: at most 2).  Methods check each
-/// value in their own pass over the trait.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ValueRule {
-    field: &'static str,
-    kind: TraitKind,
-    /// The bound a code stays below; `None` for a continuous trait.
-    ceiling: Option<f64>,
-}
-
-impl ValueRule {
-    /// The rule of `t`, after its length and kind: `trait_length_mismatch`,
-    /// then `unsupported_trait_kind` for a categorical trait.
-    pub(crate) fn of(
-        t: &Trait<'_>,
-        field: &'static str,
-        n_rows: usize,
-    ) -> Result<ValueRule, Error> {
-        if t.values.len() != n_rows {
-            return Err(Error::TraitLength {
-                field,
-                expected_length: n_rows,
-                actual_length: t.values.len(),
-            });
-        }
-        let ceiling = match t.kind {
-            TraitKind::Categorical => {
-                return Err(Error::UnsupportedTraitKind {
-                    field,
-                    kind: t.kind,
-                })
-            }
-            TraitKind::Continuous => None,
-            TraitKind::Binary => Some(t.n_levels.map_or(2.0, |k| k as f64).min(2.0)),
-            TraitKind::Ordinal => Some(t.n_levels.map_or(f64::INFINITY, |k| k as f64)),
-        };
-        Ok(ValueRule {
-            field,
-            kind: t.kind,
-            ceiling,
-        })
-    }
-
-    /// `invalid_trait_value` unless the present `value` at `position` obeys the rule.
-    pub(crate) fn check(self, position: usize, value: f64) -> Result<(), Error> {
-        let valid = match self.ceiling {
-            None => value.is_finite(),
-            Some(ceiling) => value >= 0.0 && value < ceiling && value.fract() == 0.0,
-        };
-        if valid {
-            Ok(())
-        } else {
-            Err(Error::InvalidTraitCode {
-                field: self.field,
-                kind: self.kind,
-                position: position.into(),
-                value,
-            })
-        }
-    }
-}
-
 /// What a method admits of a Trait: the kinds it reads, and whether the
 /// trait must vary.  Each method declares its own as a const.
 #[derive(Clone, Copy, Debug)]
