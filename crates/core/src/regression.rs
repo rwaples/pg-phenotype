@@ -7,10 +7,10 @@
 //! whole pedigree's: dropping children never splits one.  A parent in no
 //! Mating Pair is a network of its own.
 
-use crate::assortative::sandwich::cluster_se;
 use crate::assortative::{check_strata, Strata};
 use crate::error::Error;
 use crate::input::{Trait, ValueRule};
+use crate::mate_network::{Networks, ParentNetworks, Relabel, Sandwich};
 use crate::normal;
 use crate::pedigree::{Pedigree, PedigreeArg};
 use crate::value::Value;
@@ -186,15 +186,15 @@ pub fn parent_offspring(
     if let Some(s) = strata {
         check_strata(s, n_rows)?;
     }
-    let networks = row_networks(&pedigree);
+    let parents = pedigree.parent_networks();
     let (codes, labels) = strata.map(Strata::codes).unzip();
     let n_strata = labels.as_ref().map_or(0, Vec::len);
-    let mut scratch = Relabel::new(networks.n_keys);
+    let mut scratch = parents.relabel();
     // Per parent, one fit per subset: pooled first, then each stratum.
     let fits = Parent::ALL.map(|parent| {
         let mut subsets = vec![Children::default(); 1 + n_strata];
         for child in 0..n_rows {
-            let outcome = observe(&pedigree, &networks, y, parent, child);
+            let outcome = observe(&pedigree, parents, y, parent, child);
             subsets[0].add(outcome);
             if let Some(code) = codes.as_ref().and_then(|c| c[child]) {
                 subsets[1 + code].add(outcome);
@@ -239,41 +239,6 @@ fn check_trait<'a>(t: Trait<'a>, n_rows: usize) -> Result<&'a [f64], Error> {
     Ok(t.values)
 }
 
-/// Each row's cluster key as a parent: its Mate Network, or past the
-/// networks a key of its own when it is in no Mating Pair.
-struct RowNetworks {
-    network: Vec<u32>,
-    n_networks: usize,
-    /// Networks plus one key per row.
-    n_keys: usize,
-}
-
-impl RowNetworks {
-    fn key(&self, row: usize) -> usize {
-        match self.network[row] {
-            u32::MAX => self.n_networks + row,
-            network => network as usize,
-        }
-    }
-}
-
-fn row_networks(pedigree: &Pedigree) -> RowNetworks {
-    let pairs = pedigree.mating_pairs();
-    let labels = pedigree.networks();
-    let mut network = vec![u32::MAX; pedigree.len()];
-    for ((&m, &f), &label) in pairs.mothers.iter().zip(&pairs.fathers).zip(labels) {
-        // Both mates of a pair, and every pair of one parent, share a network.
-        network[m] = label as u32;
-        network[f] = label as u32;
-    }
-    let n_networks = labels.iter().max().map_or(0, |&l| l + 1);
-    RowNetworks {
-        network,
-        n_networks,
-        n_keys: n_networks + pedigree.len(),
-    }
-}
-
 /// One row as a child in one regression.
 #[derive(Clone, Copy, Debug)]
 enum Outcome {
@@ -290,7 +255,7 @@ enum Outcome {
 
 fn observe(
     pedigree: &Pedigree,
-    networks: &RowNetworks,
+    parents: &ParentNetworks,
     y: &[f64],
     parent: Parent,
     child: usize,
@@ -299,9 +264,9 @@ fn observe(
     let mother = row(pedigree.mother_rows()[child]);
     let father = row(pedigree.father_rows()[child]);
     let (x, key) = match (parent, mother, father) {
-        (Parent::Midparent, Some(m), Some(f)) => ((y[m] + y[f]) / 2.0, networks.key(m)),
-        (Parent::Mother, Some(m), _) => (y[m], networks.key(m)),
-        (Parent::Father, _, Some(f)) => (y[f], networks.key(f)),
+        (Parent::Midparent, Some(m), Some(f)) => ((y[m] + y[f]) / 2.0, parents.key(m)),
+        (Parent::Mother, Some(m), _) => (y[m], parents.key(m)),
+        (Parent::Father, _, Some(f)) => (y[f], parents.key(f)),
         _ => return Outcome::ParentNotInPedigree,
     };
     if y[child].is_nan() {
@@ -341,46 +306,13 @@ impl Children {
     }
 
     fn fit(&self, relabel: &mut Relabel) -> Fit {
-        let labels = relabel.dense(&self.keys);
-        let n_mate_networks = labels.iter().max().map_or(0, |&l| l + 1);
+        let networks = relabel.networks(&self.keys);
         Fit {
             n: self.x.len() as u64,
-            n_mate_networks: n_mate_networks as u64,
+            n_mate_networks: networks.count() as u64,
             dropped: self.dropped,
-            line: line(&self.x, &self.y, &labels, n_mate_networks),
+            line: line(&self.x, &self.y, &networks),
         }
-    }
-}
-
-/// Renumbers cluster keys densely `0..G` in first-seen order, so
-/// [`cluster_se`] (which sizes by the largest label) counts G networks.
-struct Relabel {
-    slot: Vec<usize>,
-}
-
-impl Relabel {
-    fn new(n_keys: usize) -> Relabel {
-        Relabel {
-            slot: vec![usize::MAX; n_keys],
-        }
-    }
-
-    fn dense(&mut self, keys: &[usize]) -> Vec<usize> {
-        let mut next = 0;
-        let labels = keys
-            .iter()
-            .map(|&k| {
-                if self.slot[k] == usize::MAX {
-                    self.slot[k] = next;
-                    next += 1;
-                }
-                self.slot[k]
-            })
-            .collect();
-        for &k in keys {
-            self.slot[k] = usize::MAX;
-        }
-        labels
     }
 }
 
@@ -393,7 +325,7 @@ impl Relabel {
 /// sandwich SE is also 0 when every network's score sum is within its
 /// rounding bound (see [`sandwich_se`]).  A zero SE has no Wald test
 /// ([`Reason::ZeroSe`]).
-fn line(x: &[f64], y: &[f64], labels: &[usize], n_networks: usize) -> Result<Line, Reason> {
+fn line(x: &[f64], y: &[f64], networks: &Networks) -> Result<Line, Reason> {
     let n = x.len();
     let Some(&x0) = x.first() else {
         return Err(Reason::NoCompleteChildren);
@@ -440,12 +372,10 @@ fn line(x: &[f64], y: &[f64], labels: &[usize], n_networks: usize) -> Result<Lin
             .sum();
         Ok((ss_res / (n - 2) as f64 / sxx).sqrt())
     };
-    let se = if n_networks < 2 {
-        Err(Reason::SingleMateNetwork)
-    } else if constant_child {
-        Ok(0.0)
-    } else {
-        sandwich_se(x, y, labels, n_networks, [mx, my, sxx, slope])
+    let se = match networks.sandwich() {
+        None => Err(Reason::SingleMateNetwork),
+        Some(_) if constant_child => Ok(0.0),
+        Some(sandwich) => sandwich_se(x, y, sandwich, [mx, my, sxx, slope]),
     };
     let wald = match se {
         Err(reason) => Err(reason),
@@ -479,20 +409,13 @@ fn line(x: &[f64], y: &[f64], labels: &[usize], n_networks: usize) -> Result<Lin
 fn sandwich_se(
     x: &[f64],
     y: &[f64],
-    labels: &[usize],
-    n_networks: usize,
+    sandwich: Sandwich<'_>,
     [mx, my, sxx, slope]: [f64; 4],
 ) -> Result<f64, Reason> {
-    let mut influence = Vec::with_capacity(x.len());
-    let mut sums = vec![0.0; n_networks];
-    let mut bounds = vec![0.0; n_networks];
-    for ((&xi, &yi), &l) in x.iter().zip(y).zip(labels) {
-        let (dx, dy) = (xi - mx, yi - my);
-        let term = dx * (dy - slope * dx) / sxx;
-        influence.push(term);
-        sums[l] += term;
-        bounds[l] += dx.abs() * (dy.abs() + (slope * dx).abs()) / sxx;
-    }
+    let centred = || x.iter().zip(y).map(|(&xi, &yi)| (xi - mx, yi - my));
+    let sums = sandwich.sums(centred().map(|(dx, dy)| dx * (dy - slope * dx) / sxx));
+    let bounds =
+        sandwich.sums(centred().map(|(dx, dy)| dx.abs() * (dy.abs() + (slope * dx).abs()) / sxx));
     let tolerance = x.len() as f64 * f64::EPSILON;
     if sums
         .iter()
@@ -501,7 +424,7 @@ fn sandwich_se(
     {
         return Ok(0.0);
     }
-    let se = cluster_se(&influence, labels);
+    let se = sandwich.se(&sums);
     if se.is_finite() {
         Ok(se)
     } else {
@@ -642,6 +565,11 @@ mod tests {
         )
     }
 
+    /// The networks of units with these keys.
+    fn networks(keys: &[usize]) -> Networks {
+        Relabel::new(keys.iter().max().map_or(0, |&k| k + 1)).networks(keys)
+    }
+
     fn close(a: f64, b: f64) {
         assert!((a - b).abs() <= 1e-12 * (1.0 + b.abs()), "{a} vs {b}");
     }
@@ -758,14 +686,6 @@ mod tests {
     }
 
     #[test]
-    fn sparse_keys_are_renumbered_before_the_cluster_count() {
-        let mut relabel = Relabel::new(10);
-        assert_eq!(relabel.dense(&[2, 7, 7, 2, 9]), vec![0, 1, 1, 0, 2]);
-        // The scratch is clean for the next subset.
-        assert_eq!(relabel.dense(&[7]), vec![0]);
-    }
-
-    #[test]
     fn a_stratum_counts_only_its_own_networks() {
         // Pairs (0,1), (2,3), (4,5), (6,7) are networks 0-3.  The stratum
         // holds the children of networks 1-3 only: G is 3 (keys 1, 2, 3
@@ -851,10 +771,10 @@ mod tests {
         };
         let x: Vec<f64> = (0..n).map(|_| draw()).collect();
         let y: Vec<f64> = x.iter().map(|&xi| 0.5 * xi + draw()).collect();
-        let labels: Vec<usize> = (0..n).map(|i| i % 4).collect();
+        let four = networks(&(0..n).map(|i| i % 4).collect::<Vec<_>>());
         let shift = |v: &[f64]| v.iter().map(|a| a + 2f64.powi(27)).collect::<Vec<_>>();
-        let base = line(&x, &y, &labels, 4).unwrap();
-        let shifted = line(&shift(&x), &shift(&y), &labels, 4).unwrap();
+        let base = line(&x, &y, &four).unwrap();
+        let shifted = line(&shift(&x), &shift(&y), &four).unwrap();
         let (a, b) = (base.se.unwrap(), shifted.se.unwrap());
         // The shifted means carry about sqrt(n) eps 2^27 of rounding, which
         // moves the slope and SE by about 1e-5: precision, not a zero SE.
@@ -871,7 +791,7 @@ mod tests {
         for k in 3..400 {
             let x: Vec<f64> = (0..k).map(|i| (i as f64 * 0.1).sin() / 3.0).collect();
             let y: Vec<f64> = x.iter().map(|v| 2.0 * v + 1.0).collect();
-            let r = line(&x, &y, &vec![0; k], 1).unwrap().r.unwrap();
+            let r = line(&x, &y, &networks(&vec![0; k])).unwrap().r.unwrap();
             worst = worst.max(r);
             assert!(r <= 1.0, "k = {k}: r = {r}");
         }
@@ -883,7 +803,7 @@ mod tests {
         let x = [0.0, 1e-170, 2e-170];
         let y = [0.1, 0.4, 0.2];
         assert_eq!(
-            line(&x, &y, &[0, 1, 2], 3),
+            line(&x, &y, &networks(&[0, 1, 2])),
             Err(Reason::ConstantParentValue)
         );
         // Sxx Syy underflows though neither factor does: r still comes out
@@ -891,7 +811,7 @@ mod tests {
         // subnormal Syy (2e-320) keeps.
         let x = [0.0, 1e-150, 3e-150];
         let y = [0.0, 1e-160, 2e-160];
-        let r = line(&x, &y, &[0, 1, 2], 3).unwrap().r.unwrap();
+        let r = line(&x, &y, &networks(&[0, 1, 2])).unwrap().r.unwrap();
         assert!((r - 0.9819805060619656).abs() < 1e-4, "{r}");
     }
 

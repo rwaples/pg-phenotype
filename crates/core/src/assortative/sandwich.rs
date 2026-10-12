@@ -8,6 +8,7 @@ use super::kernels::{
 };
 use super::result::{Estimator, Reason};
 use super::sample::CellPairs;
+use crate::mate_network::Networks;
 use crate::polychoric::table::Grid;
 use crate::polychoric::{cell_influence, Point};
 use crate::wald::CiScale;
@@ -119,28 +120,17 @@ fn influence(
     })
 }
 
-/// `√(G/(G−1) · Σ_g (Σ_{i∈g} IF_i)²)` over the networks of `labels`.
-pub(crate) fn cluster_se(influence: &[f64], labels: &[usize]) -> f64 {
-    let g = labels.iter().max().map_or(0, |&l| l + 1);
-    let mut sums = vec![0.0; g];
-    for (&l, &v) in labels.iter().zip(influence) {
-        sums[l] += v;
-    }
-    let ss = sums.iter().fold(0.0, |a, &s| a + s * s);
-    (g as f64 / (g as f64 - 1.0) * ss).sqrt()
-}
-
 /// The sandwich SE of a defined estimate, or why there is none.
 pub(crate) fn sandwich_se(
     est: Estimator,
     stratified: bool,
     pairs: &CellPairs,
     point: Point,
-    labels: &[usize],
+    networks: &Networks,
 ) -> Result<f64, Reason> {
-    if labels.iter().max().map_or(0, |&l| l + 1) < 2 {
+    let Some(sandwich) = networks.sandwich() else {
         return Err(Reason::SingleMateNetwork);
-    }
+    };
     if est == Estimator::Spearman {
         return Err(Reason::BootstrapNotRequested);
     }
@@ -151,7 +141,7 @@ pub(crate) fn sandwich_se(
     }
     let infl = influence(est, stratified, pairs, point.value)
         .unwrap_or(Err(Reason::BootstrapNotRequested))?;
-    let se = cluster_se(&infl, labels);
+    let se = sandwich.se(&sandwich.sums(infl));
     if se.is_finite() {
         Ok(se)
     } else {

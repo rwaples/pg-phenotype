@@ -28,13 +28,17 @@ call.
 - Validation still goes only through pg-phenotype's pinned
   `graph::build`, as ADR 0001 requires.
 - A Pedigree builds its Mating Pairs on first use and keeps them, and
-  likewise the Mate Networks of all its pairs, on the first call with
-  inference (a point-estimate call builds none).  Inputs given per call
+  likewise the Mate Networks of all its pairs, on the first
+  `mate_correlation` call with inference (a point-estimate call builds
+  none) or the first `parent_offspring` call.  Inputs given per call
   (traits, strata) never enter it.  A call whose strata drop no pair
   reuses both.  A call whose strata drop pairs computes the networks of
-  the pairs it keeps, for that call alone.
+  the pairs it keeps, for that call alone.  It likewise keeps each row's
+  Mate Network as a parent, of the whole pedigree, once a
+  `parent_offspring` call needs it (ADR 0007).
 - A Pedigree keeps only structure that no parameter changes: its
-  validated rows and, once used, its Mating Pairs and their Mate Networks.
+  validated rows and, once used, its Mating Pairs, their Mate Networks,
+  and each row's Mate Network as a parent.
   Anything that depends on a parameter (a PA-FGRS Prep for one `ndegree`
   and set of probands) stays an object the caller builds and holds, with
   its own lifetime and memory cost.
@@ -68,7 +72,9 @@ Rejected:
   parent and twin rows, which are what the methods read.  Once
   `mate_correlation` has run on it, it also holds 16 bytes per Mating Pair
   for the pairs, plus 8 for their networks.  At 5.36M rows (2.42M pairs)
-  that is about 193 MB, plus 58 MB.
+  that is about 193 MB, plus 58 MB.  `parent_offspring` builds the pairs
+  and networks too, and also keeps 4 bytes per row for each row's Mate
+  Network as a parent, about 21 MB at 5.36M rows.
 - A later `mate_correlation` call on one Pedigree skips validation, finding
   the pairs, and, without dropped strata, building the networks.  It still
   pays for the distinct fathers, the cells and the within-person

@@ -1,9 +1,9 @@
 //! A validated pedigree that several methods, or several calls of one,
 //! share (ADR 0006).
 
-use crate::assortative::{mate_networks, mating_pairs, MatingPairs};
 use crate::error::{Error, Position};
 use crate::input::PedigreeInput;
+use crate::mate_network::{mating_pairs, MatingPairs, Networks, ParentNetworks};
 use pedigree_graph_core::graph::{self, Columns, IdIndex, Limits, SexEncoding};
 use pedigree_graph_core::relationships;
 use std::borrow::Cow;
@@ -12,7 +12,8 @@ use std::sync::{Arc, OnceLock};
 
 /// A pedigree pedigree-graph-core's validator accepted, in its input's row
 /// order, with the Mating Pairs it finds once used, the Mate Networks once a
-/// call with inference needs them, and an id index once ids are looked up.
+/// call with inference needs them, each row's Mate Network as a parent once
+/// a parent-offspring call needs it, and an id index once ids are looked up.
 ///
 /// It keeps only what no method parameter changes.  The caches are filled
 /// serially: a Rayon worker waiting on one must not steal a job that waits
@@ -27,8 +28,9 @@ pub struct Pedigree {
     father_rows: Vec<i32>,
     twin_rows: Vec<i32>,
     pairs: OnceLock<MatingPairs>,
-    /// The Mate Network of each of `pairs`.
-    networks: OnceLock<Vec<usize>>,
+    /// The Mate Networks of `pairs`.
+    networks: OnceLock<Networks>,
+    parent_networks: OnceLock<ParentNetworks>,
     index: OnceLock<IdIndex>,
 }
 
@@ -61,6 +63,7 @@ impl Pedigree {
             twin_rows: built.twin_rows,
             pairs: OnceLock::new(),
             networks: OnceLock::new(),
+            parent_networks: OnceLock::new(),
             index: OnceLock::new(),
         })
     }
@@ -180,13 +183,18 @@ impl Pedigree {
             .get_or_init(|| mating_pairs(&self.ids, &self.mother_rows, &self.father_rows))
     }
 
-    /// The Mate Network of each of [`Pedigree::mating_pairs`], built on
-    /// first use.
-    pub(crate) fn networks(&self) -> &[usize] {
+    /// The Mate Networks of [`Pedigree::mating_pairs`], built on first use.
+    pub(crate) fn networks(&self) -> &Networks {
         self.networks.get_or_init(|| {
             let pairs = self.mating_pairs();
-            mate_networks(&pairs.mothers, &pairs.fathers)
+            Networks::of_pairs(&pairs.mothers, &pairs.fathers)
         })
+    }
+
+    /// Each row's whole-pedigree Mate Network as a parent, built on first use.
+    pub(crate) fn parent_networks(&self) -> &ParentNetworks {
+        self.parent_networks
+            .get_or_init(|| ParentNetworks::of(self.mating_pairs(), self.networks(), self.len()))
     }
 }
 
@@ -305,8 +313,14 @@ mod tests {
         );
         assert!(std::ptr::eq(pairs, ped.mating_pairs()));
         let networks = ped.networks();
-        assert_eq!(networks, &[0]);
+        assert_eq!(networks.labels(), &[0]);
         assert!(std::ptr::eq(networks, ped.networks()));
+        let parents = ped.parent_networks();
+        assert_eq!(
+            (0..4).map(|r| parents.key(r)).collect::<Vec<_>>(),
+            [1, 0, 3, 0]
+        );
+        assert!(std::ptr::eq(parents, ped.parent_networks()));
     }
 
     #[test]
@@ -361,13 +375,14 @@ mod tests {
     fn concurrent_first_use_sees_one_cache() {
         let (ids, mother, father) = columns();
         let ped = built(&ids, &mother, &father).unwrap();
-        let seen: Vec<(usize, usize)> = std::thread::scope(|s| {
+        let seen: Vec<(usize, usize, usize)> = std::thread::scope(|s| {
             let handles: Vec<_> = (0..4)
                 .map(|_| {
                     s.spawn(|| {
                         let pairs: *const MatingPairs = ped.mating_pairs();
-                        let networks: *const [usize] = ped.networks();
-                        (pairs as usize, networks as *const usize as usize)
+                        let networks: *const Networks = ped.networks();
+                        let parents: *const ParentNetworks = ped.parent_networks();
+                        (pairs as usize, networks as usize, parents as usize)
                     })
                 })
                 .collect();

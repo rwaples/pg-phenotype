@@ -26,6 +26,7 @@ pub mod correlation;
 pub mod error;
 pub mod input;
 mod lineage;
+pub(crate) mod mate_network;
 pub(crate) mod normal;
 pub mod pafgrs;
 pub mod pedigree;

@@ -1,43 +1,12 @@
-//! The analysed sample: Mating Pairs, Mate Networks, stratum codes, and the
-//! thin- and degenerate-stratum fixed point (pedsum
-//! `assortative_mating.py:883-900`, `:1185-1265`, `:1880-1897`,
-//! `pedigree_ops.py:112-131`).
+//! The analysed sample: stratum codes and the thin- and degenerate-stratum
+//! fixed point (pedsum `assortative_mating.py:883-900`, `:1185-1265`,
+//! `:1880-1897`, `pedigree_ops.py:112-131`).
 
 use super::input::Strata;
 use super::kernels::stratum_moments;
+use crate::mate_network::Networks;
 use crate::polychoric::table::Grid;
 use std::borrow::Cow;
-
-/// A pedigree's Mating Pairs, as rows: pair `p` is `(mothers[p], fathers[p])`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct MatingPairs {
-    pub mothers: Vec<usize>,
-    pub fathers: Vec<usize>,
-}
-
-/// Mating Pairs: distinct (mother, father) of the children whose parents are
-/// both pedigree rows, in ascending (mother id, father id) order.
-pub(crate) fn mating_pairs(ids: &[i64], mother_rows: &[i32], father_rows: &[i32]) -> MatingPairs {
-    // Rows are unique, non-negative i32: (mother, father) packs into one u64
-    // whose order is row order, which is id order when ids ascend by row.
-    let mut keys: Vec<u64> = mother_rows
-        .iter()
-        .zip(father_rows)
-        .filter(|(&m, &f)| m >= 0 && f >= 0)
-        .map(|(&m, &f)| (m as u64) << 32 | f as u64)
-        .collect();
-    keys.sort_unstable();
-    keys.dedup();
-    let rows = |k: u64| ((k >> 32) as usize, k as u32 as usize);
-    if !ids.is_sorted() {
-        keys.sort_unstable_by_key(|&k| {
-            let (m, f) = rows(k);
-            (ids[m], ids[f])
-        });
-    }
-    let (mothers, fathers) = keys.into_iter().map(rows).unzip();
-    MatingPairs { mothers, fathers }
-}
 
 /// The distinct rows of `pair_rows`, in id order.
 pub(crate) fn distinct_rows(pair_rows: &[usize], ids: &[i64]) -> Vec<usize> {
@@ -50,54 +19,6 @@ pub(crate) fn distinct_rows(pair_rows: &[usize], ids: &[i64]) -> Vec<usize> {
         rows.sort_unstable_by_key(|&r| ids[r]);
     }
     rows
-}
-
-fn find(parent: &mut [usize], mut x: usize) -> usize {
-    while parent[x] != x {
-        parent[x] = parent[parent[x]];
-        x = parent[x];
-    }
-    x
-}
-
-/// Mate Network label of each pair, numbered in order of each network's
-/// first pair; mates are graph nodes by row.
-pub(crate) fn mate_networks(mothers: &[usize], fathers: &[usize]) -> Vec<usize> {
-    let n_nodes = mothers.iter().chain(fathers).max().map_or(0, |&m| m + 1);
-    let mut parent: Vec<usize> = (0..n_nodes).collect();
-    for (&m, &f) in mothers.iter().zip(fathers) {
-        let (a, b) = (find(&mut parent, m), find(&mut parent, f));
-        if a != b {
-            parent[a.max(b)] = a.min(b);
-        }
-    }
-    let mut label = vec![usize::MAX; n_nodes];
-    let mut next = 0;
-    mothers
-        .iter()
-        .map(|&m| {
-            let root = find(&mut parent, m);
-            if label[root] == usize::MAX {
-                label[root] = next;
-                next += 1;
-            }
-            label[root]
-        })
-        .collect()
-}
-
-/// Networks and the largest one's share of the pairs.
-pub(crate) fn network_summary(labels: &[usize]) -> (u64, Option<f64>) {
-    let g = labels.iter().max().map_or(0, |&l| l + 1);
-    let mut sizes = vec![0u64; g];
-    for &l in labels {
-        sizes[l] += 1;
-    }
-    let share = sizes
-        .iter()
-        .max()
-        .map(|&largest| largest as f64 / labels.len() as f64);
-    (g as u64, share)
 }
 
 /// Dense stratum code per row: the rank of its label among every row's
@@ -198,11 +119,11 @@ impl CellPairs {
 }
 
 /// Per stratum code, the distinct Mate Networks its pairs come from.
-fn stratum_networks(code: &[usize], labels: &[usize]) -> Vec<usize> {
-    let n_labels = labels.iter().max().map_or(0, |&l| l + 1);
+fn stratum_networks(code: &[usize], networks: &Networks) -> Vec<usize> {
+    let n_labels = networks.count();
     let mut keys: Vec<usize> = code
         .iter()
-        .zip(labels)
+        .zip(networks.labels())
         .map(|(&c, &l)| c * n_labels + l)
         .collect();
     keys.sort_unstable();
@@ -227,8 +148,8 @@ pub(crate) struct Kept {
     pub keep: Vec<usize>,
     /// Pairs dropped as small, in the round each was dropped.
     pub n_small: u64,
-    /// Mate Network label of each kept pair.
-    pub labels: Vec<usize>,
+    /// The Mate Networks of the kept pairs.
+    pub networks: Networks,
 }
 
 /// The pairs kept once every small or degenerate sex x stratum is dropped,
@@ -244,17 +165,17 @@ pub(crate) fn drop_thin_strata(
     loop {
         let m: Vec<usize> = keep.iter().map(|&i| mothers[i]).collect();
         let f: Vec<usize> = keep.iter().map(|&i| fathers[i]).collect();
-        let labels = mate_networks(&m, &f);
+        let networks = Networks::of_pairs(&m, &f);
         if keep.is_empty() {
             return Kept {
                 keep,
                 n_small,
-                labels,
+                networks,
             };
         }
         let kept = pairs.take(&keep);
-        let nets_m = stratum_networks(&kept.m_stratum, &labels);
-        let nets_f = stratum_networks(&kept.f_stratum, &labels);
+        let nets_m = stratum_networks(&kept.m_stratum, &networks);
+        let nets_f = stratum_networks(&kept.f_stratum, &networks);
         let deg_m = degenerate_strata(&kept.m, &kept.m_stratum);
         let deg_f = degenerate_strata(&kept.f, &kept.f_stratum);
         let mut any_bad = false;
@@ -275,7 +196,7 @@ pub(crate) fn drop_thin_strata(
             return Kept {
                 keep,
                 n_small,
-                labels,
+                networks,
             };
         }
         keep = next;
@@ -285,21 +206,6 @@ pub(crate) fn drop_thin_strata(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn pairs_sort_by_parent_id_and_networks_number_by_first_pair() {
-        let ids = [50, 40, 30, 20, 10, 1, 2, 3, 4];
-        let mother = [-1, -1, -1, -1, -1, 0, 1, 0, 0];
-        let father = [-1, -1, -1, -1, -1, 3, 4, 2, 3];
-        let MatingPairs {
-            mothers: m,
-            fathers: f,
-        } = mating_pairs(&ids, &mother, &father);
-        assert_eq!((m.clone(), f.clone()), (vec![1, 0, 0], vec![4, 3, 2]));
-        assert_eq!(mate_networks(&m, &f), vec![0, 1, 1]);
-        assert_eq!(network_summary(&[0, 1, 1]), (2, Some(2.0 / 3.0)));
-        assert_eq!(network_summary(&[]), (0, None));
-    }
 
     #[test]
     fn pooled_borrows_pairs_already_in_one_stratum() {

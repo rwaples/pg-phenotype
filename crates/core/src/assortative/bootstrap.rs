@@ -15,6 +15,7 @@ use super::kernels::{
 use super::result::{Draws, Estimator, Reason};
 use super::rng::{network_multiplicities, network_weights};
 use super::sample::{n_codes, pooled_levels, CellPairs};
+use crate::mate_network::Networks;
 use crate::polychoric::fit::LATENT_BOUND;
 use crate::polychoric::table::{margin_status, thresholds, Grid, Table};
 use crate::polychoric::Tables;
@@ -69,10 +70,8 @@ impl Fitted<'_> {
 /// The resampling of one cell's G Mate Networks.
 #[derive(Clone, Copy)]
 struct Resample<'a> {
-    /// Each pair's Mate Network.
-    labels: &'a [usize],
-    /// The number of networks.
-    g: usize,
+    /// The pairs' Mate Networks.
+    networks: &'a Networks,
     n_draws: u64,
     seed: i64,
 }
@@ -84,14 +83,13 @@ pub(crate) fn draws(
     estimators: &[Key],
     starts: &[Option<f64>],
     pairs: &CellPairs,
-    labels: &[usize],
+    networks: &Networks,
     n_draws: u64,
     seed: i64,
 ) -> Vec<Vec<Draw>> {
     let fitted = Fitted { estimators, starts };
     let plan = Resample {
-        labels,
-        g: n_codes(labels),
+        networks,
         n_draws,
         seed,
     };
@@ -118,9 +116,9 @@ pub(crate) fn draws(
                 .enumerate()
                 .map(|(d, draw)| match draw {
                     Draw::Refit => {
-                        let mut w = vec![0.0; labels.len()];
-                        let mut mult = vec![0; plan.g];
-                        network_weights(&mut w, &mut mult, labels, seed, d as u64);
+                        let mut w = vec![0.0; networks.labels().len()];
+                        let mut mult = vec![0; networks.count()];
+                        network_weights(&mut w, &mut mult, networks.labels(), seed, d as u64);
                         kernel_draw(point(est, strat, pairs, &w, *start).map(|p| p.value))
                     }
                     other => other,
@@ -142,11 +140,11 @@ fn run(
     per_draw: impl Fn(&[f64], &[u32], &mut Vec<f64>) -> Vec<Draw> + Sync,
 ) -> Vec<(Key, Vec<Draw>)> {
     let Resample {
-        labels,
-        g,
+        networks,
         n_draws,
         seed,
     } = plan;
+    let (labels, g) = (networks.labels(), networks.count());
     let rows: Vec<Vec<Draw>> = (0..n_draws)
         .into_par_iter()
         .map_init(
@@ -185,7 +183,7 @@ fn continuous(pairs: &CellPairs, plan: Resample<'_>, fitted: Fitted<'_>) -> Vec<
     let stratified = fitted.has((Estimator::Pearson, true));
     let ranks = fitted
         .has((Estimator::Spearman, false))
-        .then(|| SortedPairs::new(pairs, plan.labels));
+        .then(|| SortedPairs::new(pairs, plan.networks.labels()));
     let (n_m, n_f) = pairs.n_strata();
     let mut keys = vec![(Estimator::Pearson, false)];
     if ranks.is_some() {
@@ -573,7 +571,7 @@ fn tables(
     if stratified {
         keys.push((primary, true));
     }
-    let labels = plan.labels;
+    let labels = plan.networks.labels();
     let cell_of: Vec<usize> = (0..pairs.len())
         .map(|i| {
             observed.index(
@@ -697,7 +695,10 @@ mod tests {
     #[test]
     fn every_fitted_estimator_gets_its_draws() {
         let kinds = [Kind::Continuous, Kind::Binary, Kind::Ordinal { k: 3 }];
-        let labels: Vec<usize> = (0..40).map(|i| i / 2).collect();
+        // Pairs 2k and 2k + 1 share mates, so network k.
+        let mothers: Vec<usize> = (0..40).map(|i| i / 2).collect();
+        let fathers: Vec<usize> = mothers.iter().map(|&m| 20 + m).collect();
+        let networks = Networks::of_pairs(&mothers, &fathers);
         for m in kinds {
             for f in kinds {
                 let pairs = CellPairs {
@@ -722,7 +723,7 @@ mod tests {
                         point(e, s, &pairs, &ones, None).ok().map(|p| p.value)
                     })
                     .collect();
-                let columns = draws(&estimators, &starts, &pairs, &labels, 7, 3);
+                let columns = draws(&estimators, &starts, &pairs, &networks, 7, 3);
                 assert_eq!(columns.len(), estimators.len());
                 for (key, column) in estimators.iter().zip(&columns) {
                     assert_eq!(column.len(), 7, "{m:?} x {f:?}: {key:?} has no draws");
