@@ -7,14 +7,14 @@
 use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
 use pg_phenotype_core::error::{Class, FieldValue, IndexBase};
 use pg_phenotype_core::pafgrs::{self, BivParams, Cip, Interpolation};
-use pg_phenotype_core::{threads, Error, PedigreeArg, PedigreeInput, Trait, TraitKind};
+use pg_phenotype_core::{threads, Error, PedigreeArg, PedigreeInput, TraitKind};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
-use std::num::NonZeroUsize;
 
 mod assortative;
 mod correlation;
+mod crossing;
 mod regression;
 mod relative_pairs;
 #[cfg(feature = "test-hooks")]
@@ -70,7 +70,7 @@ pub(crate) fn to_pyerr(py: Python<'_>, err: Error) -> PyErr {
     raise().unwrap_or_else(|e| e)
 }
 
-fn budget_error(err: threads::BudgetError) -> PyErr {
+pub(crate) fn budget_error(err: threads::BudgetError) -> PyErr {
     use threads::{BudgetError, ENV_VAR, MAX_THREADS};
     match err {
         BudgetError::OutOfRange { requested } => PyValueError::new_err(format!(
@@ -105,15 +105,6 @@ fn thread_budget() -> PyResult<usize> {
 #[pyfunction]
 fn _reset_thread_budget() {
     threads::reset();
-}
-
-pub(crate) fn checked_pool(
-    py: Python<'_>,
-    threads: usize,
-) -> PyResult<&'static pg_phenotype_core::rayon::ThreadPool> {
-    let threads = NonZeroUsize::new(threads)
-        .ok_or_else(|| PyValueError::new_err("threads must be at least 1"))?;
-    pg_phenotype_core::configure_pool(threads).map_err(|e| to_pyerr(py, e))
 }
 
 /// The relative structure of one pedigree at one degree, held in memory.
@@ -216,7 +207,8 @@ struct Pedigree {
 
 #[pymethods]
 impl Pedigree {
-    /// Validate the columns, with the GIL released.
+    /// Validate the columns, with the GIL released, after handing free
+    /// memory back.
     #[new]
     #[pyo3(signature = (ids, mother, father, twin, sex, /))]
     fn new<'py>(
@@ -230,7 +222,10 @@ impl Pedigree {
         let columns = PedigreeArgs(ids, mother, father, twin, sex);
         let input = columns.input()?;
         let inner = py
-            .detach(|| pg_phenotype_core::Pedigree::new(input))
+            .detach(|| {
+                crossing::release_free_memory();
+                pg_phenotype_core::Pedigree::new(input)
+            })
             .map_err(|e| to_pyerr(py, e))?;
         Ok(Pedigree { inner })
     }
@@ -303,21 +298,17 @@ fn saturating_i64(value: &Bound<'_, PyAny>) -> PyResult<i64> {
 
 /// Build a pedigree's relative structure in the pool, validating columns.
 #[pyfunction]
-#[pyo3(signature = (pedigree, /, *, ndegree, probands, threads))]
+#[pyo3(signature = (pedigree, /, *, ndegree, probands))]
 fn prepare<'py>(
     py: Python<'py>,
     pedigree: PedigreeSource<'py>,
     ndegree: &Bound<'py, PyAny>,
     probands: Option<PyReadonlyArray1<'py, i64>>,
-    threads: usize,
 ) -> PyResult<Prep> {
     let ndegree = saturating_i64(ndegree)?;
     let pedigree = pedigree.arg()?;
     let probands = probands.as_ref().map(|a| a.as_slice()).transpose()?;
-    let pool = checked_pool(py, threads)?;
-    let inner = py
-        .detach(|| pool.install(|| pafgrs::prepare(pedigree, ndegree, probands)))
-        .map_err(|e| to_pyerr(py, e))?;
+    let inner = crossing::run(py, || pafgrs::prepare(pedigree, ndegree, probands))?;
     Ok(Prep { inner })
 }
 
@@ -378,84 +369,55 @@ fn cip_aalen_johansen<'py>(
 
 /// Univariate scores of every proband, in the pool.
 #[pyfunction]
-#[pyo3(signature = (prep, values, kind, age, cip, /, *, h2, threads))]
-#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (prep, trait_, age, cip, /, *, h2))]
 fn score_univariate<'py>(
     py: Python<'py>,
     prep: &Prep,
-    values: PyReadonlyArray1<'py, f64>,
-    kind: &str,
+    trait_: crossing::TraitArg<'py>,
     age: PyReadonlyArray1<'py, f64>,
     cip: CipArg,
     h2: f64,
-    threads: usize,
 ) -> PyResult<Bound<'py, PyDict>> {
     let cip = checked_cip(py, cip)?;
-    let values = Trait {
-        values: values.as_slice()?,
-        kind: trait_kind(kind)?,
-        n_levels: None,
-    };
+    let trait_ = trait_.get()?;
     let age = age.as_slice()?;
-    let pool = checked_pool(py, threads)?;
-    let scores = py
-        .detach(|| pool.install(|| pafgrs::score_univariate(&prep.inner, values, age, &cip, h2)))
-        .map_err(|e| to_pyerr(py, e))?;
+    let scores = crossing::run(py, || {
+        pafgrs::score_univariate(&prep.inner, trait_, age, &cip, h2)
+    })?;
     let out = PyDict::new(py);
+    let metadata = crossing::metadata(scores.metadata());
     out.set_item("id", scores.ids.into_pyarray(py))?;
     out.set_item("est", f64_array(py, scores.est))?;
     out.set_item("var", f64_array(py, scores.var))?;
     out.set_item("n_relatives", scores.n_relatives.into_pyarray(py))?;
-    out.set_item("controls_without_age", scores.controls_without_age)?;
-    out.set_item("threshold", scores.threshold)?;
+    out.set_item("metadata", value::to_object(py, &metadata)?)?;
     Ok(out)
 }
 
 /// Bivariate scores of every proband, in the pool.
 #[pyfunction]
-#[pyo3(signature = (prep, values1, kind1, age1, values2, kind2, age2, cip1, cip2, /, *, h2, rg, rho_within, threads))]
+#[pyo3(signature = (prep, traits, ages, cips, /, *, h2, rg, rho_within))]
 #[allow(clippy::too_many_arguments)]
 fn score_bivariate<'py>(
     py: Python<'py>,
     prep: &Prep,
-    values1: PyReadonlyArray1<'py, f64>,
-    kind1: &str,
-    age1: PyReadonlyArray1<'py, f64>,
-    values2: PyReadonlyArray1<'py, f64>,
-    kind2: &str,
-    age2: PyReadonlyArray1<'py, f64>,
-    cip1: CipArg,
-    cip2: CipArg,
+    traits: (crossing::TraitArg<'py>, crossing::TraitArg<'py>),
+    ages: (PyReadonlyArray1<'py, f64>, PyReadonlyArray1<'py, f64>),
+    cips: (CipArg, CipArg),
     h2: (f64, f64),
     rg: f64,
     rho_within: Option<f64>,
-    threads: usize,
 ) -> PyResult<Bound<'py, PyDict>> {
     let params = BivParams::new([h2.0, h2.1], rg, rho_within).map_err(|e| to_pyerr(py, e))?;
-    let cip1 = checked_cip(py, cip1)?;
-    let cip2 = checked_cip(py, cip2)?;
-    let values = [
-        Trait {
-            values: values1.as_slice()?,
-            kind: trait_kind(kind1)?,
-            n_levels: None,
-        },
-        Trait {
-            values: values2.as_slice()?,
-            kind: trait_kind(kind2)?,
-            n_levels: None,
-        },
-    ];
-    let ages = [age1.as_slice()?, age2.as_slice()?];
-    let pool = checked_pool(py, threads)?;
-    let scores = py
-        .detach(|| {
-            pool.install(|| {
-                pafgrs::score_bivariate(&prep.inner, values, ages, [&cip1, &cip2], params)
-            })
-        })
-        .map_err(|e| to_pyerr(py, e))?;
+    let cip1 = checked_cip(py, cips.0)?;
+    let cip2 = checked_cip(py, cips.1)?;
+    let values = [traits.0.get()?, traits.1.get()?];
+    let ages = [ages.0.as_slice()?, ages.1.as_slice()?];
+    let scores = crossing::run(py, || {
+        pafgrs::score_bivariate(&prep.inner, values, ages, [&cip1, &cip2], params)
+    })?;
     let out = PyDict::new(py);
+    let metadata = crossing::metadata(scores.metadata());
     let [est1, est2] = scores.est;
     let [var1, var2] = scores.var;
     let [n_obs1, n_obs2] = scores.n_obs;
@@ -468,9 +430,7 @@ fn score_bivariate<'py>(
     out.set_item("n_relatives", scores.n_relatives.into_pyarray(py))?;
     out.set_item("n_obs1", n_obs1.into_pyarray(py))?;
     out.set_item("n_obs2", n_obs2.into_pyarray(py))?;
-    out.set_item("controls_without_age", scores.controls_without_age.to_vec())?;
-    out.set_item("threshold", scores.threshold.to_vec())?;
-    out.set_item("rho_within", params.rho_within())?;
+    out.set_item("metadata", value::to_object(py, &metadata)?)?;
     Ok(out)
 }
 
@@ -499,5 +459,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Pedigree>()?;
     #[cfg(feature = "test-hooks")]
     m.add_function(wrap_pyfunction!(test_hooks::_panic_for_test, m)?)?;
+    #[cfg(feature = "test-hooks")]
+    m.add_function(wrap_pyfunction!(test_hooks::_release_count, m)?)?;
     Ok(())
 }

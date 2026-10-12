@@ -1,12 +1,12 @@
 //! PA-FGRS: `pafgrs_prepare()`, `pafgrs_cip()` and the score functions.
 
+use crate::crossing::{self, TraitArg};
 use crate::errors::{finish, HostError, HostResult};
 use crate::input::{self, IdType};
 use crate::pedigree::Source;
-use crate::threads;
+use crate::value::to_robj;
 use extendr_api::prelude::*;
 use pg_phenotype_core::pafgrs::{self, BivParams, Cip, Interpolation, Prep};
-use pg_phenotype_core::Trait;
 
 /// What a `pgphenotype_pafgrs_prep` external pointer owns.
 struct Handle {
@@ -18,19 +18,13 @@ fn handle(prep: &Robj) -> HostResult<&Handle> {
     input::handle(prep, "prep", "pafgrs_prepare()")
 }
 
-fn prepare_impl(
-    ptr: &Robj,
-    columns: [Robj; 5],
-    ndegree: &Robj,
-    probands: Robj,
-) -> HostResult<Robj> {
-    let pedigree = Source::read(ptr, columns)?;
+fn prepare_impl(pedigree: &Robj, ndegree: &Robj, probands: Robj) -> HostResult<Robj> {
+    let pedigree = Source::read(pedigree)?;
     let ndegree = input::saturating_whole("ndegree", input::number("ndegree", ndegree)?)?;
     let probands = (!probands.is_null())
         .then(|| input::coerce_required("probands", &probands))
         .transpose()?;
-    let pool = threads::pool()?;
-    let prep = pool.install(|| {
+    let prep = crossing::run(|| {
         pafgrs::prepare(
             pedigree.arg(),
             ndegree,
@@ -47,26 +41,10 @@ fn prepare_impl(
     Ok(out)
 }
 
-/// Build a pedigree's relative structure in the pool, from a `pedigree()`
-/// pointer or, when it is `NULL`, the columns.
+/// Build a pedigree's relative structure in the pool.
 #[extendr]
-#[allow(clippy::too_many_arguments)]
-fn pafgrs_prepare(
-    pedigree: Robj,
-    id: Robj,
-    mother: Robj,
-    father: Robj,
-    twin: Robj,
-    sex: Robj,
-    ndegree: Robj,
-    probands: Robj,
-) -> Robj {
-    finish(prepare_impl(
-        &pedigree,
-        [id, mother, father, twin, sex],
-        &ndegree,
-        probands,
-    ))
+fn pafgrs_prepare(pedigree: Robj, ndegree: Robj, probands: Robj) -> Robj {
+    finish(prepare_impl(&pedigree, &ndegree, probands))
 }
 
 /// `list(n_rows, n_probands, ndegree)` of a prep.
@@ -82,7 +60,7 @@ fn pafgrs_prep_info(prep: Robj) -> Robj {
     }))
 }
 
-/// A CIP table as R passes it: ages, values and the interpolation name.
+/// A CIP table's ages, values and interpolation name.
 type CipArg<'a> = [&'a Robj; 3];
 
 fn cip_of([ages, cip, interpolation]: CipArg<'_>) -> HostResult<Cip> {
@@ -121,13 +99,11 @@ fn aalen_johansen(age: &Robj, status: &Robj, entry: &Robj) -> HostResult<Robj> {
     Ok(list!(ages = ages, cip = cip).into_robj())
 }
 
-/// The `values` and `kind` of an R `trait()`; the R side checked both.
-fn trait_of<'a>(values: &'a Robj, kind: &Robj) -> HostResult<Trait<'a>> {
-    Ok(Trait {
-        values: input::doubles("trait", values)?,
-        kind: input::trait_kind(kind.as_str().unwrap_or_default())?,
-        n_levels: None,
-    })
+/// The table of a `pafgrs_cip()`.
+fn cip_table(cip: &Robj) -> HostResult<Cip> {
+    let [ages, values, interpolation] =
+        input::elements(cip, "cip", "pafgrs_cip()", ["ages", "cip", "interpolation"])?;
+    cip_of([&ages, &values, &interpolation])
 }
 
 fn counts(values: &[u32]) -> Robj {
@@ -136,55 +112,38 @@ fn counts(values: &[u32]) -> Robj {
 
 fn score_univariate_impl(
     prep: &Robj,
-    values: [&Robj; 3],
-    cip: CipArg<'_>,
+    trait_: &Robj,
+    age: &Robj,
+    cip: &Robj,
     h2: &Robj,
 ) -> HostResult<Robj> {
     let h = handle(prep)?;
     let h2 = input::number("h2", h2)?;
-    let cip = cip_of(cip)?;
-    let [values, kind, age] = values;
-    let values = trait_of(values, kind)?;
+    let cip = cip_table(cip)?;
+    let trait_ = TraitArg::read(trait_)?;
+    let trait_ = trait_.get()?;
     let age = input::doubles("age", age)?;
-    let pool = threads::pool()?;
-    let s = pool.install(|| pafgrs::score_univariate(&h.prep, values, age, &cip, h2))?;
+    let s = crossing::run(|| pafgrs::score_univariate(&h.prep, trait_, age, &cip, h2))?;
+    let metadata = to_robj(&crossing::metadata(s.metadata()));
     Ok(list!(
         id = h.id_type.to_robj(&s.ids),
         est = s.est,
         var = s.var,
         n_relatives = counts(&s.n_relatives),
-        controls_without_age = s.controls_without_age as i32,
-        threshold = s.threshold,
-        prevalence = cip.prevalence()
+        metadata = metadata
     )
     .into_robj())
 }
 
 /// Univariate scores of every proband, in the pool.
 #[extendr]
-#[allow(clippy::too_many_arguments)]
-fn pafgrs_score_univariate(
-    prep: Robj,
-    values: Robj,
-    kind: Robj,
-    age: Robj,
-    cip_ages: Robj,
-    cip_values: Robj,
-    cip_interpolation: Robj,
-    h2: Robj,
-) -> Robj {
-    finish(score_univariate_impl(
-        &prep,
-        [&values, &kind, &age],
-        [&cip_ages, &cip_values, &cip_interpolation],
-        &h2,
-    ))
+fn pafgrs_score_univariate(prep: Robj, trait_: Robj, age: Robj, cip: Robj, h2: Robj) -> Robj {
+    finish(score_univariate_impl(&prep, &trait_, &age, &cip, &h2))
 }
 
 fn score_bivariate_impl(
     prep: &Robj,
-    traits: [[&Robj; 3]; 2],
-    cips: [CipArg<'_>; 2],
+    [traits, ages, cips]: [&Robj; 3],
     h2: &Robj,
     rg: &Robj,
     rho_within: &Robj,
@@ -200,14 +159,20 @@ fn score_bivariate_impl(
         false => Some(input::number("rho_within", rho_within)?),
     };
     let params = BivParams::new(h2, rg, rho_within)?;
-    let [cip1, cip2] = cips;
-    let cip = [cip_of(cip1)?, cip_of(cip2)?];
-    let [[values1, kind1, age1], [values2, kind2, age2]] = traits;
-    let values = [trait_of(values1, kind1)?, trait_of(values2, kind2)?];
-    let ages = [input::doubles("age1", age1)?, input::doubles("age2", age2)?];
-    let pool = threads::pool()?;
-    let s = pool
-        .install(|| pafgrs::score_bivariate(&h.prep, values, ages, [&cip[0], &cip[1]], params))?;
+    let [cip1, cip2] = input::list_of::<2>(cips, "cips")?;
+    let cip = [cip_table(&cip1)?, cip_table(&cip2)?];
+    let [trait1, trait2] = input::list_of::<2>(traits, "traits")?;
+    let traits = [TraitArg::read(&trait1)?, TraitArg::read(&trait2)?];
+    let values = [traits[0].get()?, traits[1].get()?];
+    let [age1, age2] = input::list_of::<2>(ages, "ages")?;
+    let ages = [
+        input::doubles("age1", &age1)?,
+        input::doubles("age2", &age2)?,
+    ];
+    let s = crossing::run(|| {
+        pafgrs::score_bivariate(&h.prep, values, ages, [&cip[0], &cip[1]], params)
+    })?;
+    let metadata = to_robj(&crossing::metadata(s.metadata()));
     let [est1, est2] = s.est;
     let [var1, var2] = s.var;
     Ok(list!(
@@ -220,42 +185,27 @@ fn score_bivariate_impl(
         n_relatives = counts(&s.n_relatives),
         n_obs1 = counts(&s.n_obs[0]),
         n_obs2 = counts(&s.n_obs[1]),
-        controls_without_age = s.controls_without_age.map(|c| c as i32).to_vec(),
-        threshold = s.threshold.to_vec(),
-        prevalence = vec![cip[0].prevalence(), cip[1].prevalence()],
-        rho_within = params.rho_within()
+        metadata = metadata
     )
     .into_robj())
 }
 
-/// Bivariate scores of every proband, in the pool.
+/// Bivariate scores of every proband, in the pool.  `traits`, `ages` and
+/// `cips` are lists of two.
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn pafgrs_score_bivariate(
     prep: Robj,
-    values1: Robj,
-    kind1: Robj,
-    age1: Robj,
-    values2: Robj,
-    kind2: Robj,
-    age2: Robj,
-    cip1_ages: Robj,
-    cip1_values: Robj,
-    cip1_interpolation: Robj,
-    cip2_ages: Robj,
-    cip2_values: Robj,
-    cip2_interpolation: Robj,
+    traits: Robj,
+    ages: Robj,
+    cips: Robj,
     h2: Robj,
     rg: Robj,
     rho_within: Robj,
 ) -> Robj {
     finish(score_bivariate_impl(
         &prep,
-        [[&values1, &kind1, &age1], [&values2, &kind2, &age2]],
-        [
-            [&cip1_ages, &cip1_values, &cip1_interpolation],
-            [&cip2_ages, &cip2_values, &cip2_interpolation],
-        ],
+        [&traits, &ages, &cips],
         &h2,
         &rg,
         &rho_within,

@@ -92,15 +92,17 @@ print.pgphenotype_pedigree <- function(x, ...) {
   invisible(x)
 }
 
-# The native pedigree arguments: a pedigree()'s pointer and NULL columns, or
-# a NULL pointer and the columns of a data frame or list.
-.pgp_pedigree_args <- function(pedigree, call) {
+# The pedigree as a native method takes it: a pedigree()'s pointer, or the
+# list (id, mother, father, twin, sex) of a data frame's or list's columns,
+# NULL where it has none.
+.pgp_pedigree_arg <- function(pedigree, call) {
   if (inherits(pedigree, "pgphenotype_pedigree")) {
-    return(list(pedigree$ptr, NULL, NULL, NULL, NULL, NULL))
+    return(pedigree$ptr)
   }
   if (!is.list(pedigree)) {
     .pgp_usage("`pedigree` must be a pedigree(), a data frame or a named list of columns", call)
   }
-  column <- function(name) if (name %in% names(pedigree)) pedigree[[name]] else NULL
-  list(NULL, column("id"), column("mother"), column("father"), column("twin"), column("sex"))
+  lapply(c("id", "mother", "father", "twin", "sex"), function(name) {
+    if (name %in% names(pedigree)) pedigree[[name]] else NULL
+  })
 }

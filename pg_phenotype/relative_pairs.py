@@ -20,15 +20,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-
-import numpy as np
+from typing import TYPE_CHECKING
 
 from pg_phenotype import _native
 from pg_phenotype._input import count
-from pg_phenotype._memory import release_free_memory
 from pg_phenotype._pedigree import native_pedigree
-from pg_phenotype._threads import thread_budget
-from pg_phenotype._trait import Trait
+from pg_phenotype._trait import checked
+
+if TYPE_CHECKING:
+    from pg_phenotype._trait import Trait
 
 __all__ = ["Cell", "Estimate", "RelativePairCorrelation", "correlation"]
 
@@ -226,28 +226,14 @@ def correlation(
             argument has the wrong type.
         ValueError: A group mapping in *categories* is empty.
     """
-    from pg_phenotype import __version__
-
-    if not isinstance(trait, Trait):
-        raise TypeError(f"trait must be a pg_phenotype.Trait, got {type(trait).__name__}")
+    trait = checked(trait)
     entries = _entries(categories)
     budget = count("memory_budget_bytes", memory_budget_bytes)
     native = native_pedigree(pedigree)
-    release_free_memory()
-    raw = _native.relative_pairs_correlation(
-        native,
-        np.ascontiguousarray(trait.values),
-        trait.kind,
-        None if trait.levels is None else len(trait.levels),
-        entries,
-        budget,
-        threads=thread_budget(),
-    )
+    raw = _native.relative_pairs_correlation(native, trait, entries, budget)
     return RelativePairCorrelation(
         cells=tuple(_cell(c) for c in raw["cells"]),
         settings=MappingProxyType(dict(raw["settings"])),
         method=MappingProxyType(dict(raw["method"])),
-        metadata=MappingProxyType(
-            {"pg_phenotype_version": __version__, "pedigree_graph_core_rev": _native.pg_core_rev()}
-        ),
+        metadata=MappingProxyType(raw["metadata"]),
     )

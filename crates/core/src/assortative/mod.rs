@@ -25,11 +25,11 @@ mod sandwich;
 mod value;
 
 use crate::error::Error;
-use crate::input::Trait;
+use crate::input::{Admitted, Kind, Trait};
 use crate::mate_network::Networks;
 use crate::pedigree::{Pedigree, PedigreeArg};
 use bootstrap::Draw;
-use input::{check_traits, Kind};
+use input::check_traits;
 use permutation::{NullDraw, Packed, SEQUENTIAL_H};
 use sample::{distinct_rows, drop_thin_strata, stratum_codes, CellPairs, Kept};
 use std::borrow::Cow;
@@ -235,7 +235,7 @@ struct DistinctFathers {
 }
 
 impl DistinctFathers {
-    fn build(pairs: &Pairs<'_>, ids: &[i64], columns: &[input::Column<'_>]) -> DistinctFathers {
+    fn build(pairs: &Pairs<'_>, ids: &[i64], columns: &[Admitted<'_>]) -> DistinctFathers {
         let rows = distinct_rows(&pairs.fathers, ids);
         let mut index = vec![0; ids.len()];
         for (i, &r) in rows.iter().enumerate() {
@@ -293,7 +293,7 @@ struct Analysed {
 /// thin-stratum drop, and every estimator with, under inference, its SE and CI.
 fn analyse_cell(
     pairs: &Pairs<'_>,
-    columns: &[input::Column<'_>],
+    columns: &[Admitted<'_>],
     [mt, ft]: [usize; 2],
     settings: input::Checked,
 ) -> (Cell, Analysed) {
@@ -453,7 +453,7 @@ struct Nulls {
 fn permutation_nulls(
     cells: &[Cell],
     fitted: &[CellFit],
-    columns: &[input::Column<'_>],
+    columns: &[Admitted<'_>],
     fathers: &DistinctFathers,
     settings: input::Checked,
 ) -> Nulls {
@@ -710,7 +710,7 @@ fn permutation_record(
 
 /// The Within-Person Cross-Trait Correlation of the distinct people in
 /// `pair_rows` with both traits.
-fn within_person(columns: &[input::Column<'_>], ids: &[i64], pair_rows: &[usize]) -> WithinPerson {
+fn within_person(columns: &[Admitted<'_>], ids: &[i64], pair_rows: &[usize]) -> WithinPerson {
     let (first, second) = (&columns[0], &columns[1]);
     let both: Vec<usize> = distinct_rows(pair_rows, ids)
         .into_iter()

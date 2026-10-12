@@ -9,7 +9,7 @@
 
 use crate::assortative::{check_strata, Strata};
 use crate::error::Error;
-use crate::input::{Trait, ValueRule};
+use crate::input::{admit, Admits, Trait, TraitKind};
 use crate::mate_network::{Networks, ParentNetworks, Relabel, Sandwich};
 use crate::normal;
 use crate::pedigree::{Pedigree, PedigreeArg};
@@ -18,6 +18,13 @@ use crate::wald::{CI_LEVEL, WALD_Z};
 
 /// The trait's field name, as errors report it.
 const FIELD: &str = "trait";
+
+/// Continuous, binary or ordinal; an all-missing or constant trait is not an
+/// error here: its fits carry a reason.
+const ADMITS: Admits = Admits::new(
+    &[TraitKind::Continuous, TraitKind::Binary, TraitKind::Ordinal],
+    false,
+);
 
 /// The parent value a child's trait is regressed on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -182,7 +189,7 @@ pub fn parent_offspring(
 ) -> Result<ParentOffspring, Error> {
     let pedigree = pedigree.resolve()?;
     let n_rows = pedigree.len();
-    let y = check_trait(trait_, n_rows)?;
+    let y = admit(trait_, FIELD, n_rows, ADMITS)?.values;
     if let Some(s) = strata {
         check_strata(s, n_rows)?;
     }
@@ -225,18 +232,6 @@ pub fn parent_offspring(
         }),
         n_unknown_stratum,
     })
-}
-
-/// The trait's values, after the checks this method needs.  An all-missing
-/// or constant trait is not an error here: its fits carry a reason.
-fn check_trait<'a>(t: Trait<'a>, n_rows: usize) -> Result<&'a [f64], Error> {
-    let rule = ValueRule::of(&t, FIELD, n_rows)?;
-    for (position, &value) in t.values.iter().enumerate() {
-        if !value.is_nan() {
-            rule.check(position, value)?;
-        }
-    }
-    Ok(t.values)
 }
 
 /// One row as a child in one regression.
@@ -529,7 +524,7 @@ impl ParentOffspring {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{PedigreeInput, TraitKind};
+    use crate::input::PedigreeInput;
 
     const NA: f64 = f64::NAN;
 

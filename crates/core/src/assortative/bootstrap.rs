@@ -675,8 +675,8 @@ pub(crate) fn failure_reasons(draws: &[Draw]) -> Vec<(Reason, u64)> {
 #[cfg(test)]
 mod tests {
     use super::super::cell_estimators;
-    use super::super::input::Kind;
     use super::*;
+    use crate::input::Kind;
 
     /// A side's values on 40 pairs in two strata: deterministic, every level used.
     fn side(kind: Kind, salt: usize) -> Vec<f64> {

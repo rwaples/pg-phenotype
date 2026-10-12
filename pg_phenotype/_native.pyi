@@ -3,6 +3,8 @@ from typing import Any
 
 import numpy as np
 
+from pg_phenotype._trait import Trait
+
 def core_version() -> str: ...
 def pg_core_rev() -> str: ...
 def trait_kinds() -> list[str]: ...
@@ -10,8 +12,10 @@ def configure_threads(n: int) -> None: ...
 def thread_budget() -> int: ...
 def _reset_thread_budget() -> None: ...
 def _panic_for_test() -> None: ...
+def _release_count() -> int: ...
 
 _Columns = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]
+_Strata = tuple[np.ndarray, np.ndarray]
 
 class Pedigree:
     def __new__(
@@ -48,7 +52,6 @@ def prepare(
     *,
     ndegree: int,
     probands: np.ndarray | None,
-    threads: int,
 ) -> Prep: ...
 
 _CipTable = tuple[list[float], list[float], str]
@@ -59,37 +62,28 @@ def cip_aalen_johansen(
 ) -> tuple[list[float], list[float]]: ...
 def score_univariate(
     prep: Prep,
-    values: np.ndarray,
-    kind: str,
+    trait_: Trait,
     age: np.ndarray,
     cip: _CipTable,
     /,
     *,
     h2: float,
-    threads: int,
 ) -> dict[str, Any]: ...
 def score_bivariate(
     prep: Prep,
-    values1: np.ndarray,
-    kind1: str,
-    age1: np.ndarray,
-    values2: np.ndarray,
-    kind2: str,
-    age2: np.ndarray,
-    cip1: _CipTable,
-    cip2: _CipTable,
+    traits: tuple[Trait, Trait],
+    ages: tuple[np.ndarray, np.ndarray],
+    cips: tuple[_CipTable, _CipTable],
     /,
     *,
     h2: tuple[float, float],
     rg: float,
     rho_within: float | None,
-    threads: int,
 ) -> dict[str, Any]: ...
 def mate_correlation(
     pedigree: Pedigree | _Columns,
-    traits: Sequence[tuple[np.ndarray, str, int | None]],
-    stratum_labels: np.ndarray | None,
-    stratum_known: np.ndarray | None,
+    traits: Sequence[Trait],
+    strata: _Strata | None,
     /,
     *,
     permutations: int | None,
@@ -98,29 +92,19 @@ def mate_correlation(
     min_stratum_networks: int,
     spearman: bool,
     inference: bool,
-    threads: int,
 ) -> dict[str, Any]: ...
 def tetrachoric_table(table: tuple[tuple[int, int], tuple[int, int]], /) -> dict[str, Any]: ...
 def tetrachoric_pairs(x: np.ndarray, y: np.ndarray, /) -> dict[str, Any]: ...
 def parent_offspring(
     pedigree: Pedigree | _Columns,
-    values: np.ndarray,
-    kind: str,
-    n_levels: int | None,
-    stratum_labels: np.ndarray | None,
-    stratum_known: np.ndarray | None,
+    trait_: Trait,
+    strata: _Strata | None,
     /,
-    *,
-    threads: int,
 ) -> dict[str, Any]: ...
 def relative_pairs_correlation(
     pedigree: Pedigree | _Columns,
-    values: np.ndarray,
-    kind: str,
-    n_levels: int | None,
+    trait_: Trait,
     categories: list[tuple[int, str, list[str] | None]] | None,
     memory_budget_bytes: int,
     /,
-    *,
-    threads: int,
 ) -> dict[str, Any]: ...

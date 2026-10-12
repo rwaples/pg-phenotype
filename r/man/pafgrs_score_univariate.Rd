@@ -26,10 +26,11 @@ A data frame with one row per proband in pedigree input-row order
   weight > 0).  A proband with no informative relative gets `est = 0`,
   `var = h2`.  `attr(, "metadata")` is a list: `h2`, `prevalence`,
   `threshold`, `controls_without_age`, `n_probands`, `ndegree`,
-  `pg_phenotype_version` and `pedigree_graph_core_rev`.  A trait that is
-  not binary is a `pgphenotype_validation_error` with code
-  `trait_kind_mismatch`; a value outside \{0, 1\} gives
-  `invalid_trait_value`.
+  `pg_phenotype_version` and `pedigree_graph_core_rev`.  A
+  `pgphenotype_validation_error`, in order: `trait_length_mismatch` for a
+  trait that is not the pedigree's length, `trait_kind_mismatch` for one
+  that is not binary, `invalid_trait_value` for a value outside
+  \{0, 1\}, then `trait_length_mismatch` and `invalid_age` for the age.
 }
 \description{
 Scores every proband of `prep` on one binary trait: the posterior mean and

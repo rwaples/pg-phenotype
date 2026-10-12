@@ -123,6 +123,19 @@ test_that("trait values and ages are validated against the pedigree", {
   err <- expect_pgp_error(pafgrs_score_univariate(two, trait(c(1, 0)), 10, table, h2 = 0.5),
                           "validation", "trait_length_mismatch")
   expect_identical(err$fields$field, "age")
+  # The trait comes before its age, whichever row holds each fault.
+  three <- pafgrs_prepare(data.frame(id = 1:3, mother = NA, father = NA))
+  err <- expect_pgp_error(pafgrs_score_univariate(three, trait(c(1.5, 2)), c(10, 10, 10), table, h2 = 0.5),
+                          "validation", "trait_length_mismatch")
+  expect_identical(err$fields$field, "trait")
+  err <- expect_pgp_error(pafgrs_score_univariate(three, trait(c(1, 2, 0), kind = "binary"), c(10, 10), table,
+                                                  h2 = 0.5),
+                          "validation", "invalid_trait_value")
+  expect_identical(err$fields$position, 2)
+  err <- expect_pgp_error(pafgrs_score_univariate(three, trait(c(1, 0, 2), kind = "binary"), c(-1, 10, 10), table,
+                                                  h2 = 0.5),
+                          "validation", "invalid_trait_value")
+  expect_identical(err$fields$position, 3)
 })
 
 test_that("a prep that did not survive serialization is a usage error", {

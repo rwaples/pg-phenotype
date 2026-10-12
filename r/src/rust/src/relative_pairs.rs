@@ -1,14 +1,12 @@
 //! `relative_pairs_correlation()`: the Relative-Pair Correlation as nested
 //! lists, the core's `to_value` tree that the Python binding converts too.
 
+use crate::crossing::{self, TraitArg};
 use crate::errors::{finish, HostError, HostResult};
 use crate::input;
 use crate::pedigree::Source;
-use crate::threads;
-use crate::value::to_robj;
 use extendr_api::prelude::*;
 use pg_phenotype_core::relative_pairs::{self, Entry};
-use pg_phenotype_core::Trait;
 
 fn strings(what: &str, x: &Robj) -> HostResult<Vec<String>> {
     x.as_string_vector()
@@ -49,60 +47,40 @@ fn entries(names: &Robj, members: &Robj) -> HostResult<Option<Vec<Entry>>> {
         .map(Some)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn correlation_impl(
-    ptr: &Robj,
-    columns: [Robj; 5],
-    values: &Robj,
-    kind: &str,
-    n_levels: &Robj,
+    pedigree: &Robj,
+    trait_: &Robj,
     names: &Robj,
     members: &Robj,
     memory_budget_bytes: &Robj,
 ) -> HostResult<Robj> {
-    let pedigree = Source::read(ptr, columns)?;
-    let n_levels = input::number("n_levels", n_levels)?;
-    let trait_ = Trait {
-        values: input::doubles("trait", values)?,
-        kind: input::trait_kind(kind)?,
-        n_levels: (!n_levels.is_nan()).then_some(n_levels as usize),
-    };
+    let pedigree = Source::read(pedigree)?;
+    let trait_ = TraitArg::read(trait_)?;
+    let trait_ = trait_.get()?;
     let entries = entries(names, members)?;
     let budget = input::saturating_whole(
         "memory_budget_bytes",
         input::number("memory_budget_bytes", memory_budget_bytes)?,
     )?;
-    let pool = threads::pool()?;
-    let result = pool.install(|| {
+    let result = crossing::run(|| {
         relative_pairs::correlation(pedigree.arg(), trait_, entries.as_deref(), budget)
+            .map(|r| r.to_value())
     })?;
-    Ok(to_robj(&result.to_value()))
+    crossing::result(result)
 }
 
-/// The Relative-Pair Correlation of one trait, in the pool, over a
-/// `pedigree()` pointer or, when it is `NULL`, the columns.
+/// The Relative-Pair Correlation of one trait, in the pool.
 #[extendr]
-#[allow(clippy::too_many_arguments)]
 fn relative_pairs_correlation(
     pedigree: Robj,
-    id: Robj,
-    mother: Robj,
-    father: Robj,
-    twin: Robj,
-    sex: Robj,
-    values: Robj,
-    kind: &str,
-    n_levels: Robj,
+    trait_: Robj,
     names: Robj,
     members: Robj,
     memory_budget_bytes: Robj,
 ) -> Robj {
     finish(correlation_impl(
         &pedigree,
-        [id, mother, father, twin, sex],
-        &values,
-        kind,
-        &n_levels,
+        &trait_,
         &names,
         &members,
         &memory_budget_bytes,

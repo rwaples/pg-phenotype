@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+- Every Python call that computes in the thread pool, and the `Pedigree`
+  constructor, hands the process's free heap pages back to the system
+  first (`malloc_trim`, glibc only): `pafgrs.prepare` and both score
+  functions now do, as `Pedigree`, `mate_correlation`, `parent_offspring`
+  and `relative_pairs.correlation` did.  The release moved from each
+  wrapper into the native binding's one crossing module, which every
+  method's call goes through.  Its memory effect is measured only for
+  `mate_correlation` (v0.1.1).
+- `mate_correlation`, `pafgrs.score_univariate` and
+  `pafgrs.score_bivariate` raise `TypeError` naming the argument
+  (`traits[1] must be a pg_phenotype.Trait, got ndarray`) for an argument
+  that is not a `Trait`, where they raised `AttributeError`, as
+  `parent_offspring` and `relative_pairs.correlation` did.
+- PA-FGRS scores' `metadata` is a read-only mapping, as every other
+  method's is, in R's order: the parameters, `prevalence`, `threshold`,
+  `controls_without_age`, `n_probands`, `ndegree`, then the versions.  Code
+  that needs updating: code that changed a score's `metadata` in place.
+- The `pg_phenotype_version` in a result's metadata is the native
+  binding's version, as in R; `tests/test_version.py` keeps it equal to the
+  distribution's.
+- Private `_native` signatures: methods take a `Trait` whole and strata as
+  one `(labels, known)` pair, `score_bivariate` takes its traits, ages and
+  CIP tables as pairs, and none takes `threads`; the binding reads the
+  committed thread budget, as R's does.
+- In R, `pedigree()`, `pafgrs_prepare()`, both score functions,
+  `assortative_mate_correlation()`, `regression_parent_offspring()` and
+  `relative_pairs_correlation()` hand free heap pages back to the system
+  before they compute, through the same crossing module as Python; R
+  released none.  Its memory effect in R is not measured.
+- PA-FGRS score metadata comes with the scores, its keys written once in
+  the core for both hosts: the parameters, `prevalence`, `threshold`,
+  `controls_without_age`, `n_probands` and `ndegree`.  R no longer makes a
+  second native call for `n_probands` and `ndegree`, and the private
+  native score functions no longer return `threshold`,
+  `controls_without_age`, `rho_within` or `prevalence` beside the
+  metadata.  Values, types and order are unchanged, except that R's
+  `controls_without_age` follows the rule for counts in R metadata: a
+  double, not an overflowed integer, past R's integer range.
+- The R binding's private native routines take the pedigree as one
+  argument (a `pedigree()` pointer or the column list) and each `trait()`
+  and `pafgrs_cip()` whole.
 - The Polychoric Fit, the tetrachoric and polychoric fit the Mate
   Correlation and the public tetrachoric share, has its own module,
   `polychoric`, with pedsum's primitives (ADR 0005, 0011 amended).  Results
@@ -23,6 +64,19 @@
   positional pg-phenotype error cannot report one base in R's message and
   another in its fields.  A pedigree error's message is still
   pedigree-graph's, 0-based in R as well.  Python and R output is unchanged.
+- Every method checks a trait in one order, its Admission: the length,
+  the kind, each present value, then (the Mate Correlation alone) present,
+  not constant, every level taken.  PA-FGRS scoring now follows it and
+  checks the age after the trait, so a call with two faults reports a
+  different one: a trait of the wrong length and kind raises
+  `trait_length_mismatch` (was `trait_kind_mismatch`); a bad status value
+  with an age of the wrong length, or with a bad age in any row, raises
+  `invalid_trait_value` (was the age's `trait_length_mismatch` or
+  `invalid_age` when the bad age's row came first).  A call with one
+  fault raises what it did.  In Rust, PA-FGRS also bounds a binary
+  trait's codes by `Trait::n_levels`, as the other methods do; a Python or
+  R trait never carries a code beyond its levels, so their output is
+  unchanged.
 
 ## v0.3.0
 

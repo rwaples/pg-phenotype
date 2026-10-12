@@ -15,17 +15,15 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 from pg_phenotype import _native
 from pg_phenotype._input import strata
-from pg_phenotype._memory import release_free_memory
 from pg_phenotype._pedigree import native_pedigree
-from pg_phenotype._threads import thread_budget
-from pg_phenotype._trait import Trait
+from pg_phenotype._trait import checked
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from pg_phenotype._trait import Trait
 
 __all__ = ["Dropped", "Fit", "ParentOffspring", "Subset", "parent_offspring"]
 
@@ -146,22 +144,9 @@ def parent_offspring(pedigree: object, trait: Trait, *, stratum: object = None) 
             (``stratum_length_mismatch``) is invalid.
         TypeError: *trait* is not a :class:`~pg_phenotype.Trait`.
     """
-    from pg_phenotype import __version__
-
-    if not isinstance(trait, Trait):
-        raise TypeError(f"trait must be a pg_phenotype.Trait, got {type(trait).__name__}")
+    trait = checked(trait)
     native = native_pedigree(pedigree)
-    labels, known = (None, None) if stratum is None else strata(stratum)
-    release_free_memory()
-    raw = _native.parent_offspring(
-        native,
-        np.ascontiguousarray(trait.values),
-        trait.kind,
-        None if trait.levels is None else len(trait.levels),
-        labels,
-        known,
-        threads=thread_budget(),
-    )
+    raw = _native.parent_offspring(native, trait, None if stratum is None else strata(stratum))
     by_stratum = raw["strata"]
     return ParentOffspring(
         pooled=_subset(raw["pooled"]),
@@ -169,7 +154,5 @@ def parent_offspring(pedigree: object, trait: Trait, *, stratum: object = None) 
         n_unknown_stratum=raw["n_unknown_stratum"],
         settings=MappingProxyType(dict(raw["settings"])),
         method=MappingProxyType(dict(raw["method"])),
-        metadata=MappingProxyType(
-            {"pg_phenotype_version": __version__, "pedigree_graph_core_rev": _native.pg_core_rev()}
-        ),
+        metadata=MappingProxyType(raw["metadata"]),
     )

@@ -8,6 +8,7 @@ the differences into discrete mismatches and numeric gaps.
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -25,15 +26,21 @@ KEYS = {
 LATENT = {"tetrachoric", "polychoric", "biserial", "polyserial"}
 
 
-def run(g: Golden, threads: int = 1) -> dict:
+def native_trait(values: np.ndarray, kind: str, n_levels: int | None) -> SimpleNamespace:
+    """What the native crossing reads of a Trait, with pedsum's declared level count."""
+    levels = None if n_levels is None else tuple(str(k) for k in range(n_levels))
+    return SimpleNamespace(values=np.ascontiguousarray(values), kind=kind, levels=levels)
+
+
+def run(g: Golden) -> dict:
     """The native result of fixture ``g`` with its settings, with Spearman, which pedsum always computes."""
-    traits = [(np.ascontiguousarray(v), k, n) for v, k, n in zip(g.values, g.kinds, g.n_levels, strict=True)]
-    labels, known = (g.stratum_labels, g.stratum_known) if g.stratified else (None, None)
+    traits = [native_trait(v, k, n) for v, k, n in zip(g.values, g.kinds, g.n_levels, strict=True)]
+    strata = (g.stratum_labels, g.stratum_known) if g.stratified else None
     s = g.settings
     return _native.mate_correlation(
-        (g.id, g.mother, g.father, None, None), traits, labels, known,
+        (g.id, g.mother, g.father, None, None), traits, strata,
         permutations=s["permutations"], bootstrap=s["bootstrap"], seed=s["seed"],
-        min_stratum_networks=s["min_stratum_networks"], spearman=True, inference=True, threads=threads,
+        min_stratum_networks=s["min_stratum_networks"], spearman=True, inference=True,
     )  # fmt: skip
 
 
@@ -128,11 +135,11 @@ def _flatten(value: object, path: str, out: dict) -> None:
         out[path] = value
 
 
-def diff(name: str, threads: int = 1) -> tuple[list[str], list[tuple[str, float, float, float]]]:
+def diff(name: str) -> tuple[list[str], list[tuple[str, float, float, float]]]:
     """``(mismatches, gaps)``: discrete differences, and ``(path, ours, pedsum, |gap|)`` of every float."""
     g = load(name)
     ours, want = {}, {}
-    _flatten(to_pedsum(run(g, threads), len(g.kinds)), "", ours)
+    _flatten(to_pedsum(run(g), len(g.kinds)), "", ours)
     expected = {
         k: g.payload[k] for k in ("mating_pairs", "mate_correlation", "inference", "within_person") if k in g.payload
     }

@@ -45,8 +45,8 @@ fits one connected pedigree (`docs/relative-pairs-se-research.md`).
   (offspring, father) make PO's (offspring, parent).  The default is every
   category up to degree 3.
 - The trait is checked as `regression::parent_offspring` checks it: its
-  length, then its kind (ordinal raises here, although the shared value
-  rule accepts it), then every present value (`invalid_trait_value` for a
+  length, then its kind (ordinal raises here, although regression reads
+  it), then every present value (`invalid_trait_value` for a
   binary code other than 0 or 1, or a continuous value that is not finite).
 - A symmetric category's pairs enter in both orders: Pearson is intraclass
   (one mean and variance) and the tetrachoric fits a symmetric table with

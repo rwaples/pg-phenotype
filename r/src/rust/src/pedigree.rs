@@ -1,6 +1,7 @@
 //! `pedigree()`: a validated pedigree that methods share, held behind an
 //! external pointer with the storage type of its ids.
 
+use crate::crossing;
 use crate::errors::{finish, HostResult};
 use crate::input::{self, IdType};
 use extendr_api::prelude::*;
@@ -30,13 +31,18 @@ pub enum Source<'a> {
 }
 
 impl<'a> Source<'a> {
-    /// The handle behind `ptr`, or, when it is `NULL`, the coerced columns.
-    pub fn read(ptr: &'a Robj, columns: [Robj; 5]) -> HostResult<Source<'a>> {
-        Ok(if ptr.is_null() {
-            Source::Columns(Box::new(input::Pedigree::coerce(columns)?))
-        } else {
-            Source::Built(input::handle(ptr, "pedigree", "pedigree()")?)
-        })
+    /// The handle behind a `pedigree()` pointer, or the coerced columns of
+    /// `list(id, mother, father, twin, sex)`, `NULL` where the data had none.
+    pub fn read(pedigree: &'a Robj) -> HostResult<Source<'a>> {
+        if pedigree.rtype() != Rtype::List {
+            return Ok(Source::Built(input::handle(
+                pedigree,
+                "pedigree",
+                "pedigree()",
+            )?));
+        }
+        let columns = input::list_of::<5>(pedigree, "pedigree columns")?;
+        Ok(Source::Columns(Box::new(input::Pedigree::coerce(columns)?)))
     }
 
     pub fn arg(&self) -> PedigreeArg<'_> {
@@ -57,6 +63,7 @@ impl<'a> Source<'a> {
 
 fn new_impl(columns: [Robj; 5]) -> HostResult<Robj> {
     let columns = input::Pedigree::coerce(columns)?;
+    crossing::release_free_memory();
     let pedigree = Pedigree::new(columns.input())?;
     let id_type = columns.ids.storage;
     let ids = id_type.to_robj(pedigree.ids());

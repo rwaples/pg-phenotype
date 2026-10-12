@@ -6,6 +6,7 @@ use super::pa::{self, Obs};
 use super::prep::Prep;
 use crate::error::Error;
 use crate::input::Trait;
+use crate::value::Value;
 
 /// One score per proband, in ascending row order.
 #[derive(Clone, Debug, PartialEq)]
@@ -18,10 +19,34 @@ pub struct UniScores {
     pub var: Vec<f64>,
     /// Relatives with `w > 0`.
     pub n_relatives: Vec<u32>,
-    /// Controls with no age, scored as unobserved.
-    pub controls_without_age: usize,
+    /// The heritability scored with.
+    pub h2: f64,
+    /// The CIP table's lifetime prevalence.
+    pub prevalence: f64,
     /// The liability threshold the CIP table gives.
     pub threshold: f64,
+    /// Controls with no age, scored as unobserved.
+    pub controls_without_age: usize,
+    /// The prep's degree.
+    pub ndegree: u8,
+}
+
+impl UniScores {
+    /// The result's metadata, in the hosts' key order; each binding adds
+    /// the versions.
+    pub fn metadata(&self) -> Vec<(&'static str, Value)> {
+        vec![
+            ("h2", self.h2.into()),
+            ("prevalence", self.prevalence.into()),
+            ("threshold", self.threshold.into()),
+            (
+                "controls_without_age",
+                (self.controls_without_age as u64).into(),
+            ),
+            ("n_probands", (self.ids.len() as u64).into()),
+            ("ndegree", u64::from(self.ndegree).into()),
+        ]
+    }
 }
 
 /// Check that `h2` is in `(0, 1]`.
@@ -41,7 +66,7 @@ pub(crate) fn check_h2(name: &'static str, h2: f64) -> Result<(), Error> {
 /// # Errors
 ///
 /// [`Error::ParameterOutOfRange`] for `h2` outside `(0, 1]`, checked first;
-/// then the trait's kind, length, value, and age errors.
+/// then the trait's length, kind and value errors, then its age's.
 pub fn score_univariate(
     prep: &Prep,
     values: Trait<'_>,
@@ -57,8 +82,11 @@ pub fn score_univariate(
         est: one.iter().map(|o| o.est).collect(),
         var: one.iter().map(|o| o.var).collect(),
         n_relatives: one.iter().map(|o| o.n_relatives).collect(),
-        controls_without_age: obs.controls_without_age,
+        h2,
+        prevalence: cip.prevalence(),
         threshold: obs.threshold,
+        controls_without_age: obs.controls_without_age,
+        ndegree: prep.ndegree(),
     })
 }
 
@@ -138,5 +166,70 @@ impl Scratch {
             var: self.cov[0].max(0.0),
             n_relatives: n as u32,
         }
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+    use crate::input::{PedigreeInput, TraitKind};
+    use crate::pafgrs::{prepare, Interpolation};
+    use crate::pedigree::PedigreeArg;
+
+    static IDS: [i64; 3] = [1, 2, 3];
+    static MOTHER: [i64; 3] = [-1, -1, 1];
+    static FATHER: [i64; 3] = [-1, -1, 2];
+    static STATUS: [f64; 3] = [1.0, 0.0, 0.0];
+    /// The second person is a control with no age.
+    pub(in crate::pafgrs) static AGE: [f64; 3] = [50.0, f64::NAN, 30.0];
+
+    /// Two founders and their child at `ndegree = 2`, a CIP table with
+    /// `K = 0.1`, and a binary status.
+    pub(in crate::pafgrs) fn case() -> (Prep, Cip, Trait<'static>) {
+        let pedigree = PedigreeArg::Columns(PedigreeInput {
+            ids: &IDS,
+            mother: &MOTHER,
+            father: &FATHER,
+            twin: None,
+            sex: None,
+        });
+        let status = Trait {
+            values: &STATUS,
+            kind: TraitKind::Binary,
+            n_levels: None,
+        };
+        (
+            prepare(pedigree, 2, None).unwrap(),
+            Cip::new(vec![0.0, 80.0], vec![0.0, 0.1], Interpolation::Linear).unwrap(),
+            status,
+        )
+    }
+
+    pub(in crate::pafgrs) fn keys(entries: &[(&'static str, Value)]) -> Vec<&'static str> {
+        entries.iter().map(|(k, _)| *k).collect()
+    }
+
+    #[test]
+    fn metadata_follows_the_hosts_key_order() {
+        let (prep, cip, status) = case();
+        let meta = score_univariate(&prep, status, &AGE, &cip, 0.5)
+            .unwrap()
+            .metadata();
+        assert_eq!(
+            keys(&meta),
+            [
+                "h2",
+                "prevalence",
+                "threshold",
+                "controls_without_age",
+                "n_probands",
+                "ndegree"
+            ]
+        );
+        assert_eq!(meta[0].1, Value::Float(0.5));
+        assert_eq!(meta[1].1, Value::Float(0.1));
+        assert_eq!(meta[3].1, Value::Count(1));
+        assert_eq!(meta[4].1, Value::Count(3));
+        assert_eq!(meta[5].1, Value::Count(2));
     }
 }

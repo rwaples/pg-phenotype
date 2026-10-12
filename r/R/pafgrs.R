@@ -31,9 +31,10 @@
 #' prep
 #' @export
 pafgrs_prepare <- function(pedigree, ndegree = 2L, probands = NULL) {
-  args <- .pgp_pedigree_args(pedigree, sys.call())
-  ndegree <- .pgp_number(ndegree, "ndegree")
-  .pgp_call(do.call(.native_pafgrs_prepare, c(args, list(ndegree, probands))))
+  call <- sys.call()
+  pedigree <- .pgp_pedigree_arg(pedigree, call)
+  ndegree <- .pgp_number(ndegree, "ndegree", call)
+  .pgp_call(.native_pafgrs_prepare(pedigree, ndegree, probands), call)
 }
 
 #' @export
@@ -141,15 +142,6 @@ print.pgphenotype_pafgrs_cip <- function(x, ...) {
   )
 }
 
-.pgp_metadata <- function(prep, raw) {
-  list(
-    n_probands = length(raw$id),
-    ndegree = .pgp_call(.native_pafgrs_prep_info(prep))$ndegree,
-    pg_phenotype_version = pgphenotype_version(),
-    pedigree_graph_core_rev = pg_core_rev()
-  )
-}
-
 #' Univariate PA-FGRS scores
 #'
 #' Scores every proband of `prep` on one binary trait: the posterior mean and
@@ -168,10 +160,11 @@ print.pgphenotype_pafgrs_cip <- function(x, ...) {
 #'   weight > 0).  A proband with no informative relative gets `est = 0`,
 #'   `var = h2`.  `attr(, "metadata")` is a list: `h2`, `prevalence`,
 #'   `threshold`, `controls_without_age`, `n_probands`, `ndegree`,
-#'   `pg_phenotype_version` and `pedigree_graph_core_rev`.  A trait that is
-#'   not binary is a `pgphenotype_validation_error` with code
-#'   `trait_kind_mismatch`; a value outside \{0, 1\} gives
-#'   `invalid_trait_value`.
+#'   `pg_phenotype_version` and `pedigree_graph_core_rev`.  A
+#'   `pgphenotype_validation_error`, in order: `trait_length_mismatch` for a
+#'   trait that is not the pedigree's length, `trait_kind_mismatch` for one
+#'   that is not binary, `invalid_trait_value` for a value outside
+#'   \{0, 1\}, then `trait_length_mismatch` and `invalid_age` for the age.
 #' @examples
 #' ped <- data.frame(id = 1:4, mother = c(NA, NA, 1, 1), father = c(NA, NA, 2, 2))
 #' pafgrs_score_univariate(
@@ -185,15 +178,8 @@ pafgrs_score_univariate <- function(prep, trait, age, cip, h2) {
   .pgp_check_class(cip, "pgphenotype_pafgrs_cip", "cip", "pafgrs_cip()", call)
   age <- .pgp_doubles(age, "age", call)
   h2 <- .pgp_number(h2, "h2", call)
-  raw <- .pgp_call(.native_pafgrs_score_univariate(
-    prep, trait$values, trait$kind, age, cip$ages, cip$cip, cip$interpolation, h2
-  ), call)
-  metadata <- c(
-    list(h2 = h2, prevalence = raw$prevalence, threshold = raw$threshold,
-         controls_without_age = raw$controls_without_age),
-    .pgp_metadata(prep, raw)
-  )
-  .pgp_frame(raw[c("id", "est", "var", "n_relatives")], metadata)
+  raw <- .pgp_call(.native_pafgrs_score_univariate(prep, trait, age, cip, h2), call)
+  .pgp_frame(raw[c("id", "est", "var", "n_relatives")], raw$metadata)
 }
 
 #' Bivariate PA-FGRS scores
@@ -244,18 +230,9 @@ pafgrs_score_bivariate <- function(prep, traits, ages, cips, h2, rg, rho_within 
   h2 <- as.double(h2)
   rg <- .pgp_number(rg, "rg", call)
   if (!is.null(rho_within)) rho_within <- .pgp_number(rho_within, "rho_within", call)
-  t1 <- traits[[1L]]
-  t2 <- traits[[2L]]
   raw <- .pgp_call(.native_pafgrs_score_bivariate(
-    prep, t1$values, t1$kind, age1, t2$values, t2$kind, age2,
-    cips[[1L]]$ages, cips[[1L]]$cip, cips[[1L]]$interpolation,
-    cips[[2L]]$ages, cips[[2L]]$cip, cips[[2L]]$interpolation, h2, rg, rho_within
+    prep, traits, list(age1, age2), cips, h2, rg, rho_within
   ), call)
-  metadata <- c(
-    list(h2 = h2, rg = rg, rho_within = raw$rho_within, prevalence = raw$prevalence,
-         threshold = raw$threshold, controls_without_age = raw$controls_without_age),
-    .pgp_metadata(prep, raw)
-  )
   columns <- c("id", "est1", "est2", "var1", "var2", "cov12", "n_relatives", "n_obs1", "n_obs2")
-  .pgp_frame(raw[columns], metadata)
+  .pgp_frame(raw[columns], raw$metadata)
 }

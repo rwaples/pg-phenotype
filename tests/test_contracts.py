@@ -246,6 +246,24 @@ def test_trait_length_is_checked():
 
 
 @pytest.mark.parametrize(
+    ("values", "kind", "age", "code", "fields"),
+    [
+        ([1.5, 2.0], "continuous", [10.0, 10.0, 10.0], "trait_length_mismatch", {"field": "trait"}),
+        ([1.0, 2.0, 0.0], "binary", [10.0, 10.0], "invalid_trait_value", {"field": "trait", "position": 1}),
+        ([1.0, 0.0, 2.0], "binary", [-1.0, 10.0, 10.0], "invalid_trait_value", {"field": "trait", "position": 2}),
+    ],
+)
+def test_the_trait_is_checked_before_its_age(values, kind, age, code, fields):
+    ped = {"id": [1, 2, 3], "mother": [-1, -1, -1], "father": [-1, -1, -1]}
+    trait = pg_phenotype.Trait(np.array(values), kind=kind)
+    cip = pafgrs.Cip([0.0, 1.0], [0.0, 0.1])
+    with pytest.raises(pg_phenotype.ValidationError) as err:
+        pafgrs.score_univariate(pafgrs.prepare(ped), trait, age=age, cip=cip, h2=0.5)
+    assert err.value.code == code
+    assert dict(err.value.fields).items() >= fields.items()
+
+
+@pytest.mark.parametrize(
     ("ages", "cip", "reason", "position"),
     [
         ([0.0, 1.0], [0.0, 1.0], "cip_out_of_range", 1),
@@ -277,6 +295,42 @@ def test_metadata_names_versions(case):
     assert meta["pedigree_graph_core_rev"] == pg_phenotype.pg_core_rev()
     assert meta["n_probands"] == len(ped["id"])
     assert meta["ndegree"] == 2
+
+
+def test_metadata_is_read_only_in_rs_order(case):
+    """The parameters, then the counts, then the versions, as R's metadata attribute lists them."""
+    ped, t1, t2 = case
+    prep = pafgrs.prepare(ped, ndegree=2)
+    uni = pafgrs.score_univariate(prep, t1.trait, age=t1.age, cip=t1.cip, h2=0.4).metadata
+    biv = pafgrs.score_bivariate(
+        prep, (t1.trait, t2.trait), age=(t1.age, t2.age), cip=(t1.cip, t2.cip), h2=(0.4, 0.3), rg=0.2
+    ).metadata
+    tail = [
+        "threshold",
+        "controls_without_age",
+        "n_probands",
+        "ndegree",
+        "pg_phenotype_version",
+        "pedigree_graph_core_rev",
+    ]
+    assert list(uni) == ["h2", "prevalence", *tail]
+    assert list(biv) == ["h2", "rg", "rho_within", "prevalence", *tail]
+    for key in ("h2", "prevalence", "threshold", "controls_without_age"):
+        assert type(biv[key]) is tuple, key
+    assert type(uni["controls_without_age"]) is int
+    with pytest.raises(TypeError):
+        uni["h2"] = 0.5  # type: ignore[index]
+
+
+def test_scores_take_traits(case):
+    ped, t1, t2 = case
+    prep = pafgrs.prepare(ped)
+    with pytest.raises(TypeError, match=r"trait must be a pg_phenotype\.Trait, got ndarray"):
+        pafgrs.score_univariate(prep, t1.affected, age=t1.age, cip=t1.cip, h2=0.4)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match=r"traits\[1\] must be a pg_phenotype\.Trait, got ndarray"):
+        pafgrs.score_bivariate(
+            prep, (t1.trait, t2.affected), age=(t1.age, t2.age), cip=(t1.cip, t2.cip), h2=(0.4, 0.3), rg=0.2
+        )  # type: ignore[arg-type]
 
 
 _SCORES = """
@@ -315,11 +369,16 @@ def test_scores_are_identical_across_thread_budgets():
 def test_a_pool_built_for_another_budget_raises_runtime_error():
     code = (
         "import numpy as np\n"
-        "from pg_phenotype import _native\n"
-        "ped = [np.array(v, dtype=np.int64) for v in ([1, 2], [-1, -1], [-1, -1])]\n"
-        "_native.prepare((*ped, None, None), ndegree=1, probands=None, threads=1)\n"
+        "import pg_phenotype\n"
+        "from pg_phenotype import pafgrs\n"
+        "from pg_phenotype._threads import _reset_thread_state\n"
+        "ped = {'id': np.array([1, 2]), 'mother': np.array([-1, -1]), 'father': np.array([-1, -1])}\n"
+        "pg_phenotype.configure_threads(1)\n"
+        "pafgrs.prepare(ped, ndegree=1)\n"
+        "_reset_thread_state()\n"
+        "pg_phenotype.configure_threads(2)\n"
         "try:\n"
-        "    _native.prepare((*ped, None, None), ndegree=1, probands=None, threads=2)\n"
+        "    pafgrs.prepare(ped, ndegree=1)\n"
         "except RuntimeError as e:\n"
         "    print('RuntimeError', e)\n"
     )
