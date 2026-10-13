@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- PA-FGRS scoring stores each proband's conditioning covariance as packed
+  upper-triangle columns instead of a square matrix, which roughly halves
+  that buffer, and scores faster.  Scores are unchanged bit for bit.  The
+  base and new builds were timed in alternating processes in 48
+  configurations: two pedigrees, degree 2 and 3, 1 and 6 threads, dense,
+  asymmetric and sparse observation, univariate and bivariate.  On the
+  799,992-row pedigree, a dense bivariate score at degree 3 fell from
+  16.6 s to 14.9 s with 6 threads and from 67.5 s to 61.8 s with one.
+  Median time changed by -15% to +3% for dense and asymmetric scores on
+  that pedigree, -19% to -0.5% on the 112,358-row one, and -7% to +2% for
+  sparse scores on both.  Peak process memory is unchanged within 0.4%.
+  The cause of the gain on the small pedigree is not established.
 - Every Python call that computes in the thread pool, and the `Pedigree`
   constructor, hands the process's free heap pages back to the system
   first (`malloc_trim`, glibc only): `pafgrs.prepare` and both score

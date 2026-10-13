@@ -2,7 +2,7 @@
 
 use super::cip::{Cip, Observed};
 use super::order;
-use super::pa::{self, Obs};
+use super::pa::{self, Obs, UpperCov};
 use super::prep::Prep;
 use crate::error::Error;
 use crate::input::Trait;
@@ -107,7 +107,7 @@ struct Scratch {
     phi: Vec<f64>,
     keys: Vec<order::Key>,
     obs: Vec<Obs>,
-    cov: Vec<f64>,
+    cov: UpperCov,
     mu: Vec<f64>,
     col: Vec<f64>,
 }
@@ -147,23 +147,26 @@ impl Scratch {
         order::sort(&mut self.keys);
 
         let size = n + 1;
-        self.cov.clear();
-        self.cov.resize(size * size, 0.0);
+        self.cov.reset(size);
         self.mu.resize(size, 0.0);
         self.obs.clear();
-        self.cov[0] = h2;
+        self.cov.set(0, 0, h2);
         for (i, key) in self.keys.iter().enumerate() {
-            self.cov[1 + i] = 2.0 * key.to_proband * h2;
-            self.cov[(1 + i) * size + 1 + i] = 1.0;
+            self.cov.set(0, 1 + i, 2.0 * key.to_proband * h2);
+            self.cov.set(1 + i, 1 + i, 1.0);
             for (k, other) in self.keys.iter().enumerate().skip(i + 1) {
-                self.cov[(1 + i) * size + 1 + k] = 2.0 * self.phi[key.index * n + other.index] * h2;
+                self.cov.set(
+                    1 + i,
+                    1 + k,
+                    2.0 * self.phi[key.index * n + other.index] * h2,
+                );
             }
             self.obs.push(obs.obs(key.row as usize));
         }
         pa::condition(&mut self.cov, &mut self.mu, 1, &self.obs, &mut self.col);
         One {
             est: self.mu[0],
-            var: self.cov[0].max(0.0),
+            var: self.cov.get(0, 0).max(0.0),
             n_relatives: n as u32,
         }
     }

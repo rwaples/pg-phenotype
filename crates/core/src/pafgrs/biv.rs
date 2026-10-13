@@ -2,7 +2,7 @@
 
 use super::cip::{Cip, Observed};
 use super::order;
-use super::pa::{self, Obs};
+use super::pa::{self, Obs, UpperCov};
 use super::prep::{Prep, Relatives};
 use super::uni::check_h2;
 use crate::error::{Error, Inconsistency};
@@ -191,7 +191,7 @@ struct Scratch {
     seen: Vec<[bool; 2]>,
     keys: Vec<order::Key>,
     obs: Vec<Obs>,
-    cov: Vec<f64>,
+    cov: UpperCov,
     mu: Vec<f64>,
     col: Vec<f64>,
 }
@@ -264,35 +264,35 @@ impl Scratch {
 
         let m = self.keys.len();
         let size = m + 2;
-        self.cov.clear();
-        self.cov.resize(size * size, 0.0);
+        self.cov.reset(size);
         self.mu.resize(size, 0.0);
         self.obs.clear();
-        self.cov[0] = h1;
-        self.cov[1] = cov_g;
-        self.cov[size + 1] = h2;
+        self.cov.set(0, 0, h1);
+        self.cov.set(0, 1, cov_g);
+        self.cov.set(1, 1, h2);
         for (i, key) in self.keys.iter().enumerate() {
             let t = key.trait_index as usize;
             let phi_p = f64::from(rel.kin[self.people[key.index]]);
             let d = 2 + i;
-            self.cov[d] = 2.0 * phi_p * g[0][t];
-            self.cov[size + d] = 2.0 * phi_p * g[1][t];
-            self.cov[d * size + d] = 1.0;
+            self.cov.set(0, d, 2.0 * phi_p * g[0][t]);
+            self.cov.set(1, d, 2.0 * phi_p * g[1][t]);
+            self.cov.set(d, d, 1.0);
             for (k, other) in self.keys.iter().enumerate().skip(i + 1) {
                 let u = other.trait_index as usize;
-                self.cov[d * size + 2 + k] = if other.index == key.index {
+                let x = if other.index == key.index {
                     params.rho_within
                 } else {
                     2.0 * self.phi[key.index * n + other.index] * g[t][u]
                 };
+                self.cov.set(d, 2 + k, x);
             }
             self.obs.push(obs[t].obs(key.row as usize));
         }
         pa::condition(&mut self.cov, &mut self.mu, 2, &self.obs, &mut self.col);
         One {
             est: [self.mu[0], self.mu[1]],
-            var: [self.cov[0].max(0.0), self.cov[size + 1].max(0.0)],
-            cov12: self.cov[1],
+            var: [self.cov.get(0, 0).max(0.0), self.cov.get(1, 1).max(0.0)],
+            cov12: self.cov.get(0, 1),
             n_relatives: n as u32,
             n_obs,
         }
