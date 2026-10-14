@@ -1,6 +1,6 @@
 # ADR 0007: Parent-offspring regression clusters by whole-pedigree Mate Network
 
-**Status:** accepted
+**Status:** accepted; amended 2026-10-14 (`lines` and `inference`, issue #15)
 **Date:** 2026-10-10
 **Context:** issue #3; simACE `plans/pg-phenotype-po-regression.md`
 
@@ -58,6 +58,8 @@ Rejected:
 - An OLS p-value.  simACE's comes from a normal approximation to the t
   tail (`_t_sf_python`) that nothing reads; an exact one needs the
   incomplete beta.
+- Several traits per call (issue #15's second ask).  The parent lookup it
+  would share is cheap next to the per-line work that `lines` removes.
 - A fixed minimum number of children.  A fit is undefined only when the
   estimate is (no children, a constant parent value); `se_ols` needs three
   children and `se` two networks.  Callers keep their own floors (simACE: 10).
@@ -80,6 +82,16 @@ Rejected:
 - Under random mating and no environment shared by parent and child, the
   midparent slope estimates h2 and a single-parent slope h2/2, on the
   observed scale for a 0/1 trait.  This is documented, not computed.
+- `lines` (default all three) picks the lines a call fits; the others are
+  absent from the result (`None`, `NULL`).  `inference = false` builds no
+  Mate Networks and computes no sandwich: `n_mate_networks` is absent and
+  `se`, `p` and `ci` carry `not_requested`, as `mate_correlation`'s
+  `inference` does.  Both only skip work, so every other value is the
+  full call's bit for bit (issue #15).  simACE reads the midparent line's
+  point estimates and OLS SE alone.  On a synthetic 800,000-row pedigree
+  through Python, the midparent line without inference took 0.17 (pooled)
+  and 0.30 (by generation) of the full call's time before the change
+  (`crates/core/examples/po_profile.rs` builds the same shape in Rust).
 - The gate (`docs/gates/po-regression`) matches simACE bit for bit on its
   float64 paths.  simACE's validation forms its midparent in float32, and
   differs by up to 3.1e-7 relative.

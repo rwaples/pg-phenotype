@@ -165,6 +165,74 @@ def test_invalid_input_raises(make, code: str) -> None:
     assert err.value.code == code
 
 
+#: The fields inference adds; every other field is the same without it.
+_INFERENCE = {
+    "n_mate_networks": None,
+    "se": None,
+    "se_unavailable_reason": "not_requested",
+    "p": None,
+    "p_unavailable_reason": "not_requested",
+    "ci": None,
+    "ci_unavailable_reason": "not_requested",
+}
+
+
+@pytest.mark.parametrize("kind", ["continuous", "binary", "ordinal"])
+@pytest.mark.parametrize("seed", range(6))
+def test_lines_alone_equal_the_full_call_bit_for_bit(seed: int, kind: str) -> None:
+    """Issue #15: ``inference=False`` and ``lines`` move no point estimate, ``se_ols``, count or drop."""
+    ped = random_pedigree(seed, size=30)
+    n = len(ped["id"])
+    v = _values(seed, n, kind)
+    stratum = np.random.default_rng(seed).integers(0, 3, n)
+    trait = pgp.Trait(v, kind=kind)
+    full = parent_offspring(ped, trait, stratum=stratum)
+    for lines in (("midparent",), ("mother", "father"), "father"):
+        point = parent_offspring(ped, trait, stratum=stratum, lines=lines, inference=False)
+        assert point.settings["lines"] == ((lines,) if isinstance(lines, str) else lines)
+        assert point.settings["inference"] is False
+        assert point.strata is not None
+        assert full.strata is not None
+        for a, b in [(full.pooled, point.pooled), *zip(full.strata.values(), point.strata.values(), strict=True)]:
+            for parent in PARENTS:
+                got = getattr(b, parent)
+                if parent not in lines:
+                    assert got is None
+                    continue
+                # An undefined line gives its reason everywhere, as with inference.
+                want = vars(getattr(a, parent)) | {"n_mate_networks": None}
+                if want["reason"] is None:
+                    want |= _INFERENCE
+                assert vars(got) == want
+
+
+def test_lines_alone_keep_inference_when_asked() -> None:
+    ped = random_pedigree(4, size=30)
+    v = _values(4, len(ped["id"]), "continuous")
+    full = parent_offspring(ped, pgp.Trait(v))
+    mother = parent_offspring(ped, pgp.Trait(v), lines=["mother"])
+    assert mother.pooled.mother == full.pooled.mother
+    assert (mother.pooled.midparent, mother.pooled.father) == (None, None)
+    assert full.settings["lines"] == ("midparent", "mother", "father")
+    assert full.settings["inference"] is True
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error"),
+    [
+        ({"lines": []}, ValueError),
+        ({"lines": ["midparent", "sibling"]}, ValueError),
+        ({"lines": "Mother"}, ValueError),
+        ({"lines": 3}, TypeError),
+        ({"inference": "no"}, TypeError),
+    ],
+)
+def test_invalid_lines_or_inference_raise(kwargs, error) -> None:
+    ped = random_pedigree(2)
+    with pytest.raises(error):
+        parent_offspring(ped, pgp.Trait(np.zeros(len(ped["id"]))), **kwargs)
+
+
 def test_trait_must_be_a_trait() -> None:
     ped = random_pedigree(2)
     with pytest.raises(TypeError):

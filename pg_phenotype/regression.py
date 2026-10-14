@@ -4,7 +4,8 @@
 pedigree's children, pooled and within strata of the child.  The slope's SE
 is the cluster-robust sandwich over Mate Networks (a parent in no Mating Pair
 is a network of its own), with a Wald p-value and interval, beside the plain
-OLS SE.  Slopes are reported raw: under the usual assumptions (no environment
+OLS SE.  ``lines=`` picks the lines and ``inference=False`` skips the
+networks and the sandwich.  Slopes are reported raw: under the usual assumptions (no environment
 shared by parent and child, random mating) the midparent slope estimates h2
 and a single-parent slope h2/2, on the observed scale for a 0/1 trait.
 """
@@ -15,17 +16,22 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from pg_phenotype import _native
 from pg_phenotype._input import strata
 from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._trait import checked
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
     from pg_phenotype._trait import Trait
 
-__all__ = ["Dropped", "Fit", "ParentOffspring", "Subset", "parent_offspring"]
+__all__ = ["LINES", "Dropped", "Fit", "ParentOffspring", "Subset", "parent_offspring"]
+
+#: Every line, in result order.
+LINES = ("midparent", "mother", "father")
 
 
 @dataclass(frozen=True)
@@ -46,15 +52,17 @@ class Fit:
     ``se_ols``, ``p`` and ``ci`` are each ``None`` with a
     ``*_unavailable_reason``: the line's reason, or ``constant_child_value``
     (r), ``too_few_children`` (``se_ols``, under three children),
-    ``single_mate_network`` or ``sandwich_undefined`` (``se``), and
-    ``zero_se`` (``p``, ``ci``) for a perfect fit.  ``se`` is the Mate
+    ``single_mate_network`` or ``sandwich_undefined`` (``se``),
+    ``zero_se`` (``p``, ``ci``) for a perfect fit, and ``not_requested``
+    (``se``, ``p``, ``ci``) without inference.  ``se`` is the Mate
     Network sandwich SE of the slope with a G/(G-1) factor; ``p`` and ``ci``
     are its two-sided Wald test and interval at ``ci_level``.
     ``n + sum(dropped)`` is the number of rows in the subset.
+    ``n_mate_networks`` is ``None`` without inference.
     """
 
     n: int
-    n_mate_networks: int
+    n_mate_networks: int | None
     dropped: Dropped
     slope: float | None
     reason: str | None
@@ -74,11 +82,11 @@ class Fit:
 
 @dataclass(frozen=True)
 class Subset:
-    """The three regressions of one set of children."""
+    """The regressions of one set of children; ``None`` for a line not in ``lines``."""
 
-    midparent: Fit
-    mother: Fit
-    father: Fit
+    midparent: Fit | None
+    mother: Fit | None
+    father: Fit | None
 
 
 @dataclass(frozen=True)
@@ -91,7 +99,7 @@ class ParentOffspring:
             children's regressions; ``None`` without *stratum*.
         n_unknown_stratum: Rows whose stratum is unknown, which are in
             ``pooled`` only.
-        settings: ``ci_level``.
+        settings: ``ci_level``, ``lines`` and ``inference``.
         method: How the SEs, the p-value and the clusters are computed.
         metadata: ``pg_phenotype_version`` and ``pedigree_graph_core_rev``.
     """
@@ -104,16 +112,37 @@ class ParentOffspring:
     metadata: Mapping[str, object]
 
 
-def _fit(raw: dict) -> Fit:
+def _fit(raw: dict | None) -> Fit | None:
+    if raw is None:
+        return None
     ci = raw.pop("ci")
     return Fit(dropped=Dropped(**raw.pop("dropped")), ci=None if ci is None else tuple(ci), **raw)
 
 
 def _subset(raw: dict) -> Subset:
-    return Subset(_fit(raw["midparent"]), _fit(raw["mother"]), _fit(raw["father"]))
+    return Subset(*(_fit(raw[line]) for line in LINES))
 
 
-def parent_offspring(pedigree: object, trait: Trait, *, stratum: object = None) -> ParentOffspring:
+def _lines(lines: str | Iterable[str]) -> tuple[bool, bool, bool]:
+    try:
+        names = [lines] if isinstance(lines, str) else list(lines)
+    except TypeError:
+        raise TypeError(f"lines must be a line name or a collection of them, got {type(lines).__name__}") from None
+    unknown = [name for name in names if name not in LINES]
+    if unknown:
+        raise ValueError(f"lines must name one or more of {', '.join(LINES)}, got {names!r}")
+    midparent, mother, father = (line in names for line in LINES)
+    return midparent, mother, father
+
+
+def parent_offspring(
+    pedigree: object,
+    trait: Trait,
+    *,
+    stratum: object = None,
+    lines: str | Iterable[str] = LINES,
+    inference: bool = True,
+) -> ParentOffspring:
     """The midparent-, mother- and father-offspring regressions of *trait*.
 
     Each child (a pedigree row) is regressed on the mean of its parents'
@@ -133,6 +162,14 @@ def parent_offspring(pedigree: object, trait: Trait, *, stratum: object = None) 
         stratum: One integer label per row (a generation, a sex x generation
             code), NA where unknown, read at the child.  Each known label gets
             its own regressions; children of unknown stratum are pooled only.
+        lines: The lines to fit, from :data:`LINES`; the others are ``None``
+            in every :class:`Subset`.
+        inference: ``False`` fits the lines alone: no Mate Networks
+            (``n_mate_networks`` is ``None``), and ``se``, ``p`` and ``ci``
+            are ``None`` with ``not_requested``.  The slope, intercept, r,
+            ``se_ols``, ``n`` and drops are the default's bit for bit.  A
+            :class:`~pg_phenotype.Pedigree` builds no Mate Networks for such
+            a call.
 
     Returns:
         A :class:`ParentOffspring`.
@@ -142,17 +179,28 @@ def parent_offspring(pedigree: object, trait: Trait, *, stratum: object = None) 
             ``unsupported_trait_kind`` for a categorical trait,
             ``invalid_trait_value``) or the strata
             (``stratum_length_mismatch``) is invalid.
-        TypeError: *trait* is not a :class:`~pg_phenotype.Trait`.
+        TypeError: *trait* is not a :class:`~pg_phenotype.Trait`, *lines* is
+            not a name or a collection of names, or *inference* is not a bool.
+        ValueError: *lines* names no line, or one not in :data:`LINES`.
     """
     trait = checked(trait)
+    flags = _lines(lines)
+    if not isinstance(inference, (bool, np.bool_)):
+        raise TypeError(f"inference must be a bool, got {inference!r}")
     native = native_pedigree(pedigree)
-    raw = _native.parent_offspring(native, trait, None if stratum is None else strata(stratum))
+    raw = _native.parent_offspring(
+        native,
+        trait,
+        None if stratum is None else strata(stratum),
+        lines=flags,
+        inference=bool(inference),
+    )
     by_stratum = raw["strata"]
     return ParentOffspring(
         pooled=_subset(raw["pooled"]),
         strata=None if by_stratum is None else MappingProxyType({s["stratum"]: _subset(s) for s in by_stratum}),
         n_unknown_stratum=raw["n_unknown_stratum"],
-        settings=MappingProxyType(dict(raw["settings"])),
+        settings=MappingProxyType(dict(raw["settings"], lines=tuple(raw["settings"]["lines"]))),
         method=MappingProxyType(dict(raw["method"])),
         metadata=MappingProxyType(raw["metadata"]),
     )

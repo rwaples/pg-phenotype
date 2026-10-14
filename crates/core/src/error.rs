@@ -321,6 +321,8 @@ pub enum Error {
     },
     /// Data whose estimated CIP is not a valid table.
     CipNotEstimable { reason: CipEstimate },
+    /// A parent-offspring call that requests no regression line.
+    NoLines,
 }
 
 impl From<PgError> for Error {
@@ -389,6 +391,7 @@ impl Error {
             Error::InvalidStatus { .. } => (Validation, "invalid_status"),
             Error::EntryNotBeforeAge { .. } => (Validation, "entry_not_before_age"),
             Error::CipNotEstimable { .. } => (Validation, "cip_not_estimable"),
+            Error::NoLines => (Class::Usage, "no_lines"),
         }
     }
 
@@ -576,6 +579,7 @@ impl Error {
                 ("age", Float(*age)),
             ],
             Error::CipNotEstimable { reason } => vec![("reason", Str(reason.name()))],
+            Error::NoLines => vec![],
         }
     }
 
@@ -734,6 +738,7 @@ impl fmt::Display for Message<'_> {
             Error::CipNotEstimable { reason } => {
                 write!(f, "no CIP table: {}", reason.describe())
             }
+            Error::NoLines => write!(f, "request at least one of midparent, mother and father"),
         }
     }
 }
@@ -756,7 +761,7 @@ mod tests {
     use super::*;
 
     /// How many variants `Error` has.
-    const VARIANTS: usize = 31;
+    const VARIANTS: usize = 32;
 
     /// Each variant's number, so `samples` can be checked to hold every
     /// variant: a new variant does not compile until it has an arm here.
@@ -793,6 +798,7 @@ mod tests {
             Error::InvalidStatus { .. } => 28,
             Error::EntryNotBeforeAge { .. } => 29,
             Error::CipNotEstimable { .. } => 30,
+            Error::NoLines => 31,
         }
     }
 
@@ -946,6 +952,7 @@ mod tests {
             Error::CipNotEstimable {
                 reason: CipEstimate::ZeroPrevalence,
             },
+            Error::NoLines,
         ]
     }
 

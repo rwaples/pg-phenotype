@@ -51,8 +51,30 @@ test_that("undefined fits carry reasons", {
   expect_identical(f$p_unavailable_reason, "no_complete_children")
 })
 
+test_that("lines alone, without inference, keep every point value", {
+  full <- regression_parent_offspring(ped, trait(v), stratum = stratum)
+  point <- regression_parent_offspring(ped, trait(v), stratum = stratum, lines = "midparent", inference = FALSE)
+  expect_null(point$pooled$mother)
+  expect_null(point$strata[[1L]]$father)
+  expect_identical(point$settings$lines, "midparent")
+  expect_false(point$settings$inference)
+  for (pair in list(list(full$pooled, point$pooled), list(full$strata[[2L]], point$strata[[2L]]))) {
+    a <- pair[[1L]]$midparent
+    b <- pair[[2L]]$midparent
+    expect_identical(c(b$slope, b$intercept, b$r, b$se_ols), c(a$slope, a$intercept, a$r, a$se_ols))
+    expect_identical(b$n, a$n)
+    expect_null(b$n_mate_networks)
+    expect_null(b$se)
+    expect_identical(c(b$se_unavailable_reason, b$p_unavailable_reason), c("not_requested", "not_requested"))
+  }
+  expect_identical(full$settings$lines, c("midparent", "mother", "father"))
+})
+
 test_that("invalid input raises the core's conditions", {
   expect_error(regression_parent_offspring(ped, trait(letters[1:15])), class = "pgphenotype_validation_error")
   expect_error(regression_parent_offspring(ped, trait(v[-1])), class = "pgphenotype_validation_error")
   expect_error(regression_parent_offspring(ped, v), class = "pgphenotype_usage_error")
+  expect_error(regression_parent_offspring(ped, trait(v), lines = "sibling"), class = "pgphenotype_usage_error")
+  expect_error(regression_parent_offspring(ped, trait(v), lines = character()), class = "pgphenotype_usage_error")
+  expect_error(regression_parent_offspring(ped, trait(v), inference = NA), class = "pgphenotype_usage_error")
 })

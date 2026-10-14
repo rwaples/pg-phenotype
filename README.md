@@ -109,6 +109,7 @@ res = parent_offspring(ped, pgp.Trait(liab), stratum=generation)
 fit = res.pooled.midparent  # also .mother, .father
 fit.slope, fit.se, fit.ci, fit.p, fit.se_ols, fit.n, fit.n_mate_networks
 res.strata[2].father  # children with stratum label 2
+parent_offspring(ped, pgp.Trait(liab), lines=["midparent"], inference=False)  # point estimates and se_ols
 ```
 
 The OLS line of each child's trait on its midparent's, its mother's and its
@@ -118,7 +119,9 @@ no Mating Pair is a network of its own), with a Wald `p` and `ci`; `se_ols`
 is the plain OLS SE.  Slopes are raw: under random mating and no environment
 shared by parent and child, the midparent slope estimates h2 and a
 single-parent slope h2/2.  The sandwich SE needs many networks
-([ADR 0007](docs/adr/0007-parent-offspring-regression.md)).
+([ADR 0007](docs/adr/0007-parent-offspring-regression.md)).  `lines=` fits
+some of the three lines, and `inference=False` skips the networks and the
+sandwich; neither moves a slope, `se_ols` or count.
 
 ### Relative-Pair Correlation
 

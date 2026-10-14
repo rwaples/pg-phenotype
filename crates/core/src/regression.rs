@@ -5,7 +5,8 @@
 //! The slope's SE is the cluster-robust sandwich over Mate Networks, with a
 //! Wald p-value and interval, beside the plain OLS SE.  Networks are the
 //! whole pedigree's: dropping children never splits one.  A parent in no
-//! Mating Pair is a network of its own.
+//! Mating Pair is a network of its own.  [`Settings`] picks the lines and
+//! can skip the networks and the sandwich (issue #15).
 
 use crate::assortative::{check_strata, Strata};
 use crate::error::Error;
@@ -67,6 +68,8 @@ pub enum Reason {
     SandwichUndefined,
     /// The sandwich SE is exactly 0 (a perfect fit), so there is no Wald test.
     ZeroSe,
+    /// The call skipped inference.
+    NotRequested,
 }
 
 impl Reason {
@@ -79,6 +82,7 @@ impl Reason {
             Reason::SingleMateNetwork => "single_mate_network",
             Reason::SandwichUndefined => "sandwich_undefined",
             Reason::ZeroSe => "zero_se",
+            Reason::NotRequested => "not_requested",
         }
     }
 }
@@ -122,21 +126,42 @@ pub struct Line {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fit {
     pub n: u64,
-    /// Mate Networks with at least one analysed child.
-    pub n_mate_networks: u64,
+    /// Mate Networks with at least one analysed child; `None` without inference.
+    pub n_mate_networks: Option<u64>,
     pub dropped: Dropped,
     pub line: Result<Line, Reason>,
 }
 
-/// The three regressions of one subset, in [`Parent::ALL`] order.
+/// The regressions of one subset, in [`Parent::ALL`] order; `None` for a
+/// line the call did not request.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Subset {
-    pub fits: [Fit; 3],
+    pub fits: [Option<Fit>; 3],
 }
 
 impl Subset {
-    pub fn fit(&self, parent: Parent) -> &Fit {
-        &self.fits[parent as usize]
+    pub fn fit(&self, parent: Parent) -> Option<&Fit> {
+        self.fits[parent as usize].as_ref()
+    }
+}
+
+/// What a call computes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Settings {
+    /// Whether each line is fitted, in [`Parent::ALL`] order.
+    pub lines: [bool; 3],
+    /// `false` fits the lines alone: no Mate Networks, and `se`, `p` and
+    /// `ci` are [`Reason::NotRequested`].  Every other value is the same.
+    pub inference: bool,
+}
+
+impl Default for Settings {
+    /// Every line, with inference.
+    fn default() -> Settings {
+        Settings {
+            lines: [true; 3],
+            inference: true,
+        }
     }
 }
 
@@ -156,6 +181,7 @@ pub struct ParentOffspring {
     pub strata: Option<Vec<Stratum>>,
     /// Rows whose stratum is unknown: in `pooled`, in no stratum.
     pub n_unknown_stratum: u64,
+    pub settings: Settings,
 }
 
 /// How the SE, p-value and interval are computed.
@@ -175,31 +201,49 @@ const METHOD: [(&str, &str); 4] = [
 ];
 
 /// The parent-offspring regressions of `trait_` over `pedigree`, pooled and,
-/// with `strata`, within each stratum of the child.
+/// with `strata`, within each stratum of the child: the lines `settings`
+/// requests, with inference when it asks for it.
 ///
 /// # Errors
 ///
-/// Any pedigree-graph-core validation error of columns, then
+/// `no_lines` when `settings` requests no line, then any
+/// pedigree-graph-core validation error of columns, then
 /// `trait_length_mismatch`, `unsupported_trait_kind` (categorical),
 /// `invalid_trait_value`, then `stratum_length_mismatch`.
 pub fn parent_offspring(
     pedigree: PedigreeArg<'_>,
     trait_: Trait<'_>,
     strata: Option<Strata<'_>>,
+    settings: Settings,
 ) -> Result<ParentOffspring, Error> {
+    if !settings.lines.contains(&true) {
+        return Err(Error::NoLines);
+    }
     let pedigree = pedigree.resolve()?;
     let n_rows = pedigree.len();
     let y = admit(trait_, FIELD, n_rows, ADMITS)?.values;
     if let Some(s) = strata {
         check_strata(s, n_rows)?;
     }
-    let parents = pedigree.parent_networks();
+    let parents = settings.inference.then(|| pedigree.parent_networks());
     let (codes, labels) = strata.map(Strata::codes).unzip();
     let n_strata = labels.as_ref().map_or(0, Vec::len);
-    let mut scratch = parents.relabel();
-    // Per parent, one fit per subset: pooled first, then each stratum.
+    let mut scratch = parents.map(ParentNetworks::relabel);
+    // Every row is a candidate child of the pooled subset and of its stratum's.
+    let mut rows = vec![0; 1 + n_strata];
+    rows[0] = n_rows;
+    for code in codes.iter().flatten().flatten() {
+        rows[1 + code] += 1;
+    }
+    // Per requested parent, one fit per subset: pooled first, then each stratum.
     let fits = Parent::ALL.map(|parent| {
-        let mut subsets = vec![Children::default(); 1 + n_strata];
+        if !settings.lines[parent as usize] {
+            return None;
+        }
+        let mut subsets: Vec<Children> = rows
+            .iter()
+            .map(|&n| Children::with_capacity(n, settings.inference))
+            .collect();
         for child in 0..n_rows {
             let outcome = observe(&pedigree, parents, y, parent, child);
             subsets[0].add(outcome);
@@ -207,13 +251,15 @@ pub fn parent_offspring(
                 subsets[1 + code].add(outcome);
             }
         }
-        subsets
-            .iter()
-            .map(|s| s.fit(&mut scratch))
-            .collect::<Vec<Fit>>()
+        Some(
+            subsets
+                .iter()
+                .map(|s| s.fit(scratch.as_mut()))
+                .collect::<Vec<Fit>>(),
+        )
     });
     let subset = |i: usize| Subset {
-        fits: [0, 1, 2].map(|p| fits[p][i]),
+        fits: [0, 1, 2].map(|p| fits[p].as_ref().map(|f| f[i])),
     };
     let n_unknown_stratum = codes
         .as_ref()
@@ -231,17 +277,18 @@ pub fn parent_offspring(
                 .collect()
         }),
         n_unknown_stratum,
+        settings,
     })
 }
 
 /// One row as a child in one regression.
 #[derive(Clone, Copy, Debug)]
 enum Outcome {
-    /// Parent value, child value, the parent's cluster key.
+    /// Parent value, child value, the parent's cluster key (with inference).
     Analysed {
         x: f64,
         y: f64,
-        key: usize,
+        key: Option<usize>,
     },
     ParentNotInPedigree,
     ChildValueMissing,
@@ -250,7 +297,7 @@ enum Outcome {
 
 fn observe(
     pedigree: &Pedigree,
-    parents: &ParentNetworks,
+    parents: Option<&ParentNetworks>,
     y: &[f64],
     parent: Parent,
     child: usize,
@@ -258,12 +305,14 @@ fn observe(
     let row = |r: i32| usize::try_from(r).ok();
     let mother = row(pedigree.mother_rows()[child]);
     let father = row(pedigree.father_rows()[child]);
-    let (x, key) = match (parent, mother, father) {
-        (Parent::Midparent, Some(m), Some(f)) => ((y[m] + y[f]) / 2.0, parents.key(m)),
-        (Parent::Mother, Some(m), _) => (y[m], parents.key(m)),
-        (Parent::Father, _, Some(f)) => (y[f], parents.key(f)),
+    // The midparent's cluster is the mother's, which shares the father's network.
+    let (x, keyed) = match (parent, mother, father) {
+        (Parent::Midparent, Some(m), Some(f)) => ((y[m] + y[f]) / 2.0, m),
+        (Parent::Mother, Some(m), _) => (y[m], m),
+        (Parent::Father, _, Some(f)) => (y[f], f),
         _ => return Outcome::ParentNotInPedigree,
     };
+    let key = parents.map(|p| p.key(keyed));
     if y[child].is_nan() {
         Outcome::ChildValueMissing
     } else if x.is_nan() {
@@ -278,7 +327,6 @@ fn observe(
 }
 
 /// The analysed children of one regression x subset, and its drops.
-#[derive(Clone, Default)]
 struct Children {
     x: Vec<f64>,
     y: Vec<f64>,
@@ -287,12 +335,23 @@ struct Children {
 }
 
 impl Children {
+    /// Room for `rows` children, and their keys when `keyed`, so no push
+    /// reallocates.
+    fn with_capacity(rows: usize, keyed: bool) -> Children {
+        Children {
+            x: Vec::with_capacity(rows),
+            y: Vec::with_capacity(rows),
+            keys: Vec::with_capacity(if keyed { rows } else { 0 }),
+            dropped: Dropped::default(),
+        }
+    }
+
     fn add(&mut self, outcome: Outcome) {
         match outcome {
             Outcome::Analysed { x, y, key } => {
                 self.x.push(x);
                 self.y.push(y);
-                self.keys.push(key);
+                self.keys.extend(key);
             }
             Outcome::ParentNotInPedigree => self.dropped.parent_not_in_pedigree += 1,
             Outcome::ChildValueMissing => self.dropped.child_value_missing += 1,
@@ -300,13 +359,14 @@ impl Children {
         }
     }
 
-    fn fit(&self, relabel: &mut Relabel) -> Fit {
-        let networks = relabel.networks(&self.keys);
+    /// The fit, with inference when given the scratch to number networks.
+    fn fit(&self, relabel: Option<&mut Relabel>) -> Fit {
+        let networks = relabel.map(|r| r.networks(&self.keys));
         Fit {
             n: self.x.len() as u64,
-            n_mate_networks: networks.count() as u64,
+            n_mate_networks: networks.as_ref().map(|n| n.count() as u64),
             dropped: self.dropped,
-            line: line(&self.x, &self.y, &networks),
+            line: line(&self.x, &self.y, networks.as_ref()),
         }
     }
 }
@@ -319,8 +379,9 @@ impl Children {
 /// no line.  A constant child value fits exactly: slope 0, both SEs 0.  The
 /// sandwich SE is also 0 when every network's score sum is within its
 /// rounding bound (see [`sandwich_se`]).  A zero SE has no Wald test
-/// ([`Reason::ZeroSe`]).
-fn line(x: &[f64], y: &[f64], networks: &Networks) -> Result<Line, Reason> {
+/// ([`Reason::ZeroSe`]).  Without `networks` the sandwich SE and the Wald
+/// test are [`Reason::NotRequested`].
+fn line(x: &[f64], y: &[f64], networks: Option<&Networks>) -> Result<Line, Reason> {
     let n = x.len();
     let Some(&x0) = x.first() else {
         return Err(Reason::NoCompleteChildren);
@@ -367,10 +428,11 @@ fn line(x: &[f64], y: &[f64], networks: &Networks) -> Result<Line, Reason> {
             .sum();
         Ok((ss_res / (n - 2) as f64 / sxx).sqrt())
     };
-    let se = match networks.sandwich() {
-        None => Err(Reason::SingleMateNetwork),
-        Some(_) if constant_child => Ok(0.0),
-        Some(sandwich) => sandwich_se(x, y, sandwich, [mx, my, sxx, slope]),
+    let se = match networks.map(Networks::sandwich) {
+        None => Err(Reason::NotRequested),
+        Some(None) => Err(Reason::SingleMateNetwork),
+        Some(Some(_)) if constant_child => Ok(0.0),
+        Some(Some(sandwich)) => sandwich_se(x, y, sandwich, [mx, my, sxx, slope]),
     };
     let wald = match se {
         Err(reason) => Err(reason),
@@ -488,7 +550,7 @@ impl Subset {
     fn entries(&self) -> Vec<(&'static str, Value)> {
         Parent::ALL
             .iter()
-            .map(|&p| (p.name(), self.fit(p).to_value()))
+            .map(|&p| (p.name(), self.fit(p).map(Fit::to_value).into()))
             .collect()
     }
 }
@@ -512,7 +574,23 @@ impl ParentOffspring {
             ("pooled", Value::Map(self.pooled.entries())),
             ("strata", strata.unwrap_or(Value::Null)),
             ("n_unknown_stratum", self.n_unknown_stratum.into()),
-            ("settings", Value::Map(vec![("ci_level", CI_LEVEL.into())])),
+            (
+                "settings",
+                Value::Map(vec![
+                    ("ci_level", CI_LEVEL.into()),
+                    (
+                        "lines",
+                        Value::List(
+                            Parent::ALL
+                                .iter()
+                                .filter(|&&p| self.settings.lines[p as usize])
+                                .map(|p| Value::Str(p.name()))
+                                .collect(),
+                        ),
+                    ),
+                    ("inference", Value::Bool(self.settings.inference)),
+                ]),
+            ),
             (
                 "method",
                 Value::Map(METHOD.iter().map(|&(k, v)| (k, v.into())).collect()),
@@ -542,6 +620,15 @@ mod tests {
         values: &[f64],
         strata: Option<Strata<'_>>,
     ) -> Result<ParentOffspring, Error> {
+        run_with(ped, values, strata, Settings::default())
+    }
+
+    fn run_with(
+        ped: (&[i64], &[i64], &[i64]),
+        values: &[f64],
+        strata: Option<Strata<'_>>,
+        settings: Settings,
+    ) -> Result<ParentOffspring, Error> {
         let input = PedigreeInput {
             ids: ped.0,
             mother: ped.1,
@@ -557,6 +644,7 @@ mod tests {
                 n_levels: None,
             },
             strata,
+            settings,
         )
     }
 
@@ -599,22 +687,22 @@ mod tests {
         let (ids, mother, father) = family();
         let v = [1.0, 3.0, -1.0, 0.5, 2.5, 1.0, 2.2, 3.1, 0.4, -0.3, 0.9, 0.2];
         let res = run((&ids, &mother, &father), &v, None).unwrap();
-        let mid = res.pooled.fit(Parent::Midparent);
+        let mid = res.pooled.fit(Parent::Midparent).unwrap();
         // Children 4-7 (midparent 2.0, network of pair (0,1)) and 8-9 (-0.25).
         let x = [2.0, 2.0, 2.0, 2.0, -0.25, -0.25];
         let y = [2.5, 1.0, 2.2, 3.1, 0.4, -0.3];
         let (slope, intercept, se_ols, _) = reference(&x, &y, &[0, 0, 0, 0, 1, 1]);
         let line = mid.line.unwrap();
-        assert_eq!((mid.n, mid.n_mate_networks), (6, 2));
+        assert_eq!((mid.n, mid.n_mate_networks), (6, Some(2)));
         close(line.slope, slope);
         close(line.intercept, intercept);
         close(line.se_ols.unwrap(), se_ols);
         // Mother: children 4-10 (10 has no father but mother 2 is in a pair).
-        let mo = res.pooled.fit(Parent::Mother);
-        assert_eq!((mo.n, mo.n_mate_networks), (7, 2));
+        let mo = res.pooled.fit(Parent::Mother).unwrap();
+        assert_eq!((mo.n, mo.n_mate_networks), (7, Some(2)));
         // Father: children 4-9 and 11.
-        let fa = res.pooled.fit(Parent::Father);
-        assert_eq!((fa.n, fa.n_mate_networks), (7, 2));
+        let fa = res.pooled.fit(Parent::Father).unwrap();
+        assert_eq!((fa.n, fa.n_mate_networks), (7, Some(2)));
         let x = [3.0, 3.0, 3.0, 3.0, 0.5, 0.5, 0.5];
         let y = [2.5, 1.0, 2.2, 3.1, 0.4, -0.3, 0.2];
         let (slope, ..) = reference(&x, &y, &[0, 0, 0, 0, 1, 1, 1]);
@@ -629,10 +717,10 @@ mod tests {
         v[1] = NA; // father of 4-7
         let res = run((&ids, &mother, &father), &v, None).unwrap();
         for p in Parent::ALL {
-            let fit = res.pooled.fit(p);
+            let fit = res.pooled.fit(p).unwrap();
             assert_eq!(fit.n + fit.dropped.total(), 12, "{p:?}");
         }
-        let mid = res.pooled.fit(Parent::Midparent);
+        let mid = res.pooled.fit(Parent::Midparent).unwrap();
         // Founders and 10, 11 have no pair of parents; child 5 missing;
         // 4, 6, 7 lose their father's value.
         assert_eq!(
@@ -655,8 +743,8 @@ mod tests {
         let father = vec![-1, -1, -1, 2, 2, 2, 2, 2];
         let v = [1.0, 2.0, NA, 0.5, 1.5, 1.8, 2.4, 2.0];
         let res = run((&ids, &mother, &father), &v, None).unwrap();
-        let mo = res.pooled.fit(Parent::Mother);
-        assert_eq!((mo.n, mo.n_mate_networks), (5, 1));
+        let mo = res.pooled.fit(Parent::Mother).unwrap();
+        assert_eq!((mo.n, mo.n_mate_networks), (5, Some(1)));
         assert_eq!(mo.line.unwrap().se, Err(Reason::SingleMateNetwork));
         assert_eq!(mo.line.unwrap().wald, Err(Reason::SingleMateNetwork));
         assert!(mo.line.unwrap().se_ols.is_ok());
@@ -670,14 +758,73 @@ mod tests {
         let father = vec![-1; 6];
         let v = [1.0, 2.0, 0.8, 1.4, 2.5, 1.7];
         let res = run((&ids, &mother, &father), &v, None).unwrap();
-        let mo = res.pooled.fit(Parent::Mother);
-        assert_eq!((mo.n, mo.n_mate_networks), (4, 2));
+        let mo = res.pooled.fit(Parent::Mother).unwrap();
+        assert_eq!((mo.n, mo.n_mate_networks), (4, Some(2)));
         // One parent value per network, two networks: an exact zero SE.
         assert_eq!(mo.line.unwrap().se, Ok(0.0));
         assert_eq!(
-            res.pooled.fit(Parent::Midparent).line,
+            res.pooled.fit(Parent::Midparent).unwrap().line,
             Err(Reason::NoCompleteChildren)
         );
+    }
+
+    #[test]
+    fn settings_pick_lines_and_skip_inference_alone() {
+        // Issue #15: without inference the lines are the same bit for bit,
+        // with no networks and no sandwich, and an unrequested line is absent.
+        let (ids, mother, father) = family();
+        let v = [1.0, 3.0, -1.0, 0.5, 2.5, 1.0, 2.2, 3.1, 0.4, -0.3, 0.9, 0.2];
+        let labels = [0, 0, 0, 0, 1, 1, 1, 2, 1, 2, 1, 2];
+        let known = [true; 12];
+        let run = |settings| {
+            let strata = Strata {
+                labels: &labels,
+                known: &known,
+            };
+            run_with((&ids, &mother, &father), &v, Some(strata), settings).unwrap()
+        };
+        let full = run(Settings::default());
+        let lines = [true, false, true];
+        let point = run(Settings {
+            lines,
+            inference: false,
+        });
+        let subsets = |r: &ParentOffspring| {
+            let strata = r.strata.as_ref().unwrap().iter().map(|s| s.subset.clone());
+            std::iter::once(r.pooled.clone())
+                .chain(strata)
+                .collect::<Vec<_>>()
+        };
+        for (a, b) in subsets(&full).iter().zip(&subsets(&point)) {
+            for p in Parent::ALL {
+                let Some(got) = b.fit(p) else {
+                    assert!(!lines[p as usize]);
+                    continue;
+                };
+                let want = a.fit(p).unwrap();
+                let line = want.line.map(|l| Line {
+                    se: Err(Reason::NotRequested),
+                    wald: Err(Reason::NotRequested),
+                    ..l
+                });
+                assert_eq!(
+                    *got,
+                    Fit {
+                        n_mate_networks: None,
+                        line,
+                        ..*want
+                    }
+                );
+            }
+        }
+        assert!(full.pooled.fits.iter().all(Option::is_some));
+        assert_eq!(point.settings.lines, lines);
+        let none = Settings {
+            lines: [false; 3],
+            inference: true,
+        };
+        let err = run_with((&ids, &mother, &father), &v, None, none).unwrap_err();
+        assert_eq!(err.code(), "no_lines");
     }
 
     #[test]
@@ -698,8 +845,11 @@ mod tests {
             known: &known,
         };
         let res = run((&ids, &mother, &father), &v, Some(strata)).unwrap();
-        let fit = *res.strata.unwrap()[1].subset.fit(Parent::Midparent);
-        assert_eq!((fit.n, fit.n_mate_networks), (6, 3));
+        let fit = *res.strata.unwrap()[1]
+            .subset
+            .fit(Parent::Midparent)
+            .unwrap();
+        assert_eq!((fit.n, fit.n_mate_networks), (6, Some(3)));
         let x = [0.4, 0.4, 1.2, 1.2, -0.2, -0.2];
         let y = [0.1, 0.9, 1.5, 1.0, -0.6, 0.3];
         let (slope, _, se_ols, se) = reference(&x, &y, &[0, 0, 1, 1, 2, 2]);
@@ -719,13 +869,13 @@ mod tests {
         v[4] = 2.0;
         let res = run((&ids, &mother, &father), &v, None).unwrap();
         assert_eq!(
-            res.pooled.fit(Parent::Midparent).line,
+            res.pooled.fit(Parent::Midparent).unwrap().line,
             Err(Reason::ConstantParentValue)
         );
         // Every child equal, parents not: slope 0, r undefined, zero SEs.
         let v = [1.0, 3.0, -1.0, 0.5, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0];
         let res = run((&ids, &mother, &father), &v, None).unwrap();
-        let line = res.pooled.fit(Parent::Midparent).line.unwrap();
+        let line = res.pooled.fit(Parent::Midparent).unwrap().line.unwrap();
         assert_eq!((line.slope, line.intercept), (0.0, 2.0));
         assert_eq!(line.r, Err(Reason::ConstantChildValue));
         assert_eq!((line.se, line.se_ols), (Ok(0.0), Ok(0.0)));
@@ -733,7 +883,7 @@ mod tests {
         // All missing: nothing to fit.
         let res = run((&ids, &mother, &father), &[NA; 12], None).unwrap();
         assert_eq!(
-            res.pooled.fit(Parent::Father).line,
+            res.pooled.fit(Parent::Father).unwrap().line,
             Err(Reason::NoCompleteChildren)
         );
     }
@@ -745,7 +895,7 @@ mod tests {
         let (ids, mother, father) = family();
         let v = [1.0, 3.0, -1.0, 0.5, 2.5, 1.0, 2.2, 3.1, 0.4, -0.3, 0.9, 0.2];
         let res = run((&ids, &mother, &father), &v, None).unwrap();
-        let line = res.pooled.fit(Parent::Midparent).line.unwrap();
+        let line = res.pooled.fit(Parent::Midparent).unwrap().line.unwrap();
         assert_eq!(line.se, Ok(0.0));
         assert_eq!(line.wald, Err(Reason::ZeroSe));
         assert!(line.se_ols.unwrap() > 0.1);
@@ -768,8 +918,8 @@ mod tests {
         let y: Vec<f64> = x.iter().map(|&xi| 0.5 * xi + draw()).collect();
         let four = networks(&(0..n).map(|i| i % 4).collect::<Vec<_>>());
         let shift = |v: &[f64]| v.iter().map(|a| a + 2f64.powi(27)).collect::<Vec<_>>();
-        let base = line(&x, &y, &four).unwrap();
-        let shifted = line(&shift(&x), &shift(&y), &four).unwrap();
+        let base = line(&x, &y, Some(&four)).unwrap();
+        let shifted = line(&shift(&x), &shift(&y), Some(&four)).unwrap();
         let (a, b) = (base.se.unwrap(), shifted.se.unwrap());
         // The shifted means carry about sqrt(n) eps 2^27 of rounding, which
         // moves the slope and SE by about 1e-5: precision, not a zero SE.
@@ -786,7 +936,10 @@ mod tests {
         for k in 3..400 {
             let x: Vec<f64> = (0..k).map(|i| (i as f64 * 0.1).sin() / 3.0).collect();
             let y: Vec<f64> = x.iter().map(|v| 2.0 * v + 1.0).collect();
-            let r = line(&x, &y, &networks(&vec![0; k])).unwrap().r.unwrap();
+            let r = line(&x, &y, Some(&networks(&vec![0; k])))
+                .unwrap()
+                .r
+                .unwrap();
             worst = worst.max(r);
             assert!(r <= 1.0, "k = {k}: r = {r}");
         }
@@ -798,7 +951,7 @@ mod tests {
         let x = [0.0, 1e-170, 2e-170];
         let y = [0.1, 0.4, 0.2];
         assert_eq!(
-            line(&x, &y, &networks(&[0, 1, 2])),
+            line(&x, &y, Some(&networks(&[0, 1, 2]))),
             Err(Reason::ConstantParentValue)
         );
         // Sxx Syy underflows though neither factor does: r still comes out
@@ -806,7 +959,10 @@ mod tests {
         // subnormal Syy (2e-320) keeps.
         let x = [0.0, 1e-150, 3e-150];
         let y = [0.0, 1e-160, 2e-160];
-        let r = line(&x, &y, &networks(&[0, 1, 2])).unwrap().r.unwrap();
+        let r = line(&x, &y, Some(&networks(&[0, 1, 2])))
+            .unwrap()
+            .r
+            .unwrap();
         assert!((r - 0.9819805060619656).abs() < 1e-4, "{r}");
     }
 
@@ -817,9 +973,9 @@ mod tests {
         let father = vec![-1, -1, -1, -1, 1, 3];
         let v = [0.3, 1.1, -0.7, 2.9, 0.37, 1.13];
         let res = run((&ids, &mother, &father), &v, None).unwrap();
-        let fit = res.pooled.fit(Parent::Midparent);
+        let fit = res.pooled.fit(Parent::Midparent).unwrap();
         let line = fit.line.unwrap();
-        assert_eq!((fit.n, fit.n_mate_networks), (2, 2));
+        assert_eq!((fit.n, fit.n_mate_networks), (2, Some(2)));
         assert_eq!(line.se, Ok(0.0));
         assert_eq!(line.se_ols, Err(Reason::TooFewChildren));
         assert_eq!(line.wald, Err(Reason::ZeroSe));
@@ -846,19 +1002,19 @@ mod tests {
         for p in Parent::ALL {
             let rows: u64 = strata
                 .iter()
-                .map(|s| s.subset.fit(p).n + s.subset.fit(p).dropped.total())
+                .map(|s| s.subset.fit(p).unwrap().n + s.subset.fit(p).unwrap().dropped.total())
                 .sum();
             assert_eq!(rows + res.n_unknown_stratum, 12);
         }
         // Stratum 0 holds only founders.
-        let founders = strata[0].subset.fit(Parent::Mother);
+        let founders = strata[0].subset.fit(Parent::Mother).unwrap();
         assert_eq!(founders.line, Err(Reason::NoCompleteChildren));
         assert_eq!(founders.dropped.parent_not_in_pedigree, 4);
         // Stratum 7: one sibship, so one network.
-        let sibs = strata[2].subset.fit(Parent::Father);
-        assert_eq!((sibs.n, sibs.n_mate_networks), (4, 1));
+        let sibs = strata[2].subset.fit(Parent::Father).unwrap();
+        assert_eq!((sibs.n, sibs.n_mate_networks), (4, Some(1)));
         // Child 11 (unknown stratum) is pooled.
-        assert_eq!(res.pooled.fit(Parent::Father).n, 7);
+        assert_eq!(res.pooled.fit(Parent::Father).unwrap().n, 7);
     }
 
     #[test]
@@ -880,6 +1036,7 @@ mod tests {
                     n_levels: None,
                 },
                 None,
+                Settings::default(),
             )
             .unwrap_err()
             .code()
@@ -912,6 +1069,7 @@ mod tests {
                 labels: &labels,
                 known: &known,
             }),
+            Settings::default(),
         )
         .unwrap_err();
         assert_eq!(err.code(), "stratum_length_mismatch");
@@ -936,11 +1094,20 @@ mod tests {
                 n_levels: None,
             },
             None,
+            Settings::default(),
         )
         .unwrap();
         let x = [0.5, 0.5, 0.5, 0.5, 0.0, 0.0];
         let y = [1.0, 0.0, 1.0, 1.0, 0.0, 0.0];
         let (slope, ..) = reference(&x, &y, &[0, 0, 0, 0, 1, 1]);
-        close(res.pooled.fit(Parent::Midparent).line.unwrap().slope, slope);
+        close(
+            res.pooled
+                .fit(Parent::Midparent)
+                .unwrap()
+                .line
+                .unwrap()
+                .slope,
+            slope,
+        );
     }
 }

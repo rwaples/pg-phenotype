@@ -4,7 +4,13 @@
 \alias{regression_parent_offspring}
 \title{Parent-offspring regression}
 \usage{
-regression_parent_offspring(pedigree, trait, stratum = NULL)
+regression_parent_offspring(
+  pedigree,
+  trait,
+  stratum = NULL,
+  lines = c("midparent", "mother", "father"),
+  inference = TRUE
+)
 }
 \arguments{
 \item{pedigree}{A [pedigree()] or a data frame or a named list with
@@ -19,13 +25,23 @@ gives fits with a reason.}
 sex x generation code), `NA` where unknown, read at the child.  Each
 known label gets its own regressions; children of unknown stratum are
 pooled only.}
+
+\item{lines}{The lines to fit: one or more of `"midparent"`, `"mother"`
+and `"father"`.  The others are `NULL` in every subset.}
+
+\item{inference}{`FALSE` fits the lines alone: no Mate Networks
+(`n_mate_networks` is `NULL`), and `se`, `p` and `ci` are `NULL` with
+`not_requested`.  The slope, intercept, r, `se_ols`, `n` and drops are
+the default's bit for bit.  A [pedigree()] builds no Mate Networks for
+such a call.}
 }
 \value{
 An object of class `pgphenotype_parent_offspring`: a list with
   `pooled`, `strata` (`NULL` without `stratum`, else one record per known
-  label, ascending, with its `stratum`), `n_unknown_stratum`, `settings`,
-  `method` and `metadata`.  Each subset holds `midparent`, `mother` and
-  `father` fits: `n`, `n_mate_networks`, `dropped` (rows left out, by
+  label, ascending, with its `stratum`), `n_unknown_stratum`, `settings`
+  (`ci_level`, `lines`, `inference`), `method` and `metadata`.  Each
+  subset holds `midparent`, `mother` and `father` fits (`NULL` for a line
+  not in `lines`): `n`, `n_mate_networks`, `dropped` (rows left out, by
   reason), `slope` and `intercept` or a `reason`, and `r`, `se`, `se_ols`,
   `p` and `ci`, each with an `*_unavailable_reason`.
 }
@@ -35,7 +51,8 @@ The ordinary least-squares lines of each child's trait on its midparent's
 within strata of the child.  The slope's SE is the cluster-robust
 sandwich over Mate Networks with a G/(G-1) factor (a parent in no Mating
 Pair is a network of its own), with a two-sided Wald p-value and interval,
-beside the plain OLS SE.  Slopes are raw: under the usual assumptions (no
+beside the plain OLS SE.  `lines` picks the lines and `inference = FALSE`
+skips the networks and the sandwich.  Slopes are raw: under the usual assumptions (no
 environment shared by parent and child, random mating) the midparent
 slope estimates h2 and a single-parent slope h2/2, on the observed scale
 for a 0/1 trait.  The same inputs give the same numbers as the Python
@@ -49,4 +66,5 @@ ped <- data.frame(
 )
 x <- trait(c(0.1, 1.2, -0.3, 0.8, 0.3, 1.1, 0.4, 0.2, 0.9, 1.0, 0.6, -0.1))
 regression_parent_offspring(ped, x)
+regression_parent_offspring(ped, x, lines = "midparent", inference = FALSE)
 }

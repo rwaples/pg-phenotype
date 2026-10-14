@@ -9,18 +9,21 @@ use pyo3::prelude::*;
 
 /// The parent-offspring regressions of one trait, in the pool.
 #[pyfunction]
-#[pyo3(signature = (pedigree, trait_, strata, /))]
+#[pyo3(signature = (pedigree, trait_, strata, /, *, lines, inference))]
 pub(crate) fn parent_offspring<'py>(
     py: Python<'py>,
     pedigree: PedigreeSource<'py>,
     trait_: TraitArg<'py>,
     strata: StrataArg<'py>,
+    lines: [bool; 3],
+    inference: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let pedigree = pedigree.arg()?;
     let trait_ = trait_.get()?;
     let strata = crossing::strata(&strata)?;
     let result = crossing::run(py, || {
-        regression::parent_offspring(pedigree, trait_, strata).map(|r| r.to_value())
+        let settings = regression::Settings { lines, inference };
+        regression::parent_offspring(pedigree, trait_, strata, settings).map(|r| r.to_value())
     })?;
     crossing::result(py, result)
 }

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- `regression.parent_offspring` takes `lines=` (any of `"midparent"`,
+  `"mother"`, `"father"`; default all three) and `inference=` (default
+  `True`), and R's `regression_parent_offspring` takes `lines` and
+  `inference` (issue #15).  A line not requested is `None` (`NULL`) in
+  every subset.  Without inference no Mate Networks are built:
+  `n_mate_networks` is `None`, and `se`, `p` and `ci` are `None` with
+  `not_requested`.  Slopes, intercepts, r, `se_ols`, counts and drops are
+  the full call's bit for bit.  `settings` now also holds `lines` and
+  `inference`.  On a synthetic 800,000-row, four-generation pedigree with
+  a built `Pedigree`, through Python (median of 5 alternating processes,
+  9 calls each), the midparent line without inference took 0.017 s pooled
+  and 0.055 s by generation, where the full call took 0.097 s and 0.181 s
+  before this change.  Each subset's arrays are now sized before they are
+  filled, so the full call itself fell to 0.081 s and 0.170 s.
+  Code that needs updating: code that reads a `Subset` field as always a
+  `Fit`, or `n_mate_networks` as always an int, when it passes these
+  arguments.  Rust callers of `regression::parent_offspring` pass a
+  `Settings` (`Settings::default()` for the old behaviour), and
+  `Subset::fit` returns an `Option`.
 - The table fits, tetrachoric and polychoric (`correlation.tetrachoric`,
   the Mate Correlation's binary and ordinal cells, and the Relative-Pair
   Correlation's tetrachoric), no longer depend on the table's layout

@@ -1,3 +1,6 @@
+# The regression lines, in result order.
+.pgp_po_lines <- c("midparent", "mother", "father")
+
 #' Parent-offspring regression
 #'
 #' The ordinary least-squares lines of each child's trait on its midparent's
@@ -5,7 +8,8 @@
 #' within strata of the child.  The slope's SE is the cluster-robust
 #' sandwich over Mate Networks with a G/(G-1) factor (a parent in no Mating
 #' Pair is a network of its own), with a two-sided Wald p-value and interval,
-#' beside the plain OLS SE.  Slopes are raw: under the usual assumptions (no
+#' beside the plain OLS SE.  `lines` picks the lines and `inference = FALSE`
+#' skips the networks and the sandwich.  Slopes are raw: under the usual assumptions (no
 #' environment shared by parent and child, random mating) the midparent
 #' slope estimates h2 and a single-parent slope h2/2, on the observed scale
 #' for a 0/1 trait.  The same inputs give the same numbers as the Python
@@ -21,11 +25,19 @@
 #'   sex x generation code), `NA` where unknown, read at the child.  Each
 #'   known label gets its own regressions; children of unknown stratum are
 #'   pooled only.
+#' @param lines The lines to fit: one or more of `"midparent"`, `"mother"`
+#'   and `"father"`.  The others are `NULL` in every subset.
+#' @param inference `FALSE` fits the lines alone: no Mate Networks
+#'   (`n_mate_networks` is `NULL`), and `se`, `p` and `ci` are `NULL` with
+#'   `not_requested`.  The slope, intercept, r, `se_ols`, `n` and drops are
+#'   the default's bit for bit.  A [pedigree()] builds no Mate Networks for
+#'   such a call.
 #' @return An object of class `pgphenotype_parent_offspring`: a list with
 #'   `pooled`, `strata` (`NULL` without `stratum`, else one record per known
-#'   label, ascending, with its `stratum`), `n_unknown_stratum`, `settings`,
-#'   `method` and `metadata`.  Each subset holds `midparent`, `mother` and
-#'   `father` fits: `n`, `n_mate_networks`, `dropped` (rows left out, by
+#'   label, ascending, with its `stratum`), `n_unknown_stratum`, `settings`
+#'   (`ci_level`, `lines`, `inference`), `method` and `metadata`.  Each
+#'   subset holds `midparent`, `mother` and `father` fits (`NULL` for a line
+#'   not in `lines`): `n`, `n_mate_networks`, `dropped` (rows left out, by
 #'   reason), `slope` and `intercept` or a `reason`, and `r`, `se`, `se_ols`,
 #'   `p` and `ci`, each with an `*_unavailable_reason`.
 #' @examples
@@ -36,12 +48,21 @@
 #' )
 #' x <- trait(c(0.1, 1.2, -0.3, 0.8, 0.3, 1.1, 0.4, 0.2, 0.9, 1.0, 0.6, -0.1))
 #' regression_parent_offspring(ped, x)
+#' regression_parent_offspring(ped, x, lines = "midparent", inference = FALSE)
 #' @export
-regression_parent_offspring <- function(pedigree, trait, stratum = NULL) {
+regression_parent_offspring <- function(pedigree, trait, stratum = NULL,
+                                        lines = c("midparent", "mother", "father"), inference = TRUE) {
   call <- sys.call()
   pedigree <- .pgp_pedigree_arg(pedigree, call)
   .pgp_check_class(trait, "pgphenotype_trait", "trait", "trait()", call)
-  raw <- .pgp_call(.native_regression_parent_offspring(pedigree, trait, stratum), call)
+  if (!is.character(lines) || anyNA(lines) || !all(lines %in% .pgp_po_lines)) {
+    .pgp_usage("`lines` must name one or more of \"midparent\", \"mother\" and \"father\"", call)
+  }
+  inference <- .pgp_flag(inference, "inference", call)
+  raw <- .pgp_call(
+    .native_regression_parent_offspring(pedigree, trait, stratum, .pgp_po_lines %in% lines, inference), call
+  )
+  raw$settings$lines <- unlist(raw$settings$lines)
   structure(raw, class = "pgphenotype_parent_offspring")
 }
 
@@ -49,8 +70,9 @@ regression_parent_offspring <- function(pedigree, trait, stratum = NULL) {
 print.pgphenotype_parent_offspring <- function(x, ...) {
   cat("<pgphenotype_parent_offspring>\n")
   line <- function(label, subset) {
-    for (parent in c("midparent", "mother", "father")) {
+    for (parent in .pgp_po_lines) {
       f <- subset[[parent]]
+      if (is.null(f)) next
       value <- if (is.null(f$reason)) sprintf("slope %.4f", f$slope) else paste("undefined:", f$reason)
       se <- if (!is.null(f$se)) sprintf(" (SE %.4f)", f$se) else ""
       cat(sprintf("  %s %s, n %s: %s%s\n", label, parent, format(f$n, scientific = FALSE), value, se))

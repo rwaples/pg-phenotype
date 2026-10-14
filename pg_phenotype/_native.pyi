@@ -100,6 +100,9 @@ def parent_offspring(
     trait_: Trait,
     strata: _Strata | None,
     /,
+    *,
+    lines: tuple[bool, bool, bool],
+    inference: bool,
 ) -> dict[str, Any]: ...
 def relative_pairs_correlation(
     pedigree: Pedigree | _Columns,

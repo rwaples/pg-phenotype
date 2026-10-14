@@ -37,8 +37,8 @@
 }
 .native_correlation_tetrachoric_table <- function(table) .Call(wrap__correlation_tetrachoric_table, table)
 .native_correlation_tetrachoric_pairs <- function(x, y) .Call(wrap__correlation_tetrachoric_pairs, x, y)
-.native_regression_parent_offspring <- function(pedigree, trait, stratum) {
-  .Call(wrap__regression_parent_offspring, pedigree, trait, stratum)
+.native_regression_parent_offspring <- function(pedigree, trait, stratum, lines, inference) {
+  .Call(wrap__regression_parent_offspring, pedigree, trait, stratum, lines, inference)
 }
 .native_relative_pairs_correlation <- function(pedigree, trait, names, members, memory_budget_bytes) {
   .Call(wrap__relative_pairs_correlation, pedigree, trait, names, members, memory_budget_bytes)
