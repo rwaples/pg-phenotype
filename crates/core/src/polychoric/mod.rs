@@ -19,8 +19,9 @@ pub(crate) mod table;
 #[cfg(test)]
 mod primitives_parity;
 
-use fit::Terms;
+use fit::{flag_boundary, newton_rho, Terms};
 pub(crate) use influence::cell_influence;
+use std::cmp::Ordering;
 use table::{margin_status, thresholds, Grid, NoFit, Table, TINY};
 
 /// Why a Polychoric Fit, its SE or its CI is missing.
@@ -116,16 +117,62 @@ impl Tables {
                 return Err(no_fit);
             }
         }
+        Ok(Tables::of(n))
+    }
+
+    /// The first step of a table that passed [`Tables::from_counts`]'s checks.
+    fn of(n: Table) -> Tables {
         let combos = (0..n.n_row_strata)
             .flat_map(|s| (0..n.n_col_strata).map(move |u| (s, u)))
             .filter(|&(s, u)| n.stratum_total(s, u) > 0.0)
             .collect();
-        Ok(Tables {
-            a: thresholds(&row_margin),
-            b: thresholds(&col_margin),
+        Tables {
+            a: thresholds(&n.row_margin()),
+            b: thresholds(&n.col_margin()),
             n,
             combos,
-        })
+        }
+    }
+
+    /// ρ̂ by Newton from `start`, fitted in the table's canonical layout
+    /// (issue #16).  Swapping the sides or reversing both sides' levels
+    /// leaves ρ unchanged, and reversing one side's levels negates it.  At
+    /// a boundary the likelihood is flat and the fit stops at a point that
+    /// depends on the layout, so every layout is fitted as the greatest of
+    /// its eight (by shape, then cell by cell) and the sign restored.
+    ///
+    /// A table equal to a sign-reversing layout of itself has a likelihood
+    /// even in ρ, and gives ρ = 0 with the boundary flag taken there.  For a
+    /// 2 x 2 table (equal rows or equal columns) 0 is the maximum; a larger
+    /// table whose maxima are a pair ±r also gives 0, as its sign is not
+    /// identified.
+    pub fn fit(&self, start: f64) -> Point {
+        let (layout, sign) = Layout::canonical(&self.n);
+        if sign == 0.0 {
+            return flag_boundary(|r| self.bound_nll(r), 0.0, self.nll(0.0));
+        }
+        let canonical;
+        let tables = if layout == Layout::IDENTITY {
+            self
+        } else {
+            canonical = Tables::of(layout.apply(&self.n));
+            &canonical
+        };
+        let fit = newton_rho(
+            |r| tables.terms(r),
+            |r| tables.nll(r),
+            |r| tables.bound_nll(r),
+            if sign < 0.0 { -start } else { start },
+        );
+        Point {
+            // `0.0 - v` negates exactly and never gives -0.0.
+            value: if sign < 0.0 {
+                0.0 - fit.value
+            } else {
+                fit.value
+            },
+            boundary: fit.boundary,
+        }
     }
 
     /// The corner grid of `f(h, k)` for one stratum combination.
@@ -235,6 +282,115 @@ impl Tables {
     }
 }
 
+/// One of a table's eight layouts: optionally swap the sides (strata and
+/// levels), then reverse the row and/or column levels within each stratum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Layout {
+    transpose: bool,
+    reverse_rows: bool,
+    reverse_cols: bool,
+}
+
+impl Layout {
+    const IDENTITY: Layout = Layout {
+        transpose: false,
+        reverse_rows: false,
+        reverse_cols: false,
+    };
+
+    fn all() -> impl Iterator<Item = Layout> {
+        (0..8).map(|b| Layout {
+            transpose: b & 4 != 0,
+            reverse_rows: b & 2 != 0,
+            reverse_cols: b & 1 != 0,
+        })
+    }
+
+    /// Whether this layout negates ρ: one side's levels reversed.
+    fn reverses(self) -> bool {
+        self.reverse_rows != self.reverse_cols
+    }
+
+    /// `t`'s shape in this layout: row strata, column strata, row levels,
+    /// column levels.
+    fn shape(self, t: &Table) -> [usize; 4] {
+        if self.transpose {
+            [t.n_col_strata, t.n_row_strata, t.k_col, t.k_row]
+        } else {
+            [t.n_row_strata, t.n_col_strata, t.k_row, t.k_col]
+        }
+    }
+
+    /// `t`'s cells in this layout, row-major, read in place.
+    fn cells(self, t: &Table) -> impl Iterator<Item = f64> + '_ {
+        let [n_s, n_u, k_r, k_c] = self.shape(t);
+        let flip = |reverse: bool, k: usize, i: usize| if reverse { k - 1 - i } else { i };
+        (0..n_s).flat_map(move |s| {
+            (0..n_u).flat_map(move |u| {
+                (0..k_r).flat_map(move |i| {
+                    let i0 = flip(self.reverse_rows, k_r, i);
+                    (0..k_c).map(move |j| {
+                        let j0 = flip(self.reverse_cols, k_c, j);
+                        if self.transpose {
+                            t.at(u, s, j0, i0)
+                        } else {
+                            t.at(s, u, i0, j0)
+                        }
+                    })
+                })
+            })
+        })
+    }
+
+    fn apply(self, t: &Table) -> Table {
+        let [n_s, n_u, k_r, k_c] = self.shape(t);
+        Table {
+            data: self.cells(t).collect(),
+            ..Table::zeros(n_s, n_u, k_r, k_c)
+        }
+    }
+
+    /// The order of `t`'s layouts `self` and `other`: by shape, then cell
+    /// by cell, without building either.
+    fn order(self, other: Layout, t: &Table) -> Ordering {
+        self.shape(t).cmp(&other.shape(t)).then_with(|| {
+            self.cells(t)
+                .zip(other.cells(t))
+                .map(|(x, y)| x.total_cmp(&y))
+                .find(|o| o.is_ne())
+                .unwrap_or(Ordering::Equal)
+        })
+    }
+
+    /// The greatest layout of `t`, the identity among equals, and ρ's sign
+    /// under it: -1 when it reverses, 0 when a reversing and a
+    /// non-reversing layout both give it.
+    fn canonical(t: &Table) -> (Layout, f64) {
+        let (mut best, mut keeps, mut reverses) = (Layout::IDENTITY, false, false);
+        for layout in Layout::all() {
+            match layout.order(best, t) {
+                Ordering::Greater => {
+                    best = layout;
+                    (keeps, reverses) = (false, false);
+                }
+                Ordering::Less => continue,
+                Ordering::Equal => {}
+            }
+            if layout.reverses() {
+                reverses = true;
+            } else {
+                keeps = true;
+            }
+        }
+        let sign = match (keeps, reverses) {
+            (true, true) => 0.0,
+            (false, true) => -1.0,
+            _ => 1.0,
+        };
+        (best, sign)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,6 +405,48 @@ mod tests {
             data: vec![true, true],
         };
         Tables::from_counts(n, &both, &both).unwrap()
+    }
+
+    #[test]
+    fn a_stratified_table_fits_alike_in_every_layout() {
+        // Two row strata, one column stratum, three levels by two: an
+        // interior fit, and a boundary one whose levels never cross.
+        let fit = |t: &Table| {
+            let all = |rows, cols| Grid::filled(rows, cols, true);
+            let (rows, cols) = (all(t.n_row_strata, t.k_row), all(t.n_col_strata, t.k_col));
+            Tables::from_counts(t.clone(), &rows, &cols)
+                .unwrap()
+                .fit(0.0)
+        };
+        for (cells, boundary) in [
+            (
+                [
+                    20.0, 4.0, 9.0, 8.0, 0.0, 12.0, 15.0, 6.0, 7.0, 7.0, 2.0, 11.0,
+                ],
+                false,
+            ),
+            (
+                [
+                    20.0, 0.0, 9.0, 8.0, 0.0, 12.0, 15.0, 0.0, 7.0, 7.0, 0.0, 11.0,
+                ],
+                true,
+            ),
+        ] {
+            let mut n = Table::zeros(2, 1, 3, 2);
+            n.data = cells.to_vec();
+            let base = fit(&n);
+            assert_eq!(base.boundary, Some(boundary));
+            for layout in Layout::all() {
+                let p = fit(&layout.apply(&n));
+                let sign = if layout.reverses() { -1.0 } else { 1.0 };
+                assert_eq!(
+                    p.value.to_bits(),
+                    (sign * base.value).to_bits(),
+                    "{layout:?}"
+                );
+                assert_eq!(p.boundary, base.boundary);
+            }
+        }
     }
 
     #[test]

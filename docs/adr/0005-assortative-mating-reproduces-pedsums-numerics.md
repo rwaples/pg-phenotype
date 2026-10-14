@@ -101,3 +101,14 @@ pedsum commit), not against a live pedsum.
   relative tolerance allows from n of about 3e7.  The tolerance stays
   relative, and everywhere else, the estimates included, the NLL is
   pedsum's to the bit.
+- A fourth departure (2026-10-14, issue #16): pedsum fits a polychoric
+  table as laid out.  At a boundary the likelihood is flat near |rho| = 1
+  and the fit stops where Newton or Brent does, which depends on the
+  layout: one 2 x 2 table gave -0.9006 as given and -0.9385 with both
+  codings reversed.  pg-phenotype fits every table in the greatest of its
+  eight layouts and restores the sign (`Tables::fit`).  A table already
+  in that layout is fitted exactly as before.  Over the 2457 tetrachoric
+  gate tables, interior fits moved by at most 1.6e-11 and 400 of 1210
+  boundary fits by more than 1e-6 (at most 0.036).  No boundary flag
+  changed, and no golden moved beyond its tolerance.  The biserial and
+  polyserial fits still run as laid out.

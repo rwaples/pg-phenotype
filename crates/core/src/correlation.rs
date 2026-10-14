@@ -8,7 +8,6 @@
 
 use crate::error::Error;
 use crate::input::TraitKind;
-use crate::polychoric::fit::newton_rho;
 use crate::polychoric::table::{Grid, Table};
 use crate::polychoric::{cell_influence, Point, Reason, Tables};
 use crate::value::Value;
@@ -140,12 +139,7 @@ fn fitted(table: [[u64; 2]; 2]) -> Result<(Tables, Point), Reason> {
     };
     let (rows, cols) = (shown(counts.row_margin()), shown(counts.col_margin()));
     let tables = Tables::from_counts(counts, &rows, &cols)?;
-    let point = newton_rho(
-        |r| tables.terms(r),
-        |r| tables.nll(r),
-        |r| tables.bound_nll(r),
-        0.0,
-    );
+    let point = tables.fit(0.0);
     Ok((tables, point))
 }
 
@@ -268,6 +262,40 @@ mod tests {
         assert_eq!(edge.point.boundary, Some(true));
         assert_eq!(edge.se, Err(Reason::Boundary));
         assert_eq!(edge.ci, Err(Reason::Boundary));
+    }
+
+    #[test]
+    fn every_layout_gives_one_rho_up_to_its_sign() {
+        // Issue #16: at a boundary each layout once stopped elsewhere on the
+        // flat likelihood (-0.9006 and -0.9385 for the first table).
+        let point = |t| tetrachoric(t).unwrap().outcome.unwrap().point;
+        for [[a, b], [c, d]] in [
+            [[100, 3], [7, 0]],
+            [[35, 36], [0, 1]],
+            [[40, 25], [10, 30]],
+            [[9891, 104], [1, 4]],
+        ] {
+            let base = point([[a, b], [c, d]]);
+            for (t, sign) in [
+                ([[a, c], [b, d]], 1.0),
+                ([[d, c], [b, a]], 1.0),
+                ([[d, b], [c, a]], 1.0),
+                ([[c, d], [a, b]], -1.0),
+                ([[c, a], [d, b]], -1.0),
+                ([[b, a], [d, c]], -1.0),
+                ([[b, d], [a, c]], -1.0),
+            ] {
+                let p = point(t);
+                assert_eq!(p.value.to_bits(), (sign * base.value).to_bits(), "{t:?}");
+                assert_eq!(p.boundary, base.boundary);
+            }
+        }
+        // Equal rows or columns: the table is its own reversal, so rho is
+        // +0, with no fit.
+        for t in [[[30, 10], [30, 10]], [[30, 30], [10, 10]]] {
+            let p = point(t);
+            assert_eq!((p.value.to_bits(), p.boundary), (0, Some(false)), "{t:?}");
+        }
     }
 
     #[test]

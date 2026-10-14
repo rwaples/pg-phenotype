@@ -155,6 +155,14 @@ permutation p-value.
   estimator's populated cell whose probability at the bound is below
   1e-12, where a difference of CDFs is mostly rounding, is recomputed by
   quadrature.  The flag comes from the fit, never from a zero count.
+- A table estimator fits the greatest of the table's eight layouts (sides
+  swapped or not, each side's levels reversed or not, compared by shape
+  and then cell by cell) and restores rho's sign.  At a boundary the
+  likelihood is flat and the fit stops at a point that depends on the
+  layout; this makes it the same point for a trait coded `1 - x` or for
+  levels in reverse order.  A table equal to a sign-reversing layout of
+  itself gives 0, its boundary flag taken there.  The biserial and
+  polyserial fits run as laid out.
 
 The latent estimators (`tetrachoric`, `polychoric`, `biserial`,
 `polyserial`) estimate the correlation of a liability that is assumed

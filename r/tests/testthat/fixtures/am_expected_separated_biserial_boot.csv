@@ -178,12 +178,12 @@ cells[3].table[1][1],int,12
 cells[3].crude[0].estimator,str,tetrachoric
 cells[3].crude[0].primary,bool,TRUE
 cells[3].crude[0].reason,null,NA
-cells[3].crude[0].value,float,-0x1.b239de266138cp-4
+cells[3].crude[0].value,float,-0x1.b239de2661377p-4
 cells[3].crude[0].boundary,bool,FALSE
 cells[3].crude[0].se,float,0x1.a1a63a21a1825p-3
 cells[3].crude[0].se_unavailable_reason,null,NA
-cells[3].crude[0].ci[0],float,-0x1.e15217912e3b0p-2
-cells[3].crude[0].ci[1],float,0x1.189abc586694ep-2
+cells[3].crude[0].ci[0],float,-0x1.e15217912e3aap-2
+cells[3].crude[0].ci[1],float,0x1.189abc5866946p-2
 cells[3].crude[0].ci_unavailable_reason,null,NA
 cells[3].crude[0].ci_method,str,bootstrap
 cells[3].crude[0].bootstrap.requested,int,200

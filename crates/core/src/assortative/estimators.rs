@@ -125,12 +125,7 @@ pub(crate) fn polychoric(
     start: Option<f64>,
 ) -> Fitted {
     let tables = cell_tables(pairs, m_levels, f_levels, w)?;
-    Ok(newton_rho(
-        |r| tables.terms(r),
-        |r| tables.nll(r),
-        |r| tables.bound_nll(r),
-        start.unwrap_or(0.0),
-    ))
+    Ok(tables.fit(start.unwrap_or(0.0)))
 }
 
 /// The first step of a polyserial fit: `x` moments per stratum, the `y`

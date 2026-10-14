@@ -123,7 +123,7 @@ pub(crate) fn minimize_bounded(
 /// `rho` with pedsum's boundary flag: at a bound, or on a plateau reaching one.
 /// `bound_nll` is the NLL at the bound, with no cell left at rounding
 /// (issue #8).
-fn flag_boundary(bound_nll: impl FnOnce(f64) -> f64, rho: f64, best: f64) -> Point {
+pub(crate) fn flag_boundary(bound_nll: impl FnOnce(f64) -> f64, rho: f64, best: f64) -> Point {
     let at_bound = rho.abs() >= LATENT_BOUND - BOUNDARY_MARGIN;
     let plateau =
         bound_nll(LATENT_BOUND.copysign(rho)) - best <= BOUNDARY_NLL_TOL * best.abs().max(1.0);

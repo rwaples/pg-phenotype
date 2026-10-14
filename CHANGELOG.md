@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- The table fits, tetrachoric and polychoric (`correlation.tetrachoric`,
+  the Mate Correlation's binary and ordinal cells, and the Relative-Pair
+  Correlation's tetrachoric), no longer depend on the table's layout
+  (issue #16).  Swapping the two variables, or recoding both as `1 - x`,
+  leaves rho unchanged, and recoding one negates it, at a boundary too.  Every table
+  is fitted in the greatest of its eight layouts, and rho's sign is
+  restored.  A table already in that layout is fitted exactly as before.
+  On the 2457 tetrachoric gate tables, interior fits moved by at most
+  1.6e-11 and boundary fits by up to 0.036 (400 of 1210 by more than
+  1e-6).  No boundary flag changed, and no pedsum golden moved beyond its
+  tolerance.  ADR 0005 lists this as a fourth departure from pedsum.
+  A table equal to a sign-reversing layout of itself (equal rows or equal
+  columns) gives 0 without a fit.  The biserial and polyserial fits are
+  not covered: at a boundary, recoding their discrete side can still move
+  rho by more than its sign.
 - PA-FGRS scoring stores each proband's conditioning covariance as packed
   upper-triangle columns instead of a square matrix, which roughly halves
   that buffer, and scores faster.  Scores are unchanged bit for bit.  The

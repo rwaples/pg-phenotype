@@ -1,7 +1,8 @@
 # ADR 0011: The public tetrachoric is the Mate Correlation's fit
 
 **Status:** accepted; amended 2026-10-11 (the fit is the Polychoric Fit in
-`crates/core/src/polychoric/`, which the Mate Correlation also runs)
+`crates/core/src/polychoric/`, which the Mate Correlation also runs) and
+2026-10-14 (the fit runs in a canonical layout, issue #16)
 **Date:** 2026-10-09
 **Context:** issue #2; simACE issue #48
 **Renumbered:** from ADR 0006 (#11); v0.3.0 and earlier cite it as 0006
@@ -51,3 +52,9 @@ treats the thresholds as known and uses the wrong Fisher information
   fitACE over changes their SEs, by design.
 - The gate found a Newton flaw the Mate Correlation shares; ADR 0005 lists
   its fix as a second departure from pedsum.
+- Swapping the variables, or reversing both codings, leaves rho unchanged,
+  and reversing one negates it, at a boundary too (issue #16): the fit runs
+  in the greatest of the table's eight layouts (ADR 0005's fourth
+  departure).  simACE fitted every table in one layout itself
+  (`_canonical_table` in `simace/analysis/stats/tetrachoric.py`) to get
+  the same.

@@ -105,3 +105,24 @@ sweep.  Both fail without the fix.
 
 The fix moved the gate's counts from 805 interior and 1211 boundary fits to
 806 and 1210.  No assortative-mating golden moved.
+
+## Rerun for issue #16 (2026-10-14)
+
+Every table is now fitted in the greatest of its eight layouts, and the
+sign is restored (ADR 0005's fourth departure).  `gate.json` is the rerun
+on the same golden.  The discrete outcomes, maxima and 99th percentiles
+above are unchanged.  Two rho-gap medians and one 99th percentile moved by
+under 2.5e-16, and the minimum and median ratio of the SE to the
+known-thresholds SE by under 3.8e-11.
+
+Against the build before the change, table by table:
+
+- no `boundary` flag changed;
+- 234 of the 806 interior fits moved, by at most 1.6e-11
+  (`[[10, 90], [90, 10]]`), within Newton's stopping tolerance;
+- 488 of the 1210 boundary fits moved, 400 by more than 1e-6 and the most
+  by 0.036 (`[[8999, 499], [502, 0]]`: -0.9058 to -0.9422).  A boundary
+  rho is a point on a flat likelihood.  It is now the same point for
+  every layout of the table.
+
+No assortative-mating golden moved beyond its tolerance.

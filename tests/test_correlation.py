@@ -91,6 +91,39 @@ def test_an_empty_cell_is_a_boundary_fit_without_an_se():
     assert got.se_unavailable_reason == got.ci_unavailable_reason == "boundary"
 
 
+def test_a_boundary_fit_does_not_depend_on_the_tables_layout():
+    """Issue #16: each layout once stopped elsewhere on the flat likelihood (-0.9006, -0.9385, +0.8987)."""
+    (a, b_), (c, d) = (100, 3), (7, 0)
+    base = tetrachoric(table=[[a, b_], [c, d]])
+    assert base.boundary is True
+    assert base.value is not None
+    for table, sign in [
+        ([[a, c], [b_, d]], 1),
+        ([[d, c], [b_, a]], 1),
+        ([[d, b_], [c, a]], 1),
+        ([[c, d], [a, b_]], -1),
+        ([[b_, a], [d, c]], -1),
+    ]:
+        got = tetrachoric(table=table)
+        assert (got.value, got.boundary) == (sign * base.value, True), table
+
+
+def test_a_mate_correlation_does_not_depend_on_the_traits_coding():
+    """Issue #16: 110 lone couples, mother by father ((100, 3), (7, 0)); the trait coded 1 - x gave -0.9385."""
+    cells = [(0, 0)] * 100 + [(0, 1)] * 3 + [(1, 0)] * 7
+    pairs = [(2 * i, 2 * i + 1) for i in range(len(cells))]
+    ped = b.pedigree(pairs)
+    by_id = {m: x for (m, f), (x, _) in zip(pairs, cells, strict=True)}
+    by_id |= {f: y for (_, f), (_, y) in zip(pairs, cells, strict=True)}
+    x = b.binary(ped, by_id, cut=0.5)
+    fits = [
+        mate_correlation(ped, Trait(v, "binary"), permutations=0, inference=False).cell(0, 0).primary
+        for v in (x, 1 - x)
+    ]
+    assert fits[0].value == fits[1].value == tetrachoric(table=[[100, 3], [7, 0]]).value
+    assert fits[0].boundary is fits[1].boundary is True
+
+
 @pytest.mark.parametrize(
     "table",
     [

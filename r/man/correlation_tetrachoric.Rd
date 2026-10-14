@@ -27,8 +27,10 @@ table.  The fit, boundary flag and SE are the Mate Correlation's
 ([assortative_mate_correlation()]): two-step maximum likelihood,
 thresholds from the margins and then rho by Newton with a bounded-Brent
 fallback on (-0.9999, 0.9999), and the two-step sandwich SE with every
-pair its own cluster.  The same inputs give the same numbers as the
-Python package's `pg_phenotype.correlation.tetrachoric`.
+pair its own cluster.  rho does not depend on the table's layout:
+swapping `x` and `y`, or recoding both as `1 - x`, leaves it unchanged,
+and recoding one negates it, at a boundary too.  The same inputs give the
+same numbers as the Python package's `pg_phenotype.correlation.tetrachoric`.
 }
 \examples{
 correlation_tetrachoric(table = matrix(c(40, 15, 10, 35), 2))

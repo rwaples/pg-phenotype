@@ -5,8 +5,10 @@
 #' ([assortative_mate_correlation()]): two-step maximum likelihood,
 #' thresholds from the margins and then rho by Newton with a bounded-Brent
 #' fallback on (-0.9999, 0.9999), and the two-step sandwich SE with every
-#' pair its own cluster.  The same inputs give the same numbers as the
-#' Python package's `pg_phenotype.correlation.tetrachoric`.
+#' pair its own cluster.  rho does not depend on the table's layout:
+#' swapping `x` and `y`, or recoding both as `1 - x`, leaves it unchanged,
+#' and recoding one negates it, at a boundary too.  The same inputs give the
+#' same numbers as the Python package's `pg_phenotype.correlation.tetrachoric`.
 #'
 #' @param x,y Binary values (0/1 or logical), `NA` for missing, of one
 #'   length.  Pairs with a missing value are dropped and counted in

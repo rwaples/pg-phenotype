@@ -39,7 +39,7 @@ test_that("continuous cells give Python's numbers bit for bit", {
 test_that("binary cells give Python's numbers, Concordance and tables", {
   r <- relative_pairs_correlation(ped, trait(b, kind = "binary"), categories = cats)
   expect_identical(values(r, "tetrachoric"), as.numeric(c(
-    "-0x1.fdb714063b861p-1", "-0x1.f53a9f2d62068p-1", "0x1.ab19ceaed4bddp-4", "0x0p+0"
+    "-0x1.fdbe2c6c552bep-1", "-0x1.f51f34b6c14c3p-1", "0x1.ab19ceaed4bc7p-4", "0x0p+0"
   )))
   expect_identical(values(r, "phi"), as.numeric(c(
     "-0x1.ffffffffffffep-2", "-0x1.9999999999998p-3", "0x1.e990cdad55ed2p-5", "0x0p+0"

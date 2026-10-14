@@ -5,7 +5,9 @@ from a 2 x 2 table or from paired values.  Its fit, boundary flag and SE are
 the Mate Correlation's (:mod:`pg_phenotype.assortative`): two-step maximum
 likelihood, thresholds from the margins and then rho by Newton with a
 bounded-Brent fallback on (-0.9999, 0.9999), and the two-step sandwich SE
-with every pair its own cluster.
+with every pair its own cluster.  rho does not depend on the table's
+layout: swapping *x* and *y*, or recoding both as ``1 - x``, leaves it
+unchanged, and recoding one negates it, at a boundary too.
 """
 
 from __future__ import annotations
