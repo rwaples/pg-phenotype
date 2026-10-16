@@ -3,6 +3,8 @@
     pixi run python -B tools/relative_pairs_se_calibration.py --self-test
     pixi run python -B tools/relative_pairs_se_calibration.py \\
         <simACE>/results/se_calibration --jobs 11 --out docs/gates/relative-pairs-se
+    PG_PHENOTYPE_THREADS=1 pixi run python -B tools/relative_pairs_se_calibration.py \\
+        <simACE>/results/se_calibration --rust --jobs 11 --out docs/gates/relative-pairs-se
 
 For every rep of every scenario under the results folder, compute each
 Relative-Pair Correlation cell (ADR 0009) of each trait: Pearson on
@@ -39,6 +41,19 @@ cell: SD of r̂ across reps over each design's mean SE, the SE's spread, and
 Wald coverage) and ``summary.tsv`` (medians over cells per scenario and
 category type) into ``--out``; ``--reps`` also keeps the per-rep rows, and
 ``--from-reps`` rebuilds both tables from them.
+
+``--rust`` calibrates the shipped SE instead, through the public API: per
+rep, ``relative_pairs.correlation(..., se=True)`` with both traits and the
+generation strata, for the same cells plus each cell's stratified fit, and
+beside each pooled and stratum cell this script's ``mrca_person`` SE and r̂
+for the same rep.  Writes ``rust_calibration.tsv`` (as ``calibration.tsv``,
+one design ``rust``, with ``no_se_<reason>`` counting reps whose estimate
+has no SE, and ``mean_n11``, the binary cell's mean count of pairs with both
+affected) and ``rust_summary.tsv`` (medians per scenario, category type,
+estimator and fit: ``cells`` for pooled and stratum cells, ``stratified``),
+and prints the largest gap between the two SEs.  A boundary tetrachoric
+has no influence function and is left out of the r̂ statistics, as above.
+Run it with ``PG_PHENOTYPE_THREADS=1``: the workers are the parallelism.
 """
 
 from __future__ import annotations
@@ -65,6 +80,9 @@ from pg_phenotype import Trait
 from pg_phenotype import correlation as pgc
 from pg_phenotype import relative_pairs as rp
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.oracle.relative_pairs_se import bvn_pdf, meats, pearson_if, tetrachoric_if, top_keys
+
 DESIGNS = ("pair", "person", "mn", "mn_person", "mrca", "mrca_person")
 CODES = tuple(code for code, c in RELATIONSHIPS.items() if c.degree <= 3)
 #: Cells: name -> member codes.  Groups as fitACE's Falconer step reports them.
@@ -77,52 +95,18 @@ TOL = {"pearson": 1e-10, "phi": 1e-10, "tetrachoric": 1e-8}
 # --- influence functions ---------------------------------------------------------------------
 
 
-def pearson_if(x: np.ndarray, y: np.ndarray) -> tuple[float, np.ndarray] | None:
-    """r̂ and each entry's influence.  On a same-trait symmetric cell's doubled entries the two sides'
-    means and spreads coincide, so this is the intraclass Pearson."""
-    if len(x) == 0:
-        return None
-    mx, my = x.mean(), y.mean()
-    sx, sy = math.sqrt(((x - mx) ** 2).mean()), math.sqrt(((y - my) ** 2).mean())
-    if sx == 0 or sy == 0:
-        return None
-    u, v = (x - mx) / sx, (y - my) / sy
-    r = float((u * v).mean())
-    return r, u * v - r / 2 * (u * u + v * v)
-
-
 def _bvn_upper(h: float, k: float, rho: float) -> float:
     """P(X > h, Y > k) for a standard bivariate normal (Plackett's identity, quadrature to ~1e-14)."""
     if rho == 0:
         return float(ndtr(-h) * ndtr(-k))
-    integral, _ = integrate.quad(lambda t: _bvn_pdf(h, k, t), 0.0, rho, epsabs=1e-14, epsrel=1e-12)
+    integral, _ = integrate.quad(lambda t: bvn_pdf(h, k, t), 0.0, rho, epsabs=1e-14, epsrel=1e-12)
     return float(ndtr(-h) * ndtr(-k)) + integral
-
-
-def _bvn_pdf(h: float, k: float, rho: float) -> float:
-    q = 1 - rho * rho
-    return math.exp(-(h * h - 2 * rho * h * k + k * k) / (2 * q)) / (2 * math.pi * math.sqrt(q))
 
 
 def two_step_tetrachoric(p11: float, pa: float, pb: float) -> float:
     """The 2 x 2 two-step tetrachoric from proportions: thresholds from margins, then ρ matching p11."""
     h, k = -float(ndtri(pa)), -float(ndtri(pb))
     return optimize.brentq(lambda r: _bvn_upper(h, k, r) - p11, -0.9999, 0.9999, xtol=1e-15, rtol=1e-15)
-
-
-def tetrachoric_if(table: np.ndarray, rho: float) -> np.ndarray:
-    """Influence of one entry in cell (i, j) of a directed 2 x 2 two-step tetrachoric at ρ̂.
-
-    dρ = (dp11 - Qa dpa - Qb dpb) / φ2(h, k; ρ), with Qa = P(Y > k | X = h).
-    """
-    n = table.sum()
-    p11, pa, pb = table[1, 1] / n, table[1].sum() / n, table[:, 1].sum() / n
-    h, k = -float(ndtri(pa)), -float(ndtri(pb))
-    s = math.sqrt(1 - rho * rho)
-    qa, qb = float(ndtr(-(k - rho * h) / s)), float(ndtr(-(h - rho * k) / s))
-    phi2 = _bvn_pdf(h, k, rho)
-    i, j = np.meshgrid([0.0, 1.0], [0.0, 1.0], indexing="ij")
-    return ((i * j - p11) - qa * (i - pa) - qb * (j - pb)) / phi2
 
 
 def binary_ifs(x: np.ndarray, y: np.ndarray) -> dict[str, tuple[float, np.ndarray]]:
@@ -152,32 +136,6 @@ def pair_fits(xs: list[np.ndarray], ys: list[np.ndarray], kind: str) -> dict[str
     else:
         fits = binary_ifs(x, y)
     return {est: (r, entry_if.reshape(k, -1).mean(axis=0)) for est, (r, entry_if) in fits.items()}
-
-
-# --- cluster designs -------------------------------------------------------------------------
-
-
-def _group_sq(keys: np.ndarray, w: np.ndarray) -> float:
-    """Σ over distinct keys of (Σ w at that key)², by sort (NumPy's hash unique is slow on int64)."""
-    order = np.argsort(keys, kind="stable")
-    k = keys[order]
-    starts = np.flatnonzero(np.r_[True, k[1:] != k[:-1]])
-    sums = np.add.reduceat(w[order], starts)
-    return float(sums @ sums)
-
-
-def meats(phi: np.ndarray, a: np.ndarray, b: np.ndarray, g: np.ndarray, m: np.ndarray) -> dict[str, float]:
-    """Each design's meat for influences φ_d of pairs (a_d, b_d) with Mate Network g_d and MRCA m_d."""
-    pair = float(phi @ phi)
-    twice = np.concatenate([phi, phi])
-    person = _group_sq(np.concatenate([a, b]), twice) - pair
-    out = {"pair": pair, "person": person}
-    for name, key in (("mn", g), ("mrca", m)):
-        stride = int(key.max()) + 1
-        by_person = _group_sq(np.concatenate([a * stride + key, b * stride + key]), twice) - pair
-        out[name] = _group_sq(key, phi)
-        out[f"{name}_person"] = out[name] + person - by_person
-    return out
 
 
 # --- pedigree structure ----------------------------------------------------------------------
@@ -237,51 +195,6 @@ def mate_networks(mother: np.ndarray, father: np.ndarray) -> np.ndarray:
     m, f = mother[both], father[both]
     adj = coo_matrix((np.ones(len(m), dtype=np.int8), (m, f)), shape=(n, n))
     return connected_components(adj, directed=False)[1]
-
-
-def top_keys(
-    code: str, a: np.ndarray, b: np.ndarray, mother: np.ndarray, father: np.ndarray, net: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
-    """Each pair's top-mating Mate Network and MRCA; x is a's ancestor up-1 meioses up the path."""
-    c = RELATIONSHIPS[code]
-    parents = (mother, father)
-
-    def ancestors(start: np.ndarray, depth: int) -> list[np.ndarray]:
-        out = []
-        for path in itertools.product((0, 1), repeat=depth):
-            x = start.copy()
-            for step in path:
-                x = np.where(x >= 0, parents[step][np.maximum(x, 0)], -1)
-            out.append(x)
-        return out
-
-    if c.up == 0:
-        x = a
-        mrca = np.where(mother[x] >= 0, mother[x], father[x])
-    else:
-        x = np.full(len(a), -1)
-        mrca = np.full(len(a), -1)
-        mine = ancestors(a, c.up - 1)
-        theirs = [b] if c.down == 0 else ancestors(b, c.down - 1)
-        for xa in mine:
-            ok = xa >= 0
-            ma, fa = np.where(ok, mother[np.maximum(xa, 0)], -1), np.where(ok, father[np.maximum(xa, 0)], -1)
-            for y in theirs:
-                if c.down == 0:
-                    hit, shared = ok & ((ma == y) | (fa == y)), y
-                else:
-                    yy = np.maximum(y, 0)
-                    same_m = ok & (y >= 0) & (y != xa) & (ma >= 0) & (ma == mother[yy])
-                    same_f = ok & (y >= 0) & (y != xa) & (fa >= 0) & (fa == father[yy])
-                    hit, shared = same_m | same_f, np.where(same_m, ma, fa)
-                new = (x < 0) & hit
-                x, mrca = np.where(new, xa, x), np.where(new, shared, mrca)
-        if (x < 0).any():
-            raise RuntimeError(f"{code}: {int((x < 0).sum())} pairs have no top mating")
-    top = np.where(mother[x] >= 0, mother[x], father[x])
-    # Founder MZ twins have no parents: such a pair is its own cluster under both keys.
-    lone = top < 0
-    return np.where(lone, net.max() + 1 + a, net[top]), np.where(lone, len(mother) + a, mrca)
 
 
 @dataclass(frozen=True)
@@ -362,6 +275,60 @@ def rep_rows(rep_dir: Path, check: bool) -> list[dict]:
         for t in (1, 2):
             check_against_pg(rep, t, rows)
         check_mrca(rep, cells)
+    return rows
+
+
+#: Why an estimate with a value has no SE (``Estimate.se_reason``), but ``boundary``, whose rows
+#: ``rust_summaries`` counts and then leaves out.
+SE_REASONS = ("sandwich_undefined", "degenerate_meat", "negative_meat")
+
+
+def rust_rep_rows(rep_dir: Path) -> list[dict]:
+    """Each estimate's r̂ and Rust SE, with this script's r̂ and ``mrca_person`` SE beside it."""
+    rep = load_rep(rep_dir)
+    tool = {(r["trait"], r["cell"], r["stratum"], r["estimator"]): r for r in rep_rows(rep_dir, check=False)}
+    groups = {name: list(members) for name, members in CELLS.items() if len(members) > 1}
+    rows = []
+    for kind, values in (("continuous", rep.liability), ("binary", rep.affected)):
+        traits = [Trait(values[t], kind) for t in (1, 2)]
+        # A code may not sit in two entries of one call: the codes, then the groups.
+        for entries in (list(CODES), [groups]):
+            result = rp.correlation(rep.ped, traits, categories=entries, stratum=rep.generation, se=True)
+            for cell in result.cells:
+                t1, t2 = cell.first_trait + 1, cell.second_trait + 1
+                trait = f"trait{t1}" if t1 == t2 else f"trait{t1}_x_trait{t2}"
+                fits = [("pooled", cell.n, cell, cell.crude)]
+                fits += [(f"gen{label}", s.n, s, s.crude) for label, s in cell.strata.items()]
+                # The stratified fit's concordance is read from the pooled cell's.
+                fits.append(("stratified", cell.stratified.n, cell, (cell.stratified.estimate,)))
+                for stratum, n, counts, estimates in fits:
+                    if counts.concordance is not None:
+                        n11 = counts.concordance[2]
+                    elif counts.table is not None:
+                        n11 = counts.table[1][1]
+                    else:
+                        n11 = None
+                    for est in estimates:
+                        if est.value is None:
+                            continue
+                        mine = tool.get((trait, cell.category, stratum, est.estimator), {})
+                        rows.append(
+                            {
+                                "scenario": rep.scenario,
+                                "rep": rep.rep,
+                                "trait": trait,
+                                "cell": cell.category,
+                                "stratum": stratum,
+                                "estimator": est.estimator,
+                                "n": n,
+                                "n11": n11,
+                                "r": est.value,
+                                "se_rust": est.se,
+                                "se_reason": est.se_reason,
+                                "r_tool": mine.get("r"),
+                                "se_tool": mine.get("se_mrca_person"),
+                            }
+                        )
     return rows
 
 
@@ -508,33 +475,39 @@ def self_test() -> None:
 # --- driver ----------------------------------------------------------------------------------
 
 
-def summarise(reps: pl.DataFrame) -> pl.DataFrame:
-    keys = ["scenario", "trait", "estimator", "cell", "stratum"]
-    aggs = [
-        pl.len().alias("n_reps"),
-        pl.col("n").mean().alias("mean_n"),
-        pl.col("n_networks").mean().alias("mean_networks"),
-        pl.col("r").mean().alias("mean_r"),
-        pl.col("r").std().alias("sd_r"),
-    ]
-    aggs += [pl.col(f"se_{d}").mean().alias(f"se_{d}") for d in DESIGNS]
-    aggs.append(pl.col("largest_network_share").mean())
-    aggs += [pl.col(f"se_{d}").is_null().sum().alias(f"undefined_{d}") for d in DESIGNS]
+#: One calibration row per scenario, trait, estimator, cell and stratum.
+KEYS = ["scenario", "trait", "estimator", "cell", "stratum"]
+
+
+def summarise(reps: pl.DataFrame, designs: tuple[str, ...] = DESIGNS) -> pl.DataFrame:
+    networks = "n_networks" in reps.columns
+    aggs = [pl.len().alias("n_reps"), pl.col("n").mean().alias("mean_n")]
+    if networks:
+        aggs.append(pl.col("n_networks").mean().alias("mean_networks"))
+    if "n11" in reps.columns:
+        aggs.append(pl.col("n11").mean().alias("mean_n11"))
+    aggs += [pl.col("r").mean().alias("mean_r"), pl.col("r").std().alias("sd_r")]
+    aggs += [pl.col(f"se_{d}").mean().alias(f"se_{d}") for d in designs]
+    if networks:
+        aggs.append(pl.col("largest_network_share").mean())
+    aggs += [pl.col(f"se_{d}").is_null().sum().alias(f"undefined_{d}") for d in designs]
+    if "se_reason" in reps.columns:
+        aggs += [(pl.col("se_reason") == reason).sum().alias(f"no_se_{reason}") for reason in SE_REASONS]
     # The SE's own spread across reps: a noisy SE can have the right mean and still undercover.
-    aggs += [(pl.col(f"se_{d}").std() / pl.col(f"se_{d}").mean()).alias(f"cv_se_{d}") for d in DESIGNS]
+    aggs += [(pl.col(f"se_{d}").std() / pl.col(f"se_{d}").mean()).alias(f"cv_se_{d}") for d in designs]
     # Wald 95% coverage of the mean r across reps, which stands in for the truth (its SE is sd_r / sqrt(reps)).
     aggs += [
         ((pl.col("r") - pl.col("r").mean()).abs() <= 1.959964 * pl.col(f"se_{d}"))
         .fill_null(False)
         .mean()
         .alias(f"cover_{d}")
-        for d in DESIGNS
+        for d in designs
     ]
     # An undefined (negative) meat is missing, not NaN, so it leaves the means and counts as uncovered.
-    reps = reps.with_columns([pl.col(f"se_{d}").fill_nan(None) for d in DESIGNS])
-    out = reps.group_by(keys).agg(aggs)
-    out = out.with_columns([(pl.col("sd_r") / pl.col(f"se_{d}")).alias(f"ratio_{d}") for d in DESIGNS])
-    return out.sort(keys)
+    reps = reps.with_columns([pl.col(f"se_{d}").fill_nan(None) for d in designs])
+    out = reps.group_by(KEYS).agg(aggs)
+    out = out.with_columns([(pl.col("sd_r") / pl.col(f"se_{d}")).alias(f"ratio_{d}") for d in designs])
+    return out.sort(KEYS)
 
 
 #: Category types for the medians: whom a person shares a cell's pairs with.
@@ -545,18 +518,44 @@ CATEGORY_TYPE = {
 }
 
 
-def medians(cal: pl.DataFrame) -> pl.DataFrame:
-    """Per scenario and category type, the median over cells of each design's SD(r̂)/SE and coverage.
+def medians(cal: pl.DataFrame, designs: tuple[str, ...] = DESIGNS, by: tuple[str, ...] = ("type",)) -> pl.DataFrame:
+    """Per scenario and *by* (category type first), the median over cells of each design's SD(r̂)/SE and coverage.
 
     Only cells estimated in every rep of their scenario, with at least 1000 pairs on average.
     """
     cal = cal.filter(pl.col("n_reps") == pl.col("n_reps").max().over("scenario"), pl.col("mean_n") >= 1000)
     cal = cal.with_columns(pl.col("cell").replace_strict(CATEGORY_TYPE).alias("type"))
-    aggs = [pl.len().alias("cells"), pl.col("largest_network_share").median()]
-    aggs += [pl.col(f"ratio_{d}").median() for d in DESIGNS] + [pl.col(f"cover_{d}").median() for d in DESIGNS]
-    by_scenario = cal.group_by("scenario", "type").agg(aggs)
-    overall = cal.group_by("type").agg(aggs).with_columns(pl.lit("all").alias("scenario"))
-    return pl.concat([by_scenario, overall.select(by_scenario.columns)]).sort("scenario", "type")
+    aggs = [pl.len().alias("cells")]
+    if "largest_network_share" in cal.columns:
+        aggs.append(pl.col("largest_network_share").median())
+    aggs += [pl.col(f"ratio_{d}").median() for d in designs] + [pl.col(f"cover_{d}").median() for d in designs]
+    by_scenario = cal.group_by("scenario", *by).agg(aggs)
+    overall = cal.group_by(*by).agg(aggs).with_columns(pl.lit("all").alias("scenario"))
+    return pl.concat([by_scenario, overall.select(by_scenario.columns)]).sort("scenario", *by)
+
+
+def rust_summaries(reps: pl.DataFrame, out: Path) -> None:
+    """``rust_calibration.tsv`` and ``rust_summary.tsv``, and the gap between the Rust SE and this script's."""
+    boundary = reps.group_by(KEYS).agg((pl.col("se_reason") == "boundary").sum().alias("no_se_boundary"))
+    # A boundary tetrachoric has no influence function: out of r̂'s statistics, as in rep_rows.
+    cal = summarise(reps.filter(pl.col("se_reason").ne_missing("boundary")), ("rust",))
+    cal = cal.join(boundary, on=KEYS, how="full", coalesce=True).sort(KEYS)
+    cal.write_csv(out / "rust_calibration.tsv", separator="\t", float_precision=4)
+    cal = cal.filter(pl.col("n_reps").is_not_null()).with_columns(
+        pl.when(pl.col("stratum") == "stratified").then(pl.lit("stratified")).otherwise(pl.lit("cells")).alias("fit")
+    )
+    medians(cal, ("rust",), ("type", "estimator", "fit")).write_csv(
+        out / "rust_summary.tsv", separator="\t", float_precision=3
+    )
+    both = reps.filter(pl.col("se_rust").is_not_null(), pl.col("se_tool").is_not_nan())
+    gap = both.select(
+        pl.len().alias("estimates"),
+        ((pl.col("se_rust") - pl.col("se_tool")).abs() / pl.col("se_tool")).max().alias("max_rel_se_gap"),
+        (pl.col("r") - pl.col("r_tool")).abs().max().alias("max_r_gap"),
+    )
+    cells = reps.filter(pl.col("stratum") != "stratified")
+    one_sided = cells.filter(pl.col("se_rust").is_null() != (pl.col("se_tool").is_null() | pl.col("se_tool").is_nan()))
+    print(f"Rust SE against mrca_person: {gap.to_dicts()[0]}; one has an SE and the other not: {len(one_sided)}")
 
 
 def main() -> None:
@@ -567,6 +566,7 @@ def main() -> None:
     parser.add_argument("--max-reps", type=int)
     parser.add_argument("--reps", type=Path, help="also write the per-rep rows here (about 40 MB)")
     parser.add_argument("--from-reps", type=Path, help="summarise these per-rep rows instead of computing them")
+    parser.add_argument("--rust", action="store_true", help="calibrate the shipped SE (rust_*.tsv)")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
@@ -575,28 +575,32 @@ def main() -> None:
     if args.out is None or (args.results is None) == (args.from_reps is None):
         parser.error("--out and one of results or --from-reps are required")
     if args.from_reps is not None:
-        write_summaries(pl.read_csv(args.from_reps, separator="\t"), args.out)
+        write_summaries(pl.read_csv(args.from_reps, separator="\t", infer_schema_length=None), args.out, args.rust)
         return
     work = []
     for scen in sorted(p for p in args.results.iterdir() if p.is_dir()):
         numbered = ((int(m[1]), p) for p in scen.iterdir() if (m := re.fullmatch(r"rep(\d+)", p.name)))
         reps = [p for _, p in sorted(numbered) if (p / "cohort.parquet").exists()]
-        work += [(p, i == 0) for i, p in enumerate(reps[: args.max_reps])]
+        work += [(p,) if args.rust else (p, i == 0) for i, p in enumerate(reps[: args.max_reps])]
     rows: list[dict] = []
     with ProcessPoolExecutor(args.jobs) as pool:
-        for done, out in enumerate(pool.map(rep_rows, *zip(*work, strict=True)), 1):
+        job = rust_rep_rows if args.rust else rep_rows
+        for done, out in enumerate(pool.map(job, *zip(*work, strict=True)), 1):
             rows += out
             if done % 50 == 0:
                 print(f"{done}/{len(work)} reps", file=sys.stderr)
-    reps = pl.DataFrame(rows)
+    reps = pl.DataFrame(rows, infer_schema_length=None)
     if args.reps is not None:
         reps.write_csv(args.reps, separator="\t", float_precision=8)
-    write_summaries(reps, args.out)
+    write_summaries(reps, args.out, args.rust)
     print(f"{len(work)} reps, {len(reps)} rows -> {args.out}")
 
 
-def write_summaries(reps: pl.DataFrame, out: Path) -> None:
+def write_summaries(reps: pl.DataFrame, out: Path, rust: bool) -> None:
     out.mkdir(parents=True, exist_ok=True)
+    if rust:
+        rust_summaries(reps, out)
+        return
     cal = summarise(reps)
     cal.write_csv(out / "calibration.tsv", separator="\t", float_precision=4)
     medians(cal).write_csv(out / "summary.tsv", separator="\t", float_precision=3)
