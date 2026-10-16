@@ -21,10 +21,12 @@ import numpy as np
 from pg_phenotype import _native
 from pg_phenotype._input import count, strata
 from pg_phenotype._pedigree import native_pedigree
-from pg_phenotype._trait import Trait, checked
+from pg_phenotype._trait import as_traits
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+    from pg_phenotype._trait import Trait
 
 __all__ = [
     "Cell",
@@ -328,15 +330,7 @@ def mate_correlation(
             int64.
     """
     native = native_pedigree(pedigree)
-    if isinstance(traits, Trait):
-        trait_list = [traits]
-    else:
-        try:
-            given = list(traits)
-        except TypeError:
-            name = type(traits).__name__
-            raise TypeError(f"traits must be a pg_phenotype.Trait or a sequence of them, got {name}") from None
-        trait_list = [checked(t, f"traits[{i}]") for i, t in enumerate(given)]
+    trait_list = as_traits(traits)
     stratum_arrays = None if stratum is None else strata(stratum)
     for name, flag in (("spearman", spearman), ("inference", inference)):
         if not isinstance(flag, (bool, np.bool_)):

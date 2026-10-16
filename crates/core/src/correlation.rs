@@ -131,10 +131,15 @@ pub(crate) fn point(table: [[u64; 2]; 2]) -> Result<Point, Reason> {
 fn fitted(table: [[u64; 2]; 2]) -> Result<(Tables, Point), Reason> {
     let mut counts = Table::zeros(1, 1, 2, 2);
     counts.data = table.iter().flatten().map(|&c| c as f64).collect();
-    // A side's levels are the ones it shows, as a Mate Correlation cell's are.
+    fit_counts(counts)
+}
+
+/// The Polychoric Fit of `counts` from 0.
+pub(crate) fn fit_counts(counts: Table) -> Result<(Tables, Point), Reason> {
+    // A stratum's levels are the ones it shows, as a Mate Correlation cell's are.
     let shown = |margin: Grid<f64>| Grid {
-        rows: 1,
-        cols: 2,
+        rows: margin.rows,
+        cols: margin.cols,
         data: margin.data.iter().map(|&v| v > 0.0).collect(),
     };
     let (rows, cols) = (shown(counts.row_margin()), shown(counts.col_margin()));

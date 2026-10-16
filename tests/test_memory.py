@@ -44,6 +44,7 @@ NOT_CROSSING = {
     "configure_threads",
     "core_version",
     "pg_core_rev",
+    "relative_pairs_ace",
     "tetrachoric_pairs",
     "tetrachoric_table",
     "thread_budget",

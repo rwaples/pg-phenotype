@@ -11,7 +11,7 @@ core; each method is a module on top.
 | Assortative mating: the Mate Correlation of one or two traits, ported from pedsum #13 | `pg_phenotype.assortative` | available |
 | Correlation estimators on their own: the tetrachoric correlation of a 2 x 2 table | `pg_phenotype.correlation` | available |
 | Parent-offspring regression: midparent, mother and father, with a Mate Network sandwich SE | `pg_phenotype.regression` | available |
-| Relative-Pair Correlation: a trait's correlation between relatives per relationship category, no SE yet | `pg_phenotype.relative_pairs` | available |
+| Relative-Pair Correlation: one or two traits' correlation between relatives per relationship category and stratum, and the ACE Fit of A, C, E and rA, rC, rE from it; no SE yet | `pg_phenotype.relative_pairs` | available |
 
 ## Python
 
@@ -132,6 +132,11 @@ res = relative_pairs.correlation(ped, pgp.Trait(dx, kind="binary"), categories=[
 fs = res.cell("FS")
 fs.primary.value, fs["phi"].value, fs.n, fs.n_dropped, fs.concordance
 res.cell("PO").table, res.cell("PO").roles  # rows by offspring; ("offspring", "parent")
+
+both = relative_pairs.correlation(ped, traits=[pgp.Trait(liab1), pgp.Trait(liab2)], stratum=generation)
+both.cell("FS", first_trait=0, second_trait=1).stratified.estimate.value  # cross-trait, within generations
+fit = relative_pairs.ace(both, shared_environment=["MZ", "FS", "MHS"])
+fit.traits[0].A, fit.traits[0].C, fit.traits[0].E, fit.cross.rA
 ```
 
 One cell per category code or named Category Group (default: every
@@ -144,6 +149,20 @@ Pairs are reduced as pedigree-graph finds them and never stored
 count and no SE yet: relative pairs share people, and the cluster design
 waits on a calibration study
 ([ADR 0009](docs/adr/0009-relative-pair-correlation.md)).
+
+`traits=` takes one Trait or two of one kind.  Two traits give each entry a
+cell per trait combination, trait `first_trait` in one member against
+`second_trait` in the other, and `within_person`, each row's trait 0
+against its trait 1.  With `stratum=`, each cell also gets a cell per
+stratum and a stratified fit: one correlation, with a threshold, or a mean
+and SD, per stratum and side.  A directed pair is in its first role's
+stratum, a symmetric pair in a stratum only when both members are.
+`relative_pairs.ace` solves `r = 2 kinship A + C` by weighted least squares
+over the cells, with C in the categories you name in `shared_environment`;
+two traits add rA, rC and rE.  The closed forms, such as Falconer's
+`2 (r_MZ - r_FS)`, are calls that identify the model exactly
+([reference](docs/relative-pairs.md),
+[ADR 0012](docs/adr/0012-relative-pair-strata-two-traits-and-the-ace-fit.md)).
 
 ## Rows and alignment
 
@@ -188,8 +207,10 @@ am <- assortative_mate_correlation(ped, list(trait(ped_df$liab), trait(ped_df$dx
                                    stratum = ped_df$birth_decade, bootstrap = 1000, seed = 1)
 tc <- correlation_tetrachoric(ped_df$dx1, ped_df$dx2)  # or table = matrix(...)
 po <- regression_parent_offspring(ped, trait(ped_df$liab), stratum = ped_df$generation)
-rp <- relative_pairs_correlation(ped, trait(ped_df$dx, kind = "binary"),
-                                 categories = list("MZ", "FS", PO = c("MO", "FO")))
+rp <- relative_pairs_correlation(ped, list(trait(ped_df$liab1), trait(ped_df$liab2)),
+                                 categories = list("MZ", "FS", "MHS", PO = c("MO", "FO")),
+                                 stratum = ped_df$generation)
+fit <- relative_pairs_ace(rp, shared_environment = c("MZ", "FS", "MHS"))
 ```
 
 The R package runs the same core as Python and returns the same scores bit

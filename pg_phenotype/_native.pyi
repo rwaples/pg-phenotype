@@ -106,8 +106,18 @@ def parent_offspring(
 ) -> dict[str, Any]: ...
 def relative_pairs_correlation(
     pedigree: Pedigree | _Columns,
-    trait_: Trait,
+    traits: Sequence[Trait],
+    strata: _Strata | None,
     categories: list[tuple[int, str, list[str] | None]] | None,
     memory_budget_bytes: int,
+    /,
+) -> dict[str, Any]: ...
+def relative_pairs_ace(
+    cells: list[tuple],
+    categories: list[str] | None,
+    components: list[str],
+    shared_environment: list[str] | None,
+    estimator: str,
+    estimate: str,
     /,
 ) -> dict[str, Any]: ...

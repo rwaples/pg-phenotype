@@ -62,10 +62,7 @@ assortative_mate_correlation <- function(pedigree, traits, stratum = NULL, permu
                                          seed = 0, min_stratum_networks = 10, spearman = FALSE, inference = TRUE) {
   call <- sys.call()
   pedigree <- .pgp_pedigree_arg(pedigree, call)
-  if (inherits(traits, "pgphenotype_trait")) traits <- list(traits)
-  if (!is.list(traits) || !all(vapply(traits, inherits, logical(1), "pgphenotype_trait"))) {
-    .pgp_usage("`traits` must be a trait() or a list of them", call)
-  }
+  traits <- .pgp_trait_list(traits, call)
   raw <- .pgp_call(.native_assortative_mate_correlation(
     pedigree, traits, stratum,
     if (is.null(permutations)) NULL else .pgp_number(permutations, "permutations", call),

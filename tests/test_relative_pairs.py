@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from types import MappingProxyType
+
 import numpy as np
 import pytest
 
 from pg_phenotype import ParameterError, ResourceError, Trait, ValidationError
 from pg_phenotype import relative_pairs as rp
-from tests.oracle.relative_pairs_reference import SYMMETRIC, reference
+from tests.oracle.relative_pairs_reference import (
+    SYMMETRIC,
+    reference,
+    stratified_reference,
+    within_person_reference,
+    within_person_stratified_reference,
+)
 from tests.pedigrees import random_pedigree
 
 DEFAULT = ["MZ", "MO", "FO", "FS", "MHS", "PHS", "GP", "Av", "GGP", "HAv", "GAv", "1C"]
@@ -193,9 +202,9 @@ def test_close_values_near_a_large_offset_stay_distinct():
     values = np.array([np.nan, np.nan] + [1e12 + 0.01 * k for k in range(4)])
     res = rp.correlation(ped, Trait(values, kind="continuous"), categories=["FS"])
     assert res.cells[0].primary.value == pytest.approx(-1 / 3, abs=1e-9)
-    e = res.settings["quantization_exponent"]
-    assert res.settings["quantization_step"] == 2.0**-e
-    assert res.settings["quantization_step"] < 1e-12
+    (e,) = res.settings["quantization_exponents"]
+    assert res.settings["quantization_steps"] == (2.0**-e,)
+    assert res.settings["quantization_steps"][0] < 1e-12
 
 
 def test_an_outlier_past_the_spread_raises_insufficient_precision():
@@ -261,6 +270,11 @@ def test_the_trait_is_checked_before_the_request(values, kind, code):
         ([{"G": ["FS"]}, {"G": ["MHS"]}], "duplicate_entry_name", {"name": "G", "positions": (0, 1)}),
         (["FS", {"FS": ["MHS"]}], "reserved_group_name", {"group": "FS", "position": 1}),
         ([{"MO": ["FO"]}], "reserved_group_name", {"group": "MO", "position": 0}),
+        (
+            ["FS", {"within_person": ["MHS"]}],
+            "reserved_group_name",
+            {"group": "within_person", "position": 1},
+        ),
         ([{"G": []}], "empty_category_group", {"group": "G", "position": 0}),
         ([{"G": ["MO", "GP"]}], "mixed_category_group", {"group": "G", "categories": ("MO", "GP")}),
         ([{"G": ["FS", "MO"]}], "mixed_category_group", {"group": "G", "categories": ("FS", "MO")}),
@@ -330,7 +344,7 @@ def test_settings_method_and_metadata():
     assert s["trait_kind"] == "binary"
     assert s["memory_budget_bytes"] == 2**30
     assert s["threads"] == pg_phenotype.thread_budget()
-    assert (s["quantization_exponent"], s["quantization_step"]) == (None, None)
+    assert (s["quantization_exponents"], s["quantization_steps"]) == (None, None)
     assert res.method["se"] == "none (ADR 0009)"
     assert res.metadata["pedigree_graph_core_rev"] == pg_phenotype.pg_core_rev()
     assert pg_phenotype.relative_pairs is rp
@@ -366,3 +380,293 @@ def test_the_gate_withholds_comparison_below_simaces_floor():
     assert all(g.checks([], [row]).values())
     assert not g.checks([], [{**row, "simace_phi": 0.1}])["simace_floor_withheld"]
     assert not g.checks([], [{**row, "simace_floor": False}])["simace_directed_pearson_within"]
+
+
+def _generation(ped: dict[str, np.ndarray], seed: int) -> np.ndarray:
+    """A cohort-like stratum: each row's depth (founders 0, else one more than its deeper parent).
+
+    A fifth of rows are one later, so some sibs and cousins span two strata, and about a tenth are unknown.
+    """
+    row = {int(i): r for r, i in enumerate(ped["id"])}
+    depth = np.zeros(len(ped["id"]))
+    for _ in range(len(depth)):
+        before = depth.copy()
+        for r, (m, f) in enumerate(zip(ped["mother"], ped["father"], strict=True)):
+            parents = [depth[row[int(p)]] for p in (m, f) if int(p) in row]
+            depth[r] = 1 + max(parents) if parents else 0
+        if (depth == before).all():
+            break
+    rng = np.random.default_rng(seed + 7)
+    depth[rng.random(len(depth)) < 0.2] += 1
+    depth[rng.random(len(depth)) < 0.1] = np.nan
+    return depth
+
+
+def _value_close(value: float | None, expected: float | None, tol: float) -> None:
+    if expected is None:
+        assert value is None
+    else:
+        assert value == pytest.approx(expected, abs=tol)
+
+
+@pytest.mark.parametrize("seed", range(3))
+@pytest.mark.parametrize("kind", ["continuous", "binary"])
+def test_stratum_cells_counts_and_stratified_fit_match_the_reference(seed, kind):
+    ped = random_pedigree(seed, generations=5)
+    values = _values(seed, len(ped["id"]), kind)
+    stratum = _generation(ped, seed)
+    res = rp.correlation(ped, Trait(values, kind=kind), stratum=stratum)
+    plain = rp.correlation(ped, Trait(values, kind=kind))
+    fitted = 0
+    for cell, pooled in zip(res.cells, plain.cells, strict=True):
+        ref = stratified_reference(ped, values, kind, [cell.category], stratum)
+        assert cell.crude == pooled.crude
+        assert (cell.n, cell.n_dropped) == (pooled.n, pooled.n_dropped)
+        assert list(cell.strata) == sorted(ref.strata), cell.category
+        for label, got in cell.strata.items():
+            expected = ref.strata[label]
+            assert (got.n, got.n_dropped) == (expected.n, expected.n_dropped), (cell.category, label)
+            if kind == "continuous":
+                _close(got.primary.value, expected.pearson)
+            else:
+                assert got.primary.value == expected.tetrachoric
+                _close(got["phi"].value, expected.phi)
+        assert (cell.n_cross_stratum, cell.n_unknown_stratum) == (ref.n_cross_stratum, ref.n_unknown_stratum)
+        assert sum(s.n for s in cell.strata.values()) + cell.n_cross_stratum + cell.n_unknown_stratum == cell.n
+        stratified = cell.stratified
+        assert (stratified.n, stratified.n_degenerate_stratum) == (ref.n, ref.n_degenerate_stratum), cell.category
+        assert stratified.estimate.reason == ref.reason, cell.category
+        assert stratified.estimate.estimator == cell.primary.estimator
+        # The oracle's polychoric stops at Brent's 1e-7.
+        _value_close(stratified.estimate.value, ref.value, 1e-12 if kind == "continuous" else 1e-6)
+        fitted += stratified.estimate.value is not None
+    assert fitted >= 4
+
+
+@pytest.mark.parametrize("seed", range(3))
+@pytest.mark.parametrize("kind", ["continuous", "binary"])
+def test_symmetric_stratum_cells_do_not_depend_on_row_order(seed, kind):
+    ped = random_pedigree(seed, generations=5)
+    values = _values(seed, len(ped["id"]), kind)
+    stratum = _generation(ped, seed)
+    a = rp.correlation(ped, Trait(values, kind=kind), stratum=stratum)
+    order = np.random.default_rng(seed).permutation(len(values))
+    shuffled = {k: v[order] for k, v in ped.items()}
+    b = rp.correlation(shuffled, Trait(values[order], kind=kind), stratum=stratum[order])
+    for x, y in zip(a.cells, b.cells, strict=True):
+        if x.symmetric:
+            assert x == y, x.category
+
+
+def test_stratified_cells_have_their_shape():
+    ped = _family()
+    stratum = [10, 10, 20, None, 30, np.nan, 31, 30, 20]
+    trait = Trait([0.0, 1, 1, 0, 1, 1, 0, 1, 0], kind="binary")
+    res = rp.correlation(ped, trait, categories=["MO", "FS"], stratum=stratum)
+    mo, fs = res.cells
+    assert isinstance(mo.strata, MappingProxyType)
+    assert list(mo.strata) == [10, 20, 30, 31]
+    s30 = mo.strata[30]
+    assert isinstance(s30, rp.StratumCell)
+    # MO offspring 4, 7 at 30, both with mother 2 (1): offspring values 1, 1.
+    assert (s30.n, s30.n_dropped, s30.table, s30.concordance) == (2, 0, ((0, 0), (0, 2)), None)
+    assert s30.primary is s30.crude[0] is s30["tetrachoric"]
+    assert s30["phi"].reason == "constant_margin"
+    with pytest.raises(KeyError):
+        s30["pearson"]
+    assert (mo.n_cross_stratum, mo.n_unknown_stratum) == (0, 1)
+    assert fs.strata[30].concordance == (0, 0, 0)
+    assert (fs.n_cross_stratum, fs.n_unknown_stratum) == (1, 2)
+    assert isinstance(fs.stratified, rp.Stratified)
+    assert fs.stratified.estimate.estimator == "tetrachoric"
+    assert fs.stratified.estimate.primary
+    for obj in (s30, mo.stratified, mo):
+        with pytest.raises(AttributeError):
+            obj.n = 0
+    assert {"StratumCell", "Stratified"} <= set(rp.__all__)
+    plain = rp.correlation(ped, trait, categories=["MO"]).cells[0]
+    assert (plain.strata, plain.n_cross_stratum, plain.n_unknown_stratum, plain.stratified) == (None, 0, 0, None)
+    assert "strata" in res.method
+
+
+def test_strata_are_checked_after_the_trait_and_before_the_request():
+    with pytest.raises(ValidationError) as err:
+        rp.correlation(_family(), Trait(np.zeros(8), kind="binary"), categories=["XX"], stratum=np.zeros(7))
+    assert err.value.code == "trait_length_mismatch"
+    with pytest.raises(ValidationError) as err:
+        rp.correlation(_family(), Trait(np.zeros(9), kind="binary"), categories=["XX"], stratum=np.zeros(8))
+    assert err.value.code == "stratum_length_mismatch"
+    assert dict(err.value.fields) == {"expected_length": 9, "actual_length": 8}
+    with pytest.raises(ValidationError) as err:
+        rp.correlation(_family(), Trait(np.zeros(9), kind="binary"), categories=["XX"], stratum=np.zeros(9))
+    assert err.value.code == "unknown_category"
+
+
+def _second(seed: int, values: np.ndarray, kind: str) -> np.ndarray:
+    """A second trait of *kind* sharing *values*' signal, with its own missing rows."""
+    rng = np.random.default_rng(seed + 200)
+    signal = np.nan_to_num(values, nan=0.0)
+    liability = 0.5 * signal + rng.normal(size=len(values))
+    v = liability if kind == "continuous" else (liability > 0.3).astype(float)
+    v[rng.random(len(v)) < 0.15] = np.nan
+    return v
+
+
+def _two(seed: int, kind: str) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]:
+    ped = random_pedigree(seed, generations=5)
+    x = _values(seed, len(ped["id"]), kind)
+    return ped, x, _second(seed, x, kind)
+
+
+def _matches(cell: rp.Cell | rp.StratumCell, ref, kind: str, symmetric: bool, cross: bool, where: object) -> None:
+    assert (cell.n, cell.n_dropped, cell.n_entries) == (ref.n, ref.n_dropped, ref.n_entries), where
+    if kind == "continuous":
+        _close(cell["pearson"].value, ref.pearson)
+        return
+    assert cell["tetrachoric"].value == ref.tetrachoric, where
+    _close(cell["phi"].value, ref.phi)
+    t = ref.table
+    if symmetric and not cross:
+        assert (cell.concordance, cell.table) == ((t[0][0] // 2, t[0][1], t[1][1] // 2), None), where
+    else:
+        assert (cell.concordance, cell.table) == (None, t), where
+
+
+@pytest.mark.parametrize("seed", range(3))
+@pytest.mark.parametrize("kind", ["continuous", "binary"])
+def test_every_two_trait_cell_matches_the_reference(seed, kind):
+    ped, x, y = _two(seed, kind)
+    res = rp.correlation(ped, [Trait(x, kind=kind), Trait(y, kind=kind)])
+    combos = {True: [(0, 0), (1, 1), (0, 1)], False: [(0, 0), (0, 1), (1, 0), (1, 1)]}
+    expected = [(c, *t) for c in DEFAULT for t in combos[c in SYMMETRIC]]
+    assert [(c.category, c.first_trait, c.second_trait) for c in res.cells] == expected
+    traits = (x, y)
+    cross_entries = 0
+    for cell in res.cells:
+        cross = cell.first_trait != cell.second_trait
+        other = traits[cell.second_trait] if cross else None
+        ref = reference(ped, traits[cell.first_trait], kind, [cell.category], other)
+        where = (cell.category, cell.first_trait, cell.second_trait)
+        _matches(cell, ref, kind, cell.symmetric, cross, where)
+        if cell.symmetric and cross:
+            assert cell.n <= cell.n_entries <= 2 * cell.n, where
+            cross_entries += cell.n_entries - cell.n
+    # Some symmetric pairs are complete one way only, and some both.
+    assert cross_entries > 0
+    assert res.settings["trait_kind"] == kind
+    assert list(res.settings["categories"]) == DEFAULT
+    exponents = res.settings["quantization_exponents"]
+    assert (exponents is None) == (kind == "binary")
+    if exponents is not None:
+        assert len(exponents) == 2
+        assert res.settings["quantization_steps"] == tuple(2.0**-e for e in exponents)
+
+
+@pytest.mark.parametrize("kind", ["continuous", "binary"])
+def test_same_trait_cells_of_two_traits_are_the_single_trait_cells_bit_for_bit(kind):
+    ped, x, y = _two(1, kind)
+    stratum = _generation(ped, 1)
+    for by in (None, stratum):
+        both = rp.correlation(ped, (Trait(x, kind=kind), Trait(y, kind=kind)), stratum=by)
+        for t, values in enumerate((x, y)):
+            one = rp.correlation(ped, Trait(values, kind=kind), stratum=by)
+            assert one.within_person is None
+            same = [
+                replace(c, first_trait=0, second_trait=0) for c in both.cells if c.first_trait == c.second_trait == t
+            ]
+            assert tuple(same) == one.cells
+            assert both.cell("FS", first_trait=t, second_trait=t).crude == one.cell("FS").crude
+        fs = both.cell("FS")
+        assert (fs.first_trait, fs.second_trait) == (0, 0)
+
+
+@pytest.mark.parametrize("seed", range(2))
+@pytest.mark.parametrize("kind", ["continuous", "binary"])
+def test_two_trait_strata_match_the_reference(seed, kind):
+    ped, x, y = _two(seed, kind)
+    stratum = _generation(ped, seed)
+    res = rp.correlation(ped, [Trait(x, kind=kind), Trait(y, kind=kind)], stratum=stratum)
+    traits = (x, y)
+    fitted = 0
+    for cell in res.cells:
+        cross = cell.first_trait != cell.second_trait
+        other = traits[cell.second_trait] if cross else None
+        ref = stratified_reference(ped, traits[cell.first_trait], kind, [cell.category], stratum, other)
+        where = (cell.category, cell.first_trait, cell.second_trait)
+        assert list(cell.strata) == sorted(ref.strata), where
+        for label, got in cell.strata.items():
+            _matches(got, ref.strata[label], kind, cell.symmetric, cross, (*where, label))
+        assert (cell.n_cross_stratum, cell.n_unknown_stratum) == (ref.n_cross_stratum, ref.n_unknown_stratum), where
+        assert sum(s.n for s in cell.strata.values()) + cell.n_cross_stratum + cell.n_unknown_stratum == cell.n, where
+        stratified = cell.stratified
+        assert (stratified.n, stratified.n_entries, stratified.n_degenerate_stratum) == (
+            ref.n,
+            ref.n_entries,
+            ref.n_degenerate_stratum,
+        ), where
+        assert stratified.estimate.reason == ref.reason, where
+        _value_close(stratified.estimate.value, ref.value, 1e-12 if kind == "continuous" else 1e-6)
+        fitted += cross and stratified.estimate.value is not None
+    assert fitted >= 4
+
+
+@pytest.mark.parametrize("seed", range(2))
+@pytest.mark.parametrize("kind", ["continuous", "binary"])
+def test_within_person_matches_the_reference(seed, kind):
+    ped, x, y = _two(seed, kind)
+    stratum = _generation(ped, seed)
+    traits = [Trait(x, kind=kind), Trait(y, kind=kind)]
+    w = rp.correlation(ped, traits, categories=[]).within_person
+    assert isinstance(w, rp.Cell)
+    assert (w.category, w.members, w.symmetric, w.roles, w.first_trait, w.second_trait) == (
+        "within_person",
+        (),
+        False,
+        None,
+        0,
+        1,
+    )
+    assert (w.strata, w.stratified) == (None, None)
+    _matches(w, within_person_reference(x, y, kind), kind, False, True, "pooled")
+    w = rp.correlation(ped, traits, stratum=stratum, categories=["FS"]).within_person
+    ref = within_person_stratified_reference(x, y, kind, stratum)
+    assert list(w.strata) == sorted(ref.strata)
+    for label, got in w.strata.items():
+        _matches(got, ref.strata[label], kind, False, True, label)
+    assert (w.n_cross_stratum, w.n_unknown_stratum) == (0, ref.n_unknown_stratum)
+    assert sum(s.n for s in w.strata.values()) + w.n_unknown_stratum == w.n
+    assert (w.stratified.n, w.stratified.n_degenerate_stratum) == (ref.n, ref.n_degenerate_stratum)
+    assert w.stratified.estimate.reason == ref.reason
+    _value_close(w.stratified.estimate.value, ref.value, 1e-12 if kind == "continuous" else 1e-6)
+    assert w.stratified.estimate.value is not None
+
+
+def test_traits_take_one_or_two_of_one_kind():
+    ped = _family()
+    x = Trait([0.3, -1.2, 0.8, 2.0, 1.5, -0.4, 0.9, 0.1, 1.1])
+    b = Trait([0.0, 1, 1, 0, 1, 1, 0, 1, 0], kind="binary")
+    assert rp.correlation(ped, x, categories=["FS"]) == rp.correlation(ped, [x], categories=["FS"])
+    res = rp.correlation(ped, (x, x), categories=["FS", "MO"])
+    assert res.cell("FS", first_trait=0, second_trait=1).n_entries == 6
+    assert res.cell("MO", first_trait=1, second_trait=0).roles == ("offspring", "mother")
+    with pytest.raises(KeyError):
+        res.cell("FS", first_trait=1, second_trait=0)
+    with pytest.raises(ValidationError) as err:
+        rp.correlation(ped, [], categories=["FS"])
+    assert (err.value.code, dict(err.value.fields)) == ("trait_count", {"actual": 0, "minimum": 1, "maximum": 2})
+    with pytest.raises(ValidationError) as err:
+        rp.correlation(ped, [x, x, x], categories=["FS"])
+    assert err.value.code == "trait_count"
+    with pytest.raises(ValidationError) as err:
+        rp.correlation(ped, [x, b], categories=["FS"])
+    assert (err.value.code, dict(err.value.fields)) == ("unsupported_trait_kind", {"kinds": ("continuous", "binary")})
+    assert str(err.value) == "the traits are continuous and binary: pass two traits of one kind"
+    with pytest.raises(ValidationError) as err:
+        rp.correlation(ped, [x, Trait(np.zeros(8))], categories=["FS"])
+    assert (err.value.code, err.value.fields["field"]) == ("trait_length_mismatch", "traits[1]")
+    with pytest.raises(TypeError, match=r"traits\[1\]"):
+        rp.correlation(ped, [x, np.zeros(9)])
+    with pytest.raises(TypeError):
+        rp.correlation(ped, 1.0)
+    with pytest.raises(TypeError):
+        rp.correlation(ped, trait=x)
