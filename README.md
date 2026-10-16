@@ -278,7 +278,7 @@ included.
   1.2e-8.  Symmetric categories differ by design, by up to 3.4e-3 at a
   thousand pairs or more ([gate report](docs/gates/relative-pairs/README.md)).
 
-Design decisions are in `docs/adr/`; vocabulary in `CONTEXT.md`.
+Design decisions are in `docs/adr/`; vocabulary in `GLOSSARY.md`.
 
 ## Development
 

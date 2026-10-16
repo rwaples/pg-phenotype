@@ -30,6 +30,9 @@
   every other pg-phenotype error (it counted from 0 in v0.4.0 and before).
   Python output is unchanged.
 
+- The glossary is `GLOSSARY.md`, renamed from `CONTEXT.md` (simACE #35).
+  Update any link to the old file.
+
 ## v0.4.0
 
 The Relative-Pair Correlation takes strata and two traits, and the new ACE
