@@ -6,8 +6,9 @@
 \usage{
 relative_pairs_correlation(
   pedigree,
-  trait,
+  traits,
   categories = NULL,
+  stratum = NULL,
   memory_budget_bytes = 2^30
 )
 }
@@ -16,42 +17,81 @@ relative_pairs_correlation(
 columns `id`, `mother` and `father` (`NA` or -1 when missing),
 optionally `twin` and `sex`, checked for this call alone.}
 
-\item{trait}{A continuous or binary [trait()] on the pedigree's rows.  An
-all-missing or constant trait gives cells with a reason.}
+\item{traits}{A continuous or binary [trait()] on the pedigree's rows, or
+a list of one or two of one kind.  An all-missing or constant trait
+gives cells with a reason.}
 
-\item{categories}{`NULL` for every category up to degree 3, one cell
-each; else the cells in order, as a character vector of codes or a list
+\item{categories}{`NULL` for every category up to degree 3; else the
+entries in order, as a character vector of codes or a list
 whose unnamed elements are codes and whose named elements are Category
 Groups: `list("MZ", "FS", PO = c("MO", "FO"))`.  A group's codes are all
 symmetric, or all directed with the same roles (mother and father read
 as parent); no code is in two entries, and no group is named like a
-code.  A category with no pairs still gets a cell, with `n = 0`.}
+code or `"within_person"`.  A category with no pairs still gets its cells, with `n = 0`.}
 
-\item{memory_budget_bytes}{The bound on the engine's accumulators.}
+\item{stratum}{`NULL`, or one whole-number label per row (a generation, a
+birth cohort), `NA` where unknown.  `within_person` puts each row in its
+own stratum.  The pooled fields do not change.}
+
+\item{memory_budget_bytes}{The bound on the engine's accumulators and,
+with two traits, the within-person accumulator.}
 }
 \value{
 An object of class `pgphenotype_relative_pairs`: a list with
-  `cells` (one per entry, in request order), `settings`, `method` and
-  `metadata`.  Each cell holds `category` (the code or the group's name),
-  `members`, `symmetric`, `roles` (`NULL` when symmetric), `n` (unordered
-  pairs with both values observed), `n_dropped` (with either missing),
-  `concordance` (a binary symmetric cell's both 0, discordant, both 1),
-  `table` (a binary directed cell's 2 x 2 counts, rows by the first role's
-  value) and `crude`: each estimator's `estimator`, `primary`, `value`,
-  `reason` (why `value` is `NULL`) and `boundary`, the primary first.
+  `cells` (each entry's, in request order: one with one trait; with two,
+  a symmetric entry's trait 1 x 1, 2 x 2, 1 x 2 and a directed entry's
+  1 x 1, 1 x 2, 2 x 1, 2 x 2), `within_person` (with two traits, a cell
+  over the rows; `NULL` with one), `settings` (with continuous traits'
+  `quantization_exponents` and `quantization_steps`, one per trait),
+  `method` and `metadata`.  Each cell holds `category` (the code, the
+  group's name, or `"within_person"`), `members`, `symmetric`, `roles`
+  (`NULL` when symmetric), `first_trait` and `second_trait` (the traits,
+  counted from 1, read in the first member and the second), `n`
+  (unordered pairs with a complete orientation: trait `first_trait` of
+  one member and `second_trait` of the other observed), `n_dropped` (the
+  other pairs), `n_entries` (a symmetric cross-trait cell's complete
+  orientations, which its estimates read; else `NULL`), `concordance` (a
+  binary symmetric same-trait cell's both 0, discordant, both 1), `table`
+  (any other binary cell's 2 x 2 counts, rows by trait `first_trait` of
+  one member, a directed cell's first role, and columns by `second_trait`
+  of the other, a symmetric cell's orientations summed) and `crude`: each
+  estimator's `estimator`, `primary`, `value`, `reason` (why `value` is
+  `NULL`) and `boundary`, the primary first.
+  With `stratum`, a cell also holds `strata` (one record per known label,
+  ascending, with its `stratum` and the pooled fields `n`, `n_dropped`,
+  `n_entries`, `concordance`, `table` and `crude` over its pairs; `n = 0`
+  when it has none), `n_cross_stratum` (symmetric pairs with a complete
+  orientation whose members are in two known strata), `n_unknown_stratum`
+  (pairs with a complete orientation in no stratum for an unknown
+  stratum: a directed pair's first member's, either member's of a
+  symmetric pair; `n` is the strata's `n` plus these two) and
+  `stratified`: the primary estimator
+  fitted over every pair of two known strata at once (rows by the first
+  member's stratum, columns by the second's, a threshold or a mean and SD
+  per stratum and side, one correlation), with `n` (pairs fitted),
+  `n_entries` (a symmetric cross-trait cell's complete orientations
+  fitted; else `NULL`), `n_degenerate_stratum` (pairs left out in the strata whose side is
+  constant, dropped until none is) and `estimate`.  Without `stratum`
+  these are `NULL`, 0, 0 and `NULL`.
 }
 \description{
-One trait's correlation between the members of each Relationship
+One or two traits' correlation between the members of each Relationship
 Category's Relative Pairs (pedigree-graph's MZ, MO, FO, FS, MHS, ..., 1C),
 or of a Category Group's (such as PO for MO and FO).  A continuous trait
 gets Pearson's r; a binary trait gets the tetrachoric correlation
 (primary) and phi.  A symmetric category's pairs enter in both orders, so
-its Pearson is intraclass and its tetrachoric fits one threshold; a
-directed category's pairs enter once, in its roles' order (offspring then
-parent).  There is no SE yet: relative pairs share people, and the
-cluster design waits on a calibration study.  The same inputs give the
-same numbers as the Python package's
-`pg_phenotype.relative_pairs.correlation`.
+its same-trait Pearson is intraclass and its tetrachoric fits one
+threshold; a directed category's pairs enter once, in its roles' order
+(offspring then parent).  With two traits of one kind, each entry gets a
+cell per trait combination, and `within_person` is the Within-Person
+Cross-Trait Correlation: each row's trait 1 against its trait 2.  There
+is no SE yet: relative pairs share people, and the cluster design waits
+on a calibration study.  With `stratum`, each cell
+also gets one cell per known stratum and a stratified fit: a directed pair
+is in its first role's stratum (the offspring's, the descendant's),
+whatever the second member's; a symmetric pair is in a stratum only when
+both members are.  The same inputs give the same numbers as the Python
+package's `pg_phenotype.relative_pairs.correlation`.
 }
 \examples{
 ped <- data.frame(
@@ -61,4 +101,8 @@ ped <- data.frame(
 )
 x <- trait(c(0.3, -1.2, 0.8, 2.0, 1.5, -0.4, 0.9, 0.1, 1.1))
 relative_pairs_correlation(ped, x, categories = list("FS", "MHS", PO = c("MO", "FO")))
+relative_pairs_correlation(ped, x, categories = "MO", stratum = c(0, 0, 1, NA, 2, 2, 2, 2, 1))
+y <- trait(c(1.0, 0.2, -0.5, 0.7, 0.4, 1.3, -0.8, 0.6, 0.4))
+r <- relative_pairs_correlation(ped, list(x, y), categories = c("FS", "MO"))
+r$within_person
 }

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
 from pg_phenotype import _native
 from pg_phenotype._errors import ValidationError
 from pg_phenotype._input import floats
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 TraitKind = Literal["continuous", "binary", "ordinal", "categorical"]
 #: The kinds the core reads, in its order (``TraitKind::ALL``).
@@ -94,6 +97,22 @@ def checked(trait: object, name: str = "trait") -> Trait:
     if not isinstance(trait, Trait):
         raise TypeError(f"{name} must be a pg_phenotype.Trait, got {type(trait).__name__}")
     return trait
+
+
+def as_traits(given: Trait | Sequence[Trait]) -> list[Trait]:
+    """*given*, a :class:`Trait` or a sequence of them, as a list; ``TypeError`` naming ``traits[i]`` otherwise.
+
+    The core counts them, so an empty or long sequence passes here.
+    """
+    if isinstance(given, Trait):
+        return [given]
+    try:
+        items = list(given)
+    except TypeError:
+        raise TypeError(
+            f"traits must be a pg_phenotype.Trait or a sequence of them, got {type(given).__name__}"
+        ) from None
+    return [checked(t, f"traits[{i}]") for i, t in enumerate(items)]
 
 
 def _pd_categorical_type() -> tuple[type, ...]:

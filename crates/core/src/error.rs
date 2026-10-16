@@ -9,6 +9,7 @@
 //! error is the exception: pedigree-graph-core writes its message, from 0 in
 //! every host, while its fields count from the host's base.
 
+use crate::ace::Estimator as AceEstimator;
 use crate::input::TraitKind;
 use pedigree_graph_core::error::{Error as PgError, ErrorClass, FieldValue as PgField};
 use std::fmt;
@@ -243,6 +244,8 @@ pub enum Error {
         field: &'static str,
         kind: TraitKind,
     },
+    /// Two traits of different kinds, where a method takes two of one kind.
+    MixedTraitKinds { kinds: [TraitKind; 2] },
     /// A trait value that is not a level code (binary: 0, 1; ordinal) or
     /// not finite (continuous).
     InvalidTraitCode {
@@ -281,8 +284,8 @@ pub enum Error {
         positions: [Position; 2],
         entries: [String; 2],
     },
-    /// A Category Group named like a Relationship Category code, which would
-    /// label another category's pairs with that code.
+    /// A Category Group named like a Relationship Category code or the
+    /// Within-Person cell, which would label other pairs with that name.
     ReservedGroupName { group: String, position: Position },
     /// A Category Group mixes symmetric and directed categories, or directed
     /// categories with different roles.
@@ -323,6 +326,34 @@ pub enum Error {
     CipNotEstimable { reason: CipEstimate },
     /// A parent-offspring call that requests no regression line.
     NoLines,
+    /// An ACE Fit with C and no declared Shared-Environment Categories.
+    MissingSharedEnvironment,
+    /// A `shared_environment` entry is not a Relationship Category code.
+    UnknownSharedEnvironment {
+        category: String,
+        position: Position,
+    },
+    /// A requested entry name that no cell of the result has.
+    UnknownEntry { name: String, position: Position },
+    /// A Category Group with categories both in and out of the declared
+    /// Shared-Environment Categories.
+    MixedSharedEnvironment {
+        group: String,
+        categories: [&'static str; 2],
+    },
+    /// A Category Group whose categories differ in kinship degree.
+    MixedKinship {
+        group: String,
+        categories: [&'static str; 2],
+    },
+    /// The stratified form was requested with phi, which has none, or of
+    /// cells none of which has one.
+    NoStratifiedForm { estimator: AceEstimator },
+    /// An estimator requested of an entry that does not carry it.
+    MissingEstimator {
+        estimator: AceEstimator,
+        entry: String,
+    },
 }
 
 impl From<PgError> for Error {
@@ -373,7 +404,9 @@ impl Error {
             Error::InvalidCip { .. } => (Parameter, "invalid_cip"),
             Error::InconsistentParameters { .. } => (Parameter, "inconsistent_parameters"),
             Error::TraitCount { .. } => (Validation, "trait_count"),
-            Error::UnsupportedTraitKind { .. } => (Validation, "unsupported_trait_kind"),
+            Error::UnsupportedTraitKind { .. } | Error::MixedTraitKinds { .. } => {
+                (Validation, "unsupported_trait_kind")
+            }
             Error::InvalidTraitCode { .. } => (Validation, "invalid_trait_value"),
             Error::SparseOrdinalCodes { .. } => (Validation, "sparse_ordinal_codes"),
             Error::UnusedLevel { .. } => (Validation, "unused_level"),
@@ -392,6 +425,13 @@ impl Error {
             Error::EntryNotBeforeAge { .. } => (Validation, "entry_not_before_age"),
             Error::CipNotEstimable { .. } => (Validation, "cip_not_estimable"),
             Error::NoLines => (Class::Usage, "no_lines"),
+            Error::MissingSharedEnvironment => (Class::Usage, "missing_shared_environment"),
+            Error::UnknownSharedEnvironment { .. } => (Validation, "unknown_category"),
+            Error::UnknownEntry { .. } => (Validation, "unknown_entry"),
+            Error::MixedSharedEnvironment { .. } => (Validation, "mixed_shared_environment"),
+            Error::MixedKinship { .. } => (Validation, "mixed_kinship"),
+            Error::NoStratifiedForm { .. } => (Class::Usage, "no_stratified_form"),
+            Error::MissingEstimator { .. } => (Class::Usage, "missing_estimator"),
         }
     }
 
@@ -488,6 +528,12 @@ impl Error {
             Error::UnsupportedTraitKind { field, kind } => {
                 vec![("field", Str(field)), ("kind", Str(kind.name()))]
             }
+            Error::MixedTraitKinds { kinds } => {
+                vec![(
+                    "kinds",
+                    FieldValue::Strs(kinds.map(TraitKind::name).to_vec()),
+                )]
+            }
             Error::InvalidTraitCode {
                 field,
                 kind,
@@ -522,7 +568,8 @@ impl Error {
                 ("expected_length", int(*expected_length)),
                 ("actual_length", int(*actual_length)),
             ],
-            Error::UnknownCategory { category, position } => vec![
+            Error::UnknownCategory { category, position }
+            | Error::UnknownSharedEnvironment { category, position } => vec![
                 ("category", Text(category.clone())),
                 ("position", at(position)),
             ],
@@ -538,7 +585,9 @@ impl Error {
             Error::ReservedGroupName { group, position } => {
                 vec![("group", Text(group.clone())), ("position", at(position))]
             }
-            Error::MixedCategoryGroup { group, categories } => vec![
+            Error::MixedCategoryGroup { group, categories }
+            | Error::MixedSharedEnvironment { group, categories }
+            | Error::MixedKinship { group, categories } => vec![
                 ("group", Text(group.clone())),
                 ("categories", FieldValue::Strs(categories.to_vec())),
             ],
@@ -579,7 +628,15 @@ impl Error {
                 ("age", Float(*age)),
             ],
             Error::CipNotEstimable { reason } => vec![("reason", Str(reason.name()))],
-            Error::NoLines => vec![],
+            Error::NoLines | Error::MissingSharedEnvironment => vec![],
+            Error::UnknownEntry { name, position } => {
+                vec![("name", Text(name.clone())), ("position", at(position))]
+            }
+            Error::NoStratifiedForm { estimator } => vec![("estimator", Str(estimator.name()))],
+            Error::MissingEstimator { estimator, entry } => vec![
+                ("estimator", Str(estimator.name())),
+                ("entry", Text(entry.clone())),
+            ],
         }
     }
 
@@ -646,6 +703,12 @@ impl fmt::Display for Message<'_> {
             Error::UnsupportedTraitKind { field, kind } => {
                 write!(f, "{field} is a {} trait, which this method does not take", kind.name())
             }
+            Error::MixedTraitKinds { kinds: [first, second] } => write!(
+                f,
+                "the traits are {} and {}: pass two traits of one kind",
+                first.name(),
+                second.name()
+            ),
             Error::InvalidTraitCode { field, kind, position, value } => {
                 let position = position.at(base);
                 match kind {
@@ -696,7 +759,7 @@ impl fmt::Display for Message<'_> {
             Error::ReservedGroupName { group, position } => write!(
                 f,
                 "category group {group:?} (categories[{}]) is named like a Relationship \
-                 Category code; name it apart from every code",
+                 Category code or the within_person cell; name it apart from these",
                 position.at(base)
             ),
             Error::MixedCategoryGroup { group, categories: [a, b] } => write!(
@@ -739,6 +802,47 @@ impl fmt::Display for Message<'_> {
                 write!(f, "no CIP table: {}", reason.describe())
             }
             Error::NoLines => write!(f, "request at least one of midparent, mother and father"),
+            Error::MissingSharedEnvironment => write!(
+                f,
+                "fitting C needs shared_environment: the Relationship Category codes whose pairs \
+                 share the common environment"
+            ),
+            Error::UnknownSharedEnvironment { category, position } => write!(
+                f,
+                "shared_environment[{}] names {category:?}, which is not a Relationship Category code",
+                position.at(base)
+            ),
+            Error::UnknownEntry { name, position } => write!(
+                f,
+                "categories[{}] names {name:?}, which is no entry of the result",
+                position.at(base)
+            ),
+            Error::MixedSharedEnvironment { group, categories: [a, b] } => write!(
+                f,
+                "category group {group:?} has {a} and {b}, only one of them in shared_environment: \
+                 a group's categories are all shared or none"
+            ),
+            Error::MixedKinship { group, categories: [a, b] } => write!(
+                f,
+                "category group {group:?} mixes {a} and {b}, of different kinship degrees: \
+                 the ACE Fit needs one kinship per group"
+            ),
+            Error::NoStratifiedForm { estimator } => match estimator {
+                AceEstimator::Phi => write!(
+                    f,
+                    "phi has no stratified form: pass estimate='pooled' with estimator='phi'"
+                ),
+                AceEstimator::Primary => write!(
+                    f,
+                    "no entry has a stratified form: pass estimate='pooled', or compute the \
+                     result with strata"
+                ),
+            },
+            Error::MissingEstimator { estimator, entry } => write!(
+                f,
+                "entry {entry:?} has no {} estimate",
+                estimator.name()
+            ),
         }
     }
 }
@@ -761,7 +865,7 @@ mod tests {
     use super::*;
 
     /// How many variants `Error` has.
-    const VARIANTS: usize = 32;
+    const VARIANTS: usize = 40;
 
     /// Each variant's number, so `samples` can be checked to hold every
     /// variant: a new variant does not compile until it has an arm here.
@@ -799,6 +903,14 @@ mod tests {
             Error::EntryNotBeforeAge { .. } => 29,
             Error::CipNotEstimable { .. } => 30,
             Error::NoLines => 31,
+            Error::MissingSharedEnvironment => 32,
+            Error::UnknownSharedEnvironment { .. } => 33,
+            Error::UnknownEntry { .. } => 34,
+            Error::MixedSharedEnvironment { .. } => 35,
+            Error::MixedKinship { .. } => 36,
+            Error::NoStratifiedForm { .. } => 37,
+            Error::MissingEstimator { .. } => 38,
+            Error::MixedTraitKinds { .. } => 39,
         }
     }
 
@@ -953,6 +1065,36 @@ mod tests {
                 reason: CipEstimate::ZeroPrevalence,
             },
             Error::NoLines,
+            Error::MissingSharedEnvironment,
+            Error::UnknownSharedEnvironment {
+                category: "XX".to_string(),
+                position: p,
+            },
+            Error::UnknownEntry {
+                name: "XX".to_string(),
+                position: p,
+            },
+            Error::MixedSharedEnvironment {
+                group: "A".to_string(),
+                categories: ["MHS", "PHS"],
+            },
+            Error::MixedKinship {
+                group: "A".to_string(),
+                categories: ["FS", "MHS"],
+            },
+            Error::NoStratifiedForm {
+                estimator: AceEstimator::Phi,
+            },
+            Error::NoStratifiedForm {
+                estimator: AceEstimator::Primary,
+            },
+            Error::MissingEstimator {
+                estimator: AceEstimator::Phi,
+                entry: "FS".to_string(),
+            },
+            Error::MixedTraitKinds {
+                kinds: [TraitKind::Continuous, TraitKind::Binary],
+            },
         ]
     }
 

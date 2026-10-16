@@ -455,6 +455,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
         relative_pairs::relative_pairs_correlation,
         m
     )?)?;
+    m.add_function(wrap_pyfunction!(relative_pairs::relative_pairs_ace, m)?)?;
     m.add_class::<Prep>()?;
     m.add_class::<Pedigree>()?;
     #[cfg(feature = "test-hooks")]

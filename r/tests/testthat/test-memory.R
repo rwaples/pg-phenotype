@@ -26,7 +26,7 @@ not_crossing <- c(
   ".native_configure_threads", ".native_correlation_tetrachoric_pairs",
   ".native_correlation_tetrachoric_table", ".native_pafgrs_check_cip",
   ".native_pafgrs_cip_aalen_johansen", ".native_pafgrs_prep_info", ".native_pedigree_align",
-  ".native_pedigree_rows", ".native_thread_budget", ".native_trait_kinds"
+  ".native_pedigree_rows", ".native_relative_pairs_ace", ".native_thread_budget", ".native_trait_kinds"
 )
 
 test_that("every native routine is classified as crossing or not", {

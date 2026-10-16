@@ -103,3 +103,12 @@ print.pgphenotype_trait <- function(x, ...) {
   ))
   invisible(x)
 }
+
+# `traits`, a trait() or a list of them, as a list; the core counts them.
+.pgp_trait_list <- function(traits, call) {
+  if (inherits(traits, "pgphenotype_trait")) traits <- list(traits)
+  if (!is.list(traits) || !all(vapply(traits, inherits, logical(1), "pgphenotype_trait"))) {
+    .pgp_usage("`traits` must be a trait() or a list of them", call)
+  }
+  traits
+}
