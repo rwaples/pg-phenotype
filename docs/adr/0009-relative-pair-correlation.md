@@ -1,6 +1,7 @@
 # ADR 0009: The Relative-Pair Correlation double-enters symmetric pairs and reports no SE yet
 
-**Status:** accepted
+**Status:** accepted; amended 2026-10-15 by ADR 0012 (strata, two traits
+and `n_entries`)
 **Date:** 2026-10-10
 **Context:** issue #1; `docs/relative-pairs-se-research.md`
 

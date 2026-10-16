@@ -2,6 +2,77 @@
 
 ## Unreleased
 
+- `relative_pairs.correlation` takes `traits=`, where it took `trait=`: a
+  Trait, or a sequence of one or two of one kind (issue #17).  R's
+  `relative_pairs_correlation` takes `traits`, a `trait()` or a list of
+  them.  Two traits give each entry a cell per trait combination, read as
+  trait `first_trait` in a pair's first member and `second_trait` in the
+  second: a symmetric entry's (0, 0), (1, 1) and (0, 1), a directed
+  entry's (0, 0), (0, 1), (1, 0) and (1, 1).  The symmetric cross-trait
+  cell enters each pair in both orientations, with a threshold, or a mean
+  and SD, per trait.  `n` counts the pairs with at least one complete
+  orientation, and a symmetric cross-trait cell adds `n_entries`, its
+  complete orientations.  A binary cross-trait cell reports its 2 x 2
+  `table`.  The result's `within_person` is the Within-Person Cross-Trait
+  Correlation, each row's trait 0 against its trait 1.
+  `res.cell(code)` is the (0, 0) cell, and `first_trait=` and
+  `second_trait=` pick another.  None of the pairs are stored, and one
+  pedigree traversal gives every trait combination.  New error causes:
+  `trait_count` for no trait or more than two, and
+  `unsupported_trait_kind` for two traits of different kinds.  In R, cells
+  count traits from 1.  One-trait results are unchanged apart from the
+  new fields (ADR 0012).  Code that needs updating: a call that passes
+  `trait=` (R: `trait =`) by name, and code that builds a `Cell` or a
+  `RelativePairCorrelation` by position.  In Rust,
+  `relative_pairs::correlation` takes a slice of traits and an
+  `Option<Strata>`, and `RelativePairCorrelation` gains `within_person`.
+- `relative_pairs.correlation`'s `settings` reports
+  `quantization_exponents` and `quantization_steps`, one per continuous
+  trait, where it reported `quantization_exponent` and
+  `quantization_step`.  Both are `None` for binary traits, as before.
+  Code that needs updating: code that reads either old key.  In Rust,
+  `RelativePairCorrelation::quantization_exponent` is
+  `quantization_exponents`, an `Option<Vec<i64>>`.
+- `relative_pairs.correlation` takes `stratum=` (R: `stratum`), one
+  integer label per row, NA where unknown (issue #17).  A directed pair is
+  in its first role's stratum, and a symmetric pair in a stratum only when
+  both members are.  Each cell then gets `strata`, a `StratumCell` per
+  known label with the pooled fields, and `stratified`, the primary
+  estimator fitted once over every pair of two known strata with a
+  threshold, or a mean and SD, per stratum and side, and one correlation.
+  New counts: `n_cross_stratum` (symmetric pairs in two known strata),
+  `n_unknown_stratum`, and the stratified fit's `n`, `n_entries` (a
+  symmetric cross-trait cell's complete orientations fitted) and
+  `n_degenerate_stratum` (pairs in a stratum left out for a constant
+  side).  A cell's `n` is its strata's `n` plus `n_cross_stratum` plus
+  `n_unknown_stratum`.  Without `stratum` the pooled fields are as
+  before.  `method` gains `traits`, `within_person` and `strata`.  Code
+  that needs updating: R's `relative_pairs_correlation` takes `stratum`
+  before `memory_budget_bytes`, so a budget passed by position must be
+  passed by name.
+- The ACE Fit: `relative_pairs.ace(result, categories=None,
+  components=("A", "C"), shared_environment=None, estimator="primary",
+  estimate=None)` (R: `relative_pairs_ace`, Rust: `ace::fit`) solves each
+  trait's A, C and E shares from a Relative-Pair Correlation result by
+  weighted least squares, `r = 2 phi A + s C` per cell, and with two
+  traits the cross-trait correlations rA, rC and rE (issues #6 and #17).
+  `phi` is the nominal kinship `2^-(degree+1)`, `s` is 1 for a category
+  in `shared_environment`, and a row's weight is the pairs behind the
+  value it reads.  A cross-trait row weighs complete orientations, each
+  once: a symmetric cell's `n_entries`, a directed cell's `n`.
+  `shared_environment` is required to fit C; it has no default.  Values
+  are unconstrained: `rA`, `rC` and `rE` are `None` with
+  `nonpositive_component` when a share is at most 0, an `|r|` above 1 is
+  flagged `out_of_range`, and an underdetermined fit gives
+  `not_identified`.  #6's closed forms are calls: Falconer is
+  `ace(res, categories=["MZ", "FS"], shared_environment=["MZ", "FS"])`.
+  The tetrachoric is on the liability scale; `estimator="phi",
+  estimate="pooled"` gives the observed scale.  No SE.  New error codes:
+  `unknown_entry`, `mixed_kinship`, `mixed_shared_environment`,
+  `missing_shared_environment`, `no_stratified_form` and
+  `missing_estimator`; `unknown_category` also covers a
+  `shared_environment` code.  ADR 0012 records the design, and
+  [docs/relative-pairs.md](docs/relative-pairs.md) is the reference.
 - `regression.parent_offspring` takes `lines=` (any of `"midparent"`,
   `"mother"`, `"father"`; default all three) and `inference=` (default
   `True`), and R's `regression_parent_offspring` takes `lines` and

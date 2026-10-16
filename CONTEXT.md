@@ -107,8 +107,12 @@ the whole pedigree's.
 _Avoid_: family, component
 
 **Cell**:
-One mother trait against one father trait.  One trait gives one cell; two
-traits give four, in the order (0, 0), (0, 1), (1, 0), (1, 1).
+One trait of one member against one trait of the other: in the Mate
+Correlation, the mother's against the father's; in the Relative-Pair
+Correlation, a category's first member's against its second's.  One trait
+gives one cell.  Two traits give four, in the order (0, 0), (0, 1), (1, 0),
+(1, 1), except for a symmetric category, which gives three: (0, 0), (1, 1),
+(0, 1).
 _Avoid_: pair of traits, combination
 
 **Polychoric Fit**:
@@ -128,8 +132,10 @@ companions).
 _Avoid_: spousal correlation, assortment coefficient
 
 **Within-Person Cross-Trait Correlation**:
-With two traits, the correlation of a person's two traits, per sex, once per
-distinct person with an analysed Mating Pair.
+With two traits, the correlation of a person's two traits, once per person.
+The Mate Correlation takes it per sex over the people with an analysed
+Mating Pair; the Relative-Pair Correlation over every row, and within each
+stratum.
 
 **Parent-Offspring Regression**:
 The ordinary least-squares line of a child's trait on a parent value: the
@@ -158,12 +164,36 @@ roles' order.
 _Avoid_: relative (PA-FGRS's term), dyad, relationship pair
 
 **Relative-Pair Correlation**:
-The correlation of one trait between the members of a category's (or a
-Category Group's) Relative Pairs, by the estimator the trait's kind calls
-for: Pearson for a continuous trait, tetrachoric and phi for a binary one.
-In both orders a symmetric category's correlation is intraclass: one mean
-and spread, or one threshold, for both members.
+The correlation between the members of a category's (or a Category
+Group's) Relative Pairs, of one trait in both or, with two traits, of one
+trait in the first member against the other in the second, by the
+estimator the traits' kind calls for: Pearson for continuous traits,
+tetrachoric and phi for binary ones.  In both orders a symmetric category's
+same-trait correlation is intraclass: one mean and spread, or one
+threshold, for both members.  Its **stratified** form fits the primary
+estimator once over all strata: each stratum gets its own mean and
+spread, or threshold, on each side of the pair, and the strata share one
+correlation.
 _Avoid_: relative correlation, familial correlation
+
+**Stratum** (of a Relative Pair):
+The stratum label that places a Relative Pair in a stratum cell: a directed
+pair's first role's label; a symmetric pair's shared label, when both
+members carry the same one.  A symmetric pair whose members carry two
+different known labels is **cross-stratum** and is in no stratum cell.
+
+**Shared-Environment Category**:
+A Relationship Category whose pairs the caller declares to share the common
+environment C (under household by mother: MZ, FS, MHS).  The library never
+assumes which categories these are.
+
+**ACE Fit**:
+Additive genetic (A), common environment (C) and unique environment (E)
+variance shares solved from Relative-Pair Correlations as linear functions
+of each category's nominal kinship and whether it is a Shared-Environment
+Category; with two traits, also the cross-trait genetic, common-environment
+and unique-environment correlations rA, rC, rE.
+_Avoid_: Falconer estimate (a special case), heritability regression
 
 **Concordance**:
 A symmetric category's binary Relative Pairs counted unordered: both
