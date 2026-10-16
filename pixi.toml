@@ -5,7 +5,7 @@
 name = "pg-phenotype"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
-requires-pixi = ">=0.76,<0.77"
+requires-pixi = ">=0.82,<0.83"
 
 [dependencies]
 python = "3.14.*"
