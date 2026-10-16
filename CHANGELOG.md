@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.4.0
+
+The Relative-Pair Correlation takes strata and two traits, and the new ACE
+Fit (`relative_pairs.ace`) solves A, C, E and rA, rC, rE from its cells
+(#1, #6, #17; ADR 0012).  `parent_offspring` takes `lines=` and
+`inference=`, and the table fits no longer depend on the table's layout.
+Code that needs updating: `relative_pairs.correlation` takes `traits=`
+where it took `trait=`, and its `settings` reports
+`quantization_exponents` and `quantization_steps`.
 
 - `relative_pairs.correlation` takes `traits=`, where it took `trait=`: a
   Trait, or a sequence of one or two of one kind (issue #17).  R's
