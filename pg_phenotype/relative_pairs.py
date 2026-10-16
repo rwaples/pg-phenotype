@@ -88,7 +88,10 @@ class Estimate:
 class _Crude:
     """By-name access to the ``crude`` estimates of a cell or a stratum's cell."""
 
-    crude: tuple[Estimate, ...]
+    if TYPE_CHECKING:
+        # Read-only here, so the frozen dataclass fields that supply it are valid overrides.
+        @property
+        def crude(self) -> tuple[Estimate, ...]: ...
 
     @property
     def primary(self) -> Estimate:

@@ -42,7 +42,7 @@ jobs:
       - name: Set up pixi
         uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.76.2
+          pixi-version: v0.82.0
           locked: true
 
       - name: Check Rust formatting
@@ -64,7 +64,7 @@ jobs:
       - name: Set up pixi and install the package editable
         uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.76.2
+          pixi-version: v0.82.0
           locked: true
 
       - name: Lint with Ruff
@@ -173,7 +173,7 @@ jobs:
       - name: Set up pixi
         uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.76.2
+          pixi-version: v0.82.0
           locked: true
           environments: r
 
