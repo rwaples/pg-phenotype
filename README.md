@@ -218,9 +218,8 @@ for bit.  `pedigree()` keeps the storage type of its ids (integer, double or
 `bit64::integer64`) for every result; `length(ped)` and `ped$ids` give its
 rows.  Errors are conditions of class `pgphenotype_error` (with
 `pgphenotype_validation_error` and friends) carrying `$code` and `$fields`,
-positions 1-based in both the fields and the message.  A pedigree error's
-message is pedigree-graph's own and counts rows from 0; its fields count
-from 1.
+positions 1-based in both the fields and the message, pedigree errors
+included.
 
 ## Correctness (PA-FGRS)
 

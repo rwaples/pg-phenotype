@@ -1102,8 +1102,8 @@ mod tests {
         assert!(missing.is_empty(), "add a sample of variant(s) {missing:?}");
     }
 
-    /// Whether a field holds a row, column or position, by the naming rule of
-    /// pedigree-graph's R binding (`is_index_field`).
+    /// Whether a field holds a row, column or position, judged by its name;
+    /// pedigree-graph-core's own `Position` fields follow the same names.
     fn is_index_name(name: &str) -> bool {
         matches!(name, "row" | "rows" | "column" | "columns" | "position")
             || ["_row", "_rows", "_column", "_columns"]
