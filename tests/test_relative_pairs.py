@@ -344,8 +344,9 @@ def test_settings_method_and_metadata():
     assert s["trait_kind"] == "binary"
     assert s["memory_budget_bytes"] == 2**30
     assert s["threads"] == pg_phenotype.thread_budget()
+    assert s["se"] is False
     assert (s["quantization_exponents"], s["quantization_steps"]) == (None, None)
-    assert res.method["se"] == "none (ADR 0009)"
+    assert res.method["se"].startswith("with se, a cluster sandwich (ADR 0013)")
     assert res.metadata["pedigree_graph_core_rev"] == pg_phenotype.pg_core_rev()
     assert pg_phenotype.relative_pairs is rp
 

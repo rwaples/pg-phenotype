@@ -54,6 +54,33 @@ test_that("binary cells give Python's numbers, Concordance and tables", {
   expect_identical(c(po$n, po$n_dropped), c(9L, 1L))
 })
 
+test_that("se = TRUE adds each estimate's SE and leaves the values alone", {
+  plain <- relative_pairs_correlation(ped, trait(b, kind = "binary"), categories = cats)
+  r <- relative_pairs_correlation(ped, trait(b, kind = "binary"), categories = cats, se = TRUE)
+  expect_null(plain$cells[[1L]]$crude[[1L]]$se)
+  expect_false("se_reason" %in% names(plain$cells[[1L]]$crude[[1L]]))
+  expect_identical(values(r, "tetrachoric"), values(plain, "tetrachoric"))
+  tet <- r$cells[[1L]]$crude[[1L]]
+  expect_null(tet$se)
+  expect_identical(tet$se_reason, "boundary")
+  reasons <- unlist(lapply(r$cells, function(cell) lapply(cell$crude, `[[`, "se_reason")))
+  expect_true(all(reasons %in% c(
+    "no_estimate", "boundary", "sandwich_undefined", "degenerate_meat", "negative_meat"
+  )))
+  expect_error(relative_pairs_correlation(ped, trait(v), se = NA))
+  expect_identical(c(plain$settings$se, r$settings$se), c(FALSE, TRUE))
+})
+
+test_that("print shows each estimate's SE, or why it has none", {
+  plain <- relative_pairs_correlation(ped, trait(v), categories = c("FS", "FO"))
+  r <- relative_pairs_correlation(ped, trait(v), categories = c("FS", "FO"), se = TRUE)
+  expect_false(any(grepl("se", capture.output(print(plain)), fixed = TRUE)))
+  expect_output(print(r), "FS, n 3: pearson -0.5000 \\(no se: degenerate_meat\\)")
+  expect_output(print(r), sprintf("FO, n 5: pearson -0.0663 \\(se %.4f\\)", r$cells[[2L]]$crude[[1L]]$se))
+  binary <- relative_pairs_correlation(ped, trait(b, kind = "binary"), categories = cats, se = TRUE)
+  expect_output(print(binary), "tetrachoric -?[0-9.]+ \\(no se: boundary\\)")
+})
+
 test_that("codes as a character vector, a pedigree() and the defaults", {
   a <- relative_pairs_correlation(pedigree(ped), trait(v), categories = c("FS", "MHS"))
   b <- relative_pairs_correlation(ped, trait(v), categories = list("FS", "MHS"))

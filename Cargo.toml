@@ -15,6 +15,7 @@ repository = "https://github.com/rwaples/pg-phenotype"
 # This rev is pedigree-graph's v0.12.4 tag.
 pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "5be610fe257b1c288a9bbdcdaf3976abac1fb83a" }
 rayon = "1.10"
+rustc-hash = "2.1"
 
 [profile.release]
 opt-level = 3

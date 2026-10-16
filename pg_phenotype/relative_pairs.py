@@ -18,9 +18,9 @@ both orientations, trait 0 of one member against trait 1 of the other, with
 a threshold (or mean and spread) per trait; a directed category's (0, 1) and
 (1, 0) read its roles apart.  The result's ``within_person`` is the
 Within-Person Cross-Trait Correlation: each row's trait 0 against its trait 1.  Pairs are reduced to
-exact sums as pedigree-graph-core finds them and never stored.  There is no
-SE yet: relative pairs share people, and the cluster design waits on a
-calibration study (ADR 0009).
+exact sums as pedigree-graph-core finds them and never stored.  With
+``se=True`` every estimate gets a cluster sandwich SE over the pairs' most
+recent common ancestors and members (ADR 0013); without it there is none.
 
 With ``stratum=`` (a generation, a birth cohort), each cell also gets one
 :class:`StratumCell` per known stratum and a :class:`Stratified` fit.  A
@@ -40,6 +40,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
+
+import numpy as np
 
 from pg_phenotype import _native
 from pg_phenotype._input import count, strata
@@ -75,7 +77,17 @@ class Estimate:
     ``no_complete_pairs`` (no pair has both values), ``constant_margin`` (a
     binary side shows one level) or ``constant_value`` (a continuous side is
     constant at the quantization step).  ``boundary`` is the tetrachoric
-    fit's bound flag, ``None`` for other estimators.
+    fit's bound flag, ``None`` for other estimators.  With ``se=True``,
+    ``se`` is the cluster sandwich SE (ADR 0013), ``None`` exactly when
+    ``se_reason`` says why: ``no_estimate`` (``value`` is ``None``),
+    ``boundary`` (the tetrachoric fit stopped at a bound),
+    ``sandwich_undefined`` (the two-step fit's Hessian is not negative
+    definite, or the meat is not a number), ``degenerate_meat`` (the meat is
+    zero to within rounding, at most max(1024, 4√n) epsilons of its scale
+    over n entries, as when the cell's pairs share one most recent common
+    ancestor or the estimate is ±1), ``negative_meat`` (the meat is negative) or ``within_person`` (the
+    Within-Person cell has no cluster design).  Both are ``None`` without
+    ``se=True``.
     """
 
     estimator: str
@@ -83,6 +95,8 @@ class Estimate:
     value: float | None
     reason: str | None
     boundary: bool | None
+    se: float | None = None
+    se_reason: str | None = None
 
 
 class _Crude:
@@ -238,11 +252,12 @@ class RelativePairCorrelation:
             Correlation (a :class:`Cell` over the rows, each in its own
             stratum); ``None`` with one.
         settings: ``categories`` (the entries' names), ``trait_kind``,
-            ``memory_budget_bytes``, ``threads``, and continuous traits'
+            ``memory_budget_bytes``, ``threads``, ``se`` (whether the SE
+            was asked for), and continuous traits'
             ``quantization_exponents`` e, one per trait, and
             ``quantization_steps`` 2^-e (``None`` for binary traits).
         method: How pairs and traits enter, the estimators, the
-            quantization, the strata, and the absence of an SE.
+            quantization, the strata, and the SE.
         metadata: ``pg_phenotype_version`` and ``pedigree_graph_core_rev``.
     """
 
@@ -345,6 +360,7 @@ def correlation(
     categories: Sequence[str | Mapping[str, Sequence[str]]] | None = None,
     stratum: object = None,
     memory_budget_bytes: int = DEFAULT_MEMORY_BUDGET_BYTES,
+    se: bool = False,
 ) -> RelativePairCorrelation:
     """The Relative-Pair Correlation of *traits* in each requested category.
 
@@ -372,7 +388,23 @@ def correlation(
             when both members are.  ``within_person`` puts each row in its
             own stratum.  The pooled fields do not change.
         memory_budget_bytes: The bound on the engine's accumulators and,
-            with two traits, the within-person accumulator.
+            with two traits, the within-person accumulator, and with *se*
+            the per-cluster sums.
+        se: Give every estimate, pooled, stratum and stratified, its
+            cluster sandwich SE (ADR 0013; :class:`Estimate`'s ``se`` and
+            ``se_reason``).  Two pairs are in one cluster when they share a
+            member or their most recent common ancestor (MRCA): each entry
+            (a complete orientation) adds its influence, divided by the
+            fit's entries, to its pair's MRCA, to each member and to each
+            (member, MRCA), and the meat is the sum of squares over MRCAs
+            plus over members minus over (member, MRCA), with no
+            small-sample factor.  A pair's MRCA is the ancestor member of a
+            lineal pair, the shared parent of a half relationship and the
+            shared mother of a full one (MZ: the twins' mother), and can be
+            an external parent.  The sums come from the same pass as the
+            cells and do not depend on the thread count.  They cost 1.5 to
+            1.8 times the call's time with one trait and 2.1 to 3.7 times
+            with two traits and strata; ``False`` (the default) skips them.
 
     Returns:
         A :class:`RelativePairCorrelation`.
@@ -391,18 +423,23 @@ def correlation(
             2^-20 of its interquartile range (``insufficient_precision``).
         ParameterError: *memory_budget_bytes* is below 1
             (``parameter_out_of_range``).
-        ResourceError: The accumulators do not fit the budget
-            (``memory_budget_exceeded``).
+        ResourceError: The accumulators, or with *se* the per-cluster
+            sums, do not fit the budget (``memory_budget_exceeded``; the
+            sums' operation is ``relative_pairs_se``), or the allocator
+            refused the sums (``allocation_failed``).
         TypeError: *traits* is not a :class:`~pg_phenotype.Trait` or a
-            sequence of them, or an argument has the wrong type.
+            sequence of them, *se* is not a bool, or an argument has the
+            wrong type.
         ValueError: A group mapping in *categories* is empty.
     """
     trait_list = as_traits(traits)
     entries = _entries(categories)
     budget = count("memory_budget_bytes", memory_budget_bytes)
+    if not isinstance(se, (bool, np.bool_)):
+        raise TypeError(f"se must be a bool, got {se!r}")
     native = native_pedigree(pedigree)
     by_stratum = None if stratum is None else strata(stratum)
-    raw = _native.relative_pairs_correlation(native, trait_list, by_stratum, entries, budget)
+    raw = _native.relative_pairs_correlation(native, trait_list, by_stratum, entries, budget, bool(se))
     within = raw["within_person"]
     return RelativePairCorrelation(
         cells=tuple(_cell(c) for c in raw["cells"]),

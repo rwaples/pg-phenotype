@@ -19,9 +19,10 @@ type HostEntry = (usize, String, Option<Vec<String>>);
 
 /// The Relative-Pair Correlation of one or two traits, in the pool.  Each entry of
 /// `categories` is `(position, code, None)` or `(position, group name, member
-/// codes)`, `position` its index in the caller's request.
+/// codes)`, `position` its index in the caller's request.  `se` asks for
+/// each estimate's cluster sandwich SE.
 #[pyfunction]
-#[pyo3(signature = (pedigree, traits, strata, categories, memory_budget_bytes, /))]
+#[pyo3(signature = (pedigree, traits, strata, categories, memory_budget_bytes, se, /))]
 pub(crate) fn relative_pairs_correlation<'py>(
     py: Python<'py>,
     pedigree: PedigreeSource<'py>,
@@ -29,6 +30,7 @@ pub(crate) fn relative_pairs_correlation<'py>(
     strata: StrataArg<'py>,
     categories: Option<Vec<HostEntry>>,
     memory_budget_bytes: i64,
+    se: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let pedigree = pedigree.arg()?;
     let traits = traits
@@ -59,6 +61,7 @@ pub(crate) fn relative_pairs_correlation<'py>(
             strata,
             entries.as_deref(),
             memory_budget_bytes,
+            se,
         )
         .map(|r| r.to_value())
     })?;

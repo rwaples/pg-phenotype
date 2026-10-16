@@ -17,3 +17,10 @@ pub(crate) fn _panic_for_test() {
 pub(crate) fn _release_count() -> usize {
     crate::crossing::RELEASES.load(std::sync::atomic::Ordering::Relaxed)
 }
+
+/// Each Relationship Category's `(code, up, down)` meioses, as the
+/// Relative-Pair SE's MRCA walk reads them.
+#[pyfunction]
+pub(crate) fn _meioses() -> Vec<(&'static str, u8, u8)> {
+    pg_phenotype_core::relative_pairs::meioses().collect()
+}

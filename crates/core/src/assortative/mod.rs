@@ -17,6 +17,8 @@ mod bootstrap;
 mod estimators;
 mod input;
 mod kernels;
+#[cfg(test)]
+pub(crate) use kernels::{pearson_influence, Side as InfluenceSide};
 mod permutation;
 mod result;
 mod rng;

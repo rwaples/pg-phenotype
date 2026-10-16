@@ -20,7 +20,7 @@ pub(crate) mod table;
 mod primitives_parity;
 
 use fit::{flag_boundary, newton_rho, Terms};
-pub(crate) use influence::cell_influence;
+pub(crate) use influence::{cell_influence, CellInfluence};
 use std::cmp::Ordering;
 use table::{margin_status, thresholds, Grid, NoFit, Table, TINY};
 

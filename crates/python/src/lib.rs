@@ -462,5 +462,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(test_hooks::_panic_for_test, m)?)?;
     #[cfg(feature = "test-hooks")]
     m.add_function(wrap_pyfunction!(test_hooks::_release_count, m)?)?;
+    #[cfg(feature = "test-hooks")]
+    m.add_function(wrap_pyfunction!(test_hooks::_meioses, m)?)?;
     Ok(())
 }

@@ -11,7 +11,7 @@ core; each method is a module on top.
 | Assortative mating: the Mate Correlation of one or two traits, ported from pedsum #13 | `pg_phenotype.assortative` | available |
 | Correlation estimators on their own: the tetrachoric correlation of a 2 x 2 table | `pg_phenotype.correlation` | available |
 | Parent-offspring regression: midparent, mother and father, with a Mate Network sandwich SE | `pg_phenotype.regression` | available |
-| Relative-Pair Correlation: one or two traits' correlation between relatives per relationship category and stratum, and the ACE Fit of A, C, E and rA, rC, rE from it; no SE yet | `pg_phenotype.relative_pairs` | available |
+| Relative-Pair Correlation: one or two traits' correlation between relatives per relationship category and stratum, with an opt-in cluster SE, and the ACE Fit of A, C, E and rA, rC, rE from it | `pg_phenotype.relative_pairs` | available |
 
 ## Python
 
@@ -146,9 +146,10 @@ pairs enter in both orders, so its correlation is intraclass and does not
 depend on row order; a directed category's enter once, in its roles' order.
 Pairs are reduced as pedigree-graph finds them and never stored
 (`memory_budget_bytes=` bounds the accumulators).  There is no minimum pair
-count and no SE yet: relative pairs share people, and the cluster design
-waits on a calibration study
-([ADR 0009](docs/adr/0009-relative-pair-correlation.md)).
+count.  `se=True` gives every estimate a cluster sandwich SE: relative pairs
+share people, so two pairs are in one cluster when they share a member or
+their most recent common ancestor
+([ADR 0013](docs/adr/0013-relative-pair-se-clusters-by-common-ancestor.md)).
 
 `traits=` takes one Trait or two of one kind.  Two traits give each entry a
 cell per trait combination, trait `first_trait` in one member against

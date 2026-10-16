@@ -60,6 +60,7 @@ fn correlation_impl(
     names: &Robj,
     members: &Robj,
     memory_budget_bytes: &Robj,
+    se: bool,
 ) -> HostResult<Robj> {
     let pedigree = Source::read(pedigree)?;
     let traits = traits
@@ -82,8 +83,15 @@ fn correlation_impl(
         input::number("memory_budget_bytes", memory_budget_bytes)?,
     )?;
     let result = crossing::run(|| {
-        relative_pairs::correlation(pedigree.arg(), &traits, strata, entries.as_deref(), budget)
-            .map(|r| r.to_value())
+        relative_pairs::correlation(
+            pedigree.arg(),
+            &traits,
+            strata,
+            entries.as_deref(),
+            budget,
+            se,
+        )
+        .map(|r| r.to_value())
     })?;
     crossing::result(result)
 }
@@ -97,6 +105,7 @@ fn relative_pairs_correlation(
     names: Robj,
     members: Robj,
     memory_budget_bytes: Robj,
+    se: bool,
 ) -> Robj {
     finish(correlation_impl(
         &pedigree,
@@ -105,6 +114,7 @@ fn relative_pairs_correlation(
         &names,
         &members,
         &memory_budget_bytes,
+        se,
     ))
 }
 

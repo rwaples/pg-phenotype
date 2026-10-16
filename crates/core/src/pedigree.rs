@@ -156,6 +156,18 @@ impl Pedigree {
         &self.father_rows
     }
 
+    /// Mother id per row, `-1` when missing; an id with no row is an
+    /// external parent.
+    pub(crate) fn mother_ids(&self) -> &[i64] {
+        &self.mother_ids
+    }
+
+    /// Father id per row, `-1` when missing; an id with no row is an
+    /// external parent.
+    pub(crate) fn father_ids(&self) -> &[i64] {
+        &self.father_ids
+    }
+
     /// MZ co-twin row per row, `-1` when missing or external.
     pub(crate) fn twin_rows(&self) -> &[i32] {
         &self.twin_rows
