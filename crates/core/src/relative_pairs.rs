@@ -3,11 +3,13 @@
 //! Relative Pairs (ADR 0009), and with two traits the Within-Person
 //! Cross-Trait Correlation.
 //!
-//! The pairs come from pedigree-graph-core's `relationship_moments`, which
-//! reduces them to exact per-cell sums and never stores them.  A symmetric
-//! category's pairs enter in both orders, so its same-trait Pearson is
-//! intraclass and its tetrachoric fits one threshold; a directed category's
-//! pairs enter once, in its roles' order.  There is no SE yet (ADR 0009).
+//! The pairs come from one pass of pedigree-graph-core's engine, which
+//! reduces them to exact per-cell sums and never stores them: its
+//! `relationship_moments` table and, when the SE is asked for, beside it
+//! the per-cluster sums the cluster sandwich reads (ADR 0013, `clusters`).
+//! A symmetric category's pairs enter in both orders, so its same-trait
+//! Pearson is intraclass and its tetrachoric fits one threshold; a directed
+//! category's pairs enter once, in its roles' order.
 //!
 //! Each member's engine label is its stratum code, then each trait's label
 //! (trait 0 most significant), so the one traversal gives a table by (first
@@ -22,14 +24,24 @@ use crate::pedigree::PedigreeArg;
 use crate::polychoric::table::Table;
 use crate::polychoric::{Point, Reason as FitReason};
 use crate::value::Value;
+use clusters::{Clusters, Meat, Pass};
+use influence::{Influence, StratifiedBlock, Weights};
+use mrca::Ancestry;
 use pedigree_graph_core::error::Error as PgError;
 use pedigree_graph_core::relationships::{
     host_bytes, quantize_column, relationship_moments, Category, CategorySet, MaxDegree,
     MomentsInput, MomentsTable, Operand, Product, Progress, Receiver, Side, Statistic, Symmetric,
     N_CATEGORIES,
 };
+use rayon::prelude::*;
 use std::borrow::Cow;
+use std::cmp::Reverse;
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+mod clusters;
+mod influence;
+mod mrca;
 
 /// The trait's field name with one trait, as errors report it.
 const FIELD: &str = "trait";
@@ -51,6 +63,26 @@ pub const DEFAULT_MEMORY_BUDGET_BYTES: i64 = 1 << 30;
 /// The coarsest quantization step a continuous trait takes, as a fraction of
 /// its spread.
 const PRECISION: f64 = 1.0 / (1u64 << 20) as f64;
+
+/// The fewest `f64::EPSILON`s of its scale a meat must pass not to be
+/// zero ([`degenerate`]).
+const DEGENERATE_FLOOR: f64 = 1024.0;
+
+/// A meat of an estimate over `entries` entries within this fraction of
+/// its scale is zero (`degenerate_meat`): `max(2^10, 4 √entries) ε`.  The
+/// scale is the meat's three sums of squares, added, had each entry the
+/// influence `1/n`.  A meat that is zero in exact arithmetic (a cell's
+/// pairs in one MRCA cluster, or `r = ±1`) comes out as its floats'
+/// rounding.  Over `n` entries the meat is at most `16n` additions: each
+/// of at most `2n` rows into its MRCA, member and (member, MRCA) sums,
+/// then at most `5n` of those sums' squares.  Each rounds by about `ε` of
+/// the scale and their errors add as a random walk, to `√(16n) ε = 4√n ε`.
+/// Below `2^16` entries the floor `2^10 ε` holds, 2e4 times the rounding
+/// seen on the test pedigrees (`0.05 ε`), whose smallest true meat is
+/// `1e-5` of its scale: a meat that small has no digit left to report.
+fn degenerate(entries: u64) -> f64 {
+    (4.0 * (entries as f64).sqrt()).max(DEGENERATE_FLOOR) * f64::EPSILON
+}
 
 /// The category name of the Within-Person Cross-Trait Correlation's cell.
 const WITHIN_PERSON: &str = "within_person";
@@ -131,6 +163,59 @@ pub struct Estimate {
     pub value: Result<f64, Reason>,
     /// Whether the tetrachoric fit stopped at a bound; `None` otherwise.
     pub boundary: Option<bool>,
+    /// The cluster sandwich SE (ADR 0013), or why there is none; `None`
+    /// unless the call asked for it.
+    pub se: Option<Result<f64, SeReason>>,
+}
+
+/// Why an estimate has no SE.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeReason {
+    /// The estimate is undefined; its `value` says why.
+    NoEstimate,
+    /// The tetrachoric fit stopped at a bound.
+    Boundary,
+    /// The two-step Hessian is not negative definite.
+    SandwichUndefined,
+    /// The meat is zero to within rounding ([`degenerate`]), as when a
+    /// cell's pairs share one MRCA or its estimate is ±1.
+    DegenerateMeat,
+    /// The inclusion-exclusion meat came out negative.
+    NegativeMeat,
+    /// The Within-Person Cross-Trait Correlation has no cluster design.
+    WithinPerson,
+}
+
+impl SeReason {
+    pub fn name(self) -> &'static str {
+        match self {
+            SeReason::NoEstimate => "no_estimate",
+            SeReason::Boundary => "boundary",
+            SeReason::SandwichUndefined => "sandwich_undefined",
+            SeReason::DegenerateMeat => "degenerate_meat",
+            SeReason::NegativeMeat => "negative_meat",
+            SeReason::WithinPerson => "within_person",
+        }
+    }
+
+    /// `√meat`, or why there is none: a meat within rounding of zero is
+    /// degenerate, a clearly negative one negative.
+    fn of_meat(meat: Meat) -> Result<f64, SeReason> {
+        let Meat {
+            value,
+            scale,
+            entries,
+        } = meat;
+        if value.is_nan() || scale.is_nan() {
+            Err(SeReason::SandwichUndefined)
+        } else if value.abs() <= degenerate(entries) * scale {
+            Err(SeReason::DegenerateMeat)
+        } else if value < 0.0 {
+            Err(SeReason::NegativeMeat)
+        } else {
+            Ok(value.sqrt())
+        }
+    }
 }
 
 /// A cell's binary pair counts, as the caller sees them.
@@ -151,7 +236,7 @@ pub enum Counts {
 /// One entry's correlation of one trait combination, or the Within-Person
 /// Cross-Trait Correlation.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Cell {
+pub struct Cell<E = Estimate> {
     /// The category's code, the group's name, or `within_person`.
     pub category: String,
     pub members: Vec<Category>,
@@ -173,9 +258,9 @@ pub struct Cell {
     pub n_entries: Option<u64>,
     pub counts: Counts,
     /// The primary estimate first.
-    pub estimates: Vec<Estimate>,
+    pub estimates: Vec<E>,
     /// Each known stratum label of any row, ascending; `None` without strata.
-    pub strata: Option<Vec<StratumCell>>,
+    pub strata: Option<Vec<StratumCell<E>>>,
     /// Complete symmetric pairs whose members are in two known strata: in
     /// no stratum's cell.
     pub n_cross_stratum: u64,
@@ -183,7 +268,7 @@ pub struct Cell {
     /// directed pair's first member's, either member's of a symmetric pair.
     pub n_unknown_stratum: u64,
     /// `None` without strata.
-    pub stratified: Option<Stratified>,
+    pub stratified: Option<Stratified<E>>,
 }
 
 /// One known stratum's pairs of a cell: a directed category's whose first
@@ -191,13 +276,13 @@ pub struct Cell {
 /// symmetric category's whose members are both in it.  The fields are a
 /// [`Cell`]'s pooled ones.
 #[derive(Clone, Debug, PartialEq)]
-pub struct StratumCell {
+pub struct StratumCell<E = Estimate> {
     pub label: i64,
     pub n: u64,
     pub n_dropped: u64,
     pub n_entries: Option<u64>,
     pub counts: Counts,
-    pub estimates: Vec<Estimate>,
+    pub estimates: Vec<E>,
 }
 
 /// The primary estimator fitted over every block of known strata at once,
@@ -208,7 +293,7 @@ pub struct StratumCell {
 /// blocks kept carries no information on it, so its blocks are left out,
 /// until no stratum's side is constant.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Stratified {
+pub struct Stratified<E = Estimate> {
     /// Unordered pairs with a complete orientation fitted.
     pub n: u64,
     /// A symmetric cross-trait cell's complete orientations fitted, those
@@ -217,7 +302,59 @@ pub struct Stratified {
     /// Unordered pairs with a complete orientation and both strata known
     /// that a constant side's stratum left out.
     pub n_degenerate_stratum: u64,
-    pub estimate: Estimate,
+    pub estimate: E,
+}
+
+/// An estimate as its fit gave it and, with the SE, the index of its
+/// influence in its request's [`Influences`].  [`Influences::made`] makes
+/// both in one call, so an estimate cannot meet another's SE.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Fit {
+    estimate: Estimate,
+    influence: Option<usize>,
+}
+
+impl Fit {
+    /// The estimate with its SE, `ses` being its request's in
+    /// [`Influences`] order; none without the SE.
+    fn finish(self, ses: &[Result<f64, SeReason>]) -> Estimate {
+        Estimate {
+            se: self.influence.map(|e| ses[e]),
+            ..self.estimate
+        }
+    }
+}
+
+/// A request's influences in the order its fits made them; `None` without
+/// the SE.
+struct Influences(Option<Vec<Result<Influence, SeReason>>>);
+
+impl Influences {
+    fn on(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// `estimate`'s fit; with the SE its influence too, which `influence`
+    /// gives.
+    fn made(
+        &mut self,
+        estimate: Estimate,
+        influence: impl FnOnce() -> Result<Influence, SeReason>,
+    ) -> Fit {
+        let influence = self.0.as_mut().map(|list| {
+            list.push(influence());
+            list.len() - 1
+        });
+        Fit {
+            estimate,
+            influence,
+        }
+    }
+
+    /// `estimate`'s fit, which has no influence.
+    fn none(&mut self, estimate: Estimate) -> Fit {
+        self.made(estimate, || Err(SeReason::NoEstimate))
+    }
 }
 
 /// The result of [`correlation`].
@@ -236,6 +373,8 @@ pub struct RelativePairCorrelation {
     pub quantization_exponents: Option<Vec<i64>>,
     pub memory_budget_bytes: u64,
     pub threads: usize,
+    /// Whether the call asked for the SE.
+    pub se: bool,
 }
 
 /// One entry, resolved.
@@ -251,7 +390,8 @@ struct Request {
 /// over `pedigree`, the cells of each entry of `categories` (default: each
 /// category up to degree 3), with two traits the Within-Person Cross-Trait
 /// Correlation, and with `strata` each cell's stratum cells and stratified
-/// fit.
+/// fit.  With `se`, every estimate's cluster sandwich SE (ADR 0013); without
+/// it the call is `relationship_moments` and the fits alone.
 ///
 /// # Errors
 ///
@@ -263,14 +403,17 @@ struct Request {
 /// `duplicate_category`, `duplicate_entry_name`, `empty_category_group`,
 /// `mixed_category_group`; then `parameter_out_of_range` for a budget below
 /// one byte; `insufficient_precision`; with two traits,
-/// `memory_budget_exceeded` for the Within-Person accumulator; and the
-/// engine's errors (`memory_budget_exceeded`, ...).
+/// `memory_budget_exceeded` for the Within-Person accumulator; the
+/// engine's errors (`memory_budget_exceeded`, ...); and with `se`,
+/// `memory_budget_exceeded` (operation `relative_pairs_se`) or
+/// `allocation_failed` for the per-cluster sums.
 pub fn correlation(
     pedigree: PedigreeArg<'_>,
     traits: &[Trait<'_>],
     strata: Option<Strata<'_>>,
     categories: Option<&[Entry]>,
     memory_budget_bytes: i64,
+    se: bool,
 ) -> Result<RelativePairCorrelation, Error> {
     let pedigree = pedigree.resolve()?;
     let n_rows = pedigree.len();
@@ -304,46 +447,78 @@ pub fn correlation(
             symmetric: false,
             roles: None,
         };
-        Some(Blocks::within_person(&members, budget)?.cell(request, labels.as_deref())?)
+        let cell = Blocks::within_person(&members, budget)?.cell(
+            request,
+            labels.as_deref(),
+            &mut Influences(None),
+        )?;
+        Some(cell.map(|fit| Estimate {
+            se: se.then_some(Err(SeReason::WithinPerson)),
+            ..fit.estimate
+        }))
     } else {
         None
     };
     let mut result = RelativePairCorrelation {
-        cells: Vec::with_capacity(requests.len()),
+        cells: Vec::new(),
         within_person,
         kind: layout.kind,
         quantization_exponents: (layout.kind == TraitKind::Continuous)
             .then(|| members.exponents.clone()),
         memory_budget_bytes: budget,
         threads,
+        se,
     };
     let union: CategorySet = requests.iter().flat_map(|r| r.members.clone()).collect();
     let Some(top) = union.top_degree() else {
         return Ok(result);
     };
     let ped = pedigree.relationships()?;
-    let input = members.input();
-    let moments = relationship_moments(
-        &ped,
-        MaxDegree::try_new(top)?,
-        union,
-        Receiver::Graph,
-        &input,
-        Symmetric::Both,
-        NonZeroUsize::new(threads).unwrap_or(NonZeroUsize::MIN),
-        budget,
-        &Progress::default(),
-    )?;
+    let max_degree = MaxDegree::try_new(top)?;
+    let lanes = NonZeroUsize::new(threads).unwrap_or(NonZeroUsize::MIN);
+    let ancestry = se.then(|| Ancestry::of(&pedigree, budget)).transpose()?;
     let order: Vec<Category> = union.iter().collect();
-    let table = MomentsTable::from_bytes(
-        members.shape(order.len()),
-        input.n_columns,
-        input.products.to_vec(),
-        members.exponents.clone(),
-        moments.width,
-        Cow::Owned(moments.table),
-    )?;
-    for request in requests {
+    let (table, clusters) = match &ancestry {
+        Some(ancestry) => {
+            let (reserve, batch) = influence::reserve(
+                layout,
+                &requests,
+                labels.as_ref().map(Vec::len),
+                n_rows,
+                budget,
+                ancestry.bytes(),
+            );
+            let pass = Pass::run(
+                &ped, max_degree, union, &requests, &members, ancestry, lanes, budget, reserve,
+            )?;
+            (pass.table, Some((pass.clusters, batch)))
+        }
+        None => {
+            let input = members.input();
+            let moments = relationship_moments(
+                &ped,
+                max_degree,
+                union,
+                Receiver::Graph,
+                &input,
+                Symmetric::Both,
+                lanes,
+                budget,
+                &Progress::default(),
+            )?;
+            let table = MomentsTable::from_bytes(
+                members.shape(order.len()),
+                input.n_columns,
+                input.products.to_vec(),
+                members.exponents.clone(),
+                moments.width,
+                Cow::Owned(moments.table),
+            )?;
+            (table, None)
+        }
+    };
+    let (mut cells, mut influences) = (Vec::new(), Vec::new());
+    for (r, request) in requests.iter().enumerate() {
         let positions: Vec<usize> = request
             .members
             .iter()
@@ -354,14 +529,106 @@ pub fn correlation(
         if request.symmetric {
             check_mirrored(&request.name, &counts, layout.n_codes * layout.n_joint())?;
         }
+        let mut fitted = Influences(se.then(Vec::new));
         for view in View::of(layout.n_traits, request.symmetric) {
             let blocks = Blocks::pairs(&joint, &counts, layout, view)?;
-            result
-                .cells
-                .push(blocks.cell(request.clone(), labels.as_deref())?);
+            cells.push((
+                r,
+                blocks.cell(request.clone(), labels.as_deref(), &mut fitted)?,
+            ));
         }
+        influences.push(fitted.0.unwrap_or_default());
     }
+    let ses = match &clusters {
+        Some((clusters, batch)) => {
+            let held = (table.bytes().len() as u64)
+                .saturating_add(ancestry.as_ref().map_or(0, Ancestry::bytes));
+            let sweeps = Sweeps {
+                clusters,
+                members: &members,
+                influences: &influences,
+                batch: *batch,
+            };
+            sweeps.standard_errors(budget.saturating_sub(held), threads)
+        }
+        None => Vec::new(),
+    };
+    drop(influences);
+    result.cells = cells
+        .into_iter()
+        .map(|(r, cell)| cell.map(|fit| fit.finish(ses.get(r).map_or(&[], Vec::as_slice))))
+        .collect();
     Ok(result)
+}
+
+/// The SE's last step: each request's [`Weights`] and sweeps over the
+/// store ([`Clusters::meats`]).
+struct Sweeps<'a> {
+    clusters: &'a Clusters<'a>,
+    members: &'a Members,
+    /// Per request, its fits' influences in the order they made them.
+    influences: &'a [Vec<Result<Influence, SeReason>>],
+    /// The estimates a sweep takes as the pass planned it.
+    batch: usize,
+}
+
+impl Sweeps<'_> {
+    /// Each request's SEs, in its influences' order, sweeping as many
+    /// requests at once as [`influence::sweeps`] fits in `free` (the
+    /// budget less the table and the ancestry), at most `threads`.  One
+    /// thread sweeps a request whole, its floats in key order, so no SE
+    /// depends on the threads; requests with the most rows go first.
+    fn standard_errors(&self, free: u64, threads: usize) -> Vec<Vec<Result<f64, SeReason>>> {
+        let layout = self.members.layout;
+        let held: u64 = self
+            .influences
+            .iter()
+            .flatten()
+            .map(Influence::bytes)
+            .sum::<u64>()
+            .saturating_add(self.clusters.bytes());
+        let shapes: Vec<(u64, usize)> = self
+            .influences
+            .iter()
+            .map(|list| (Weights::bytes(layout, list), list.len()))
+            .collect();
+        let (width, batch) = influence::sweeps(
+            free.saturating_sub(held),
+            threads,
+            &shapes,
+            self.members.labels.len(),
+            self.batch,
+        );
+        let mut order: Vec<usize> = (0..self.influences.len()).collect();
+        order.sort_by_key(|&r| Reverse(self.clusters.n_rows(r as u32)));
+        let next = AtomicUsize::new(0);
+        let mut meats: Vec<(usize, Vec<Meat>)> = (0..width)
+            .into_par_iter()
+            .flat_map_iter(|_| {
+                let mut done = Vec::new();
+                while let Some(&r) = order.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    let weights =
+                        Weights::build(layout, &self.members.exponents, &self.influences[r]);
+                    done.push((r, self.clusters.meats(r as u32, &weights, batch)));
+                }
+                done
+            })
+            .collect();
+        meats.sort_unstable_by_key(|&(r, _)| r);
+        meats
+            .into_iter()
+            .zip(self.influences)
+            .map(|((_, meats), list)| {
+                list.iter()
+                    .zip(meats)
+                    .map(|(influence, meat)| match influence {
+                        Ok(_) => SeReason::of_meat(meat),
+                        Err(reason) => Err(*reason),
+                    })
+                    .collect()
+            })
+            .collect()
+    }
 }
 
 /// The traits' errors in order: their count, each one's Admission, then a
@@ -393,6 +660,16 @@ fn field(n_traits: usize, t: usize) -> &'static str {
     } else {
         FIELDS[t]
     }
+}
+
+/// Each Relationship Category's code and its meioses `up` from the first
+/// member to the MRCA and `down` to the second, as the SE's MRCA walk
+/// reads them, in registry order.
+pub fn meioses() -> impl Iterator<Item = (&'static str, u8, u8)> {
+    Category::ALL.into_iter().map(|c| {
+        let (up, down) = mrca::MEIOSES[c.index()];
+        (c.code(), up, down)
+    })
 }
 
 /// Each category up to [`DEFAULT_DEGREE`], one entry each, in registry order.
@@ -535,10 +812,14 @@ impl Layout {
         self.n_labels.pow(self.n_traits as u32)
     }
 
+    /// Trait `t`'s label in joint label `joint`.
+    fn digit(self, joint: usize, t: usize) -> usize {
+        joint / self.n_labels.pow((self.n_traits - 1 - t) as u32) % self.n_labels
+    }
+
     /// Whether joint label `joint` has trait `t` observed.
     fn shows(self, joint: usize, t: usize) -> bool {
-        let digit = joint / self.n_labels.pow((self.n_traits - 1 - t) as u32) % self.n_labels;
-        digit < observed(self.kind)
+        self.digit(joint, t) < observed(self.kind)
     }
 }
 
@@ -980,13 +1261,13 @@ fn tally(
     blocks
 }
 
-/// A cell's (or a stratum's) counts and estimates.
+/// A cell's (or a stratum's) counts and fits.
 struct Fields {
     n: u64,
     n_dropped: u64,
     n_entries: Option<u64>,
     counts: Counts,
-    estimates: Vec<Estimate>,
+    estimates: Vec<Fit>,
 }
 
 /// One cell's table by (first member's stratum code, its trait `first`'s
@@ -1120,7 +1401,13 @@ impl Blocks {
 
     /// The fields of the blocks with first code in `rows` and second code
     /// in `cols`; a symmetric cell's set is closed under swapping them.
-    fn fields(&self, rows: &[usize], cols: &[usize]) -> Result<Fields, Error> {
+    /// Each fit's influence goes to `influences`.
+    fn fields(
+        &self,
+        rows: &[usize],
+        cols: &[usize],
+        influences: &mut Influences,
+    ) -> Result<Fields, Error> {
         let entries = rows
             .iter()
             .flat_map(|&s| cols.iter().map(move |&u| (s, u)))
@@ -1130,6 +1417,7 @@ impl Blocks {
         let n_dropped = self.pairs_of(entries.total) - n;
         let n_entries = self.view.cross().then_some(entries.forward + entries.both);
         let table = self.block(rows, cols)?;
+        let view = self.view;
         let (counts, estimates) = if self.kind == TraitKind::Binary {
             let counts = table.counts();
             let at = |i: usize, j: usize| counts[i * self.n_labels + j] as u64;
@@ -1139,10 +1427,18 @@ impl Blocks {
             } else {
                 Counts::Table(fitted)
             };
-            (
-                shown,
-                vec![tetrachoric(correlation::point(fitted)), phi(fitted)],
-            )
+            let fit = correlation::fitted(fitted);
+            let point = fit.as_ref().map(|&(_, point)| point).map_err(|&r| r);
+            let two_step = influences.made(tetrachoric(point), || {
+                influence::two_step(&fit, |at| Influence::tetrachoric(view, (rows, cols), at))
+            });
+            let phi = phi(fitted);
+            let phi = influences.made(phi, || {
+                phi.value
+                    .map(|value| Influence::phi(view, (rows, cols), fitted, value))
+                    .map_err(|_| SeReason::NoEstimate)
+            });
+            (shown, vec![two_step, phi])
         } else {
             let r = table.derive(Statistic::Pearson, self.view.product(), self.names[0])?[0];
             let value = match (n, r.is_nan()) {
@@ -1150,7 +1446,18 @@ impl Blocks {
                 (_, true) => Err(Reason::ConstantValue),
                 _ => Ok(r),
             };
-            (Counts::None, vec![pearson(value)])
+            let influence = match (influences.on(), value) {
+                (true, Ok(r)) => Some(Influence::pearson(
+                    view,
+                    (rows, cols),
+                    &table,
+                    r,
+                    self.names[0],
+                )?),
+                _ => None,
+            };
+            let pearson = influences.made(pearson(value), || influence.ok_or(SeReason::NoEstimate));
+            (Counts::None, vec![pearson])
         };
         Ok(Fields {
             n,
@@ -1162,8 +1469,14 @@ impl Blocks {
     }
 
     /// The cell; with `labels` (the known strata, ascending) its stratum
-    /// cells, counts and stratified fit too.
-    fn cell(&self, request: Request, labels: Option<&[i64]>) -> Result<Cell, Error> {
+    /// cells, counts and stratified fit too.  Each fit's influence goes to
+    /// `influences`.
+    fn cell(
+        &self,
+        request: Request,
+        labels: Option<&[i64]>,
+        influences: &mut Influences,
+    ) -> Result<Cell<Fit>, Error> {
         let codes: Vec<usize> = (0..self.n_codes).collect();
         let Fields {
             n,
@@ -1171,7 +1484,7 @@ impl Blocks {
             n_entries,
             counts,
             estimates,
-        } = self.fields(&codes, &codes)?;
+        } = self.fields(&codes, &codes, influences)?;
         let pooled = Cell {
             category: request.name,
             members: request.members,
@@ -1204,7 +1517,7 @@ impl Blocks {
                     n_entries,
                     counts,
                     estimates,
-                } = self.fields(&[s], seconds)?;
+                } = self.fields(&[s], seconds, influences)?;
                 Ok(StratumCell {
                     label,
                     n,
@@ -1232,7 +1545,7 @@ impl Blocks {
             strata: Some(strata),
             n_cross_stratum,
             n_unknown_stratum,
-            stratified: Some(self.stratified(k)?),
+            stratified: Some(self.stratified(k, influences)?),
             ..pooled
         })
     }
@@ -1241,7 +1554,7 @@ impl Blocks {
     /// symmetric pair across strata s and u is fitted when an orientation
     /// complete in a kept block is: its forward reading in (s, u), its
     /// reverse in (u, s).
-    fn stratified(&self, k: usize) -> Result<Stratified, Error> {
+    fn stratified(&self, k: usize, influences: &mut Influences) -> Result<Stratified<Fit>, Error> {
         let fitted = |kept: &[bool]| -> u64 {
             let entries: u64 = (0..k * k)
                 .map(|b| {
@@ -1261,12 +1574,12 @@ impl Blocks {
                 .sum()
         });
         let estimate = match (self.kind == TraitKind::Binary, n_known, n) {
-            (true, 0, _) => tetrachoric(Err(FitReason::NoCompletePairs)),
-            (true, _, 0) => tetrachoric(Err(FitReason::ConstantMargin)),
-            (true, _, _) => self.stratified_tetrachoric(k, &kept),
-            (false, 0, _) => pearson(Err(Reason::NoCompletePairs)),
-            (false, _, 0) => pearson(Err(Reason::ConstantValue)),
-            (false, _, _) => pearson(Ok(self.stratified_pearson(k, &kept)?)),
+            (true, 0, _) => influences.none(tetrachoric(Err(FitReason::NoCompletePairs))),
+            (true, _, 0) => influences.none(tetrachoric(Err(FitReason::ConstantMargin))),
+            (true, _, _) => self.stratified_tetrachoric(k, &kept, influences),
+            (false, 0, _) => influences.none(pearson(Err(Reason::NoCompletePairs))),
+            (false, _, 0) => influences.none(pearson(Err(Reason::ConstantValue))),
+            (false, _, _) => self.stratified_pearson(k, &kept, influences)?,
         };
         Ok(Stratified {
             n,
@@ -1341,7 +1654,7 @@ impl Blocks {
 
     /// The Polychoric Fit of the kept blocks' 2 x 2 tables, a threshold
     /// per stratum and side.
-    fn stratified_tetrachoric(&self, k: usize, kept: &[bool]) -> Estimate {
+    fn stratified_tetrachoric(&self, k: usize, kept: &[bool], influences: &mut Influences) -> Fit {
         let mut table = Table::zeros(k, k, 2, 2);
         for (b, _) in kept.iter().enumerate().filter(|(_, &kept)| kept) {
             let (s, u) = (b / k, b % k);
@@ -1352,7 +1665,13 @@ impl Blocks {
                 }
             }
         }
-        tetrachoric(correlation::fit_counts(table).map(|(_, point)| point))
+        let fit = correlation::fit_counts(table);
+        let point = fit.as_ref().map(|&(_, point)| point).map_err(|&r| r);
+        influences.made(tetrachoric(point), || {
+            influence::two_step(&fit, |at| {
+                Influence::stratified_tetrachoric(self.view, k, kept, at)
+            })
+        })
     }
 
     /// `Σ z₁ z₂ / N` over the kept blocks' pairs, each side standardised
@@ -1360,7 +1679,12 @@ impl Blocks {
     /// over the kept blocks), so `Σ z₁² = Σ z₂² = N`.  A block's
     /// cross-product about its strata's means is its own comoment plus its
     /// count times the product of its means' offsets from them.
-    fn stratified_pearson(&self, k: usize, kept: &[bool]) -> Result<f64, Error> {
+    fn stratified_pearson(
+        &self,
+        k: usize,
+        kept: &[bool],
+        influences: &mut Influences,
+    ) -> Result<Fit, Error> {
         let scale = |side: Side| {
             let (column, name) = (self.view.column(side), self.name(side));
             (0..k)
@@ -1386,6 +1710,7 @@ impl Blocks {
             self.names[1],
         )?;
         let (mut cross, mut n) = (0.0, 0u64);
+        let mut blocks = Vec::new();
         for (b, _) in kept.iter().enumerate().filter(|(_, &kept)| kept) {
             let (s, u) = (b / k, b % k);
             let at = self.at(s, 0, u, 0);
@@ -1397,8 +1722,26 @@ impl Blocks {
             let about = comoment[at] + count as f64 * (first[at] - m1) * (second[at] - m2);
             cross += about / (sd1 * sd2);
             n += count;
+            if influences.on() {
+                blocks.push(StratifiedBlock {
+                    s,
+                    u,
+                    n: count as f64,
+                    za: count as f64 * (first[at] - m1) / sd1,
+                    zb: count as f64 * (second[at] - m2) / sd2,
+                    zab: about / (sd1 * sd2),
+                });
+            }
         }
-        Ok((cross / n as f64).clamp(-1.0, 1.0))
+        let rho = (cross / n as f64).clamp(-1.0, 1.0);
+        Ok(influences.made(pearson(Ok(rho)), || {
+            Ok(Influence::stratified_pearson(
+                self.view,
+                [&rows, &cols],
+                &blocks,
+                rho,
+            ))
+        }))
     }
 }
 
@@ -1417,6 +1760,7 @@ fn tetrachoric(point: Result<Point, FitReason>) -> Estimate {
         estimator: Estimator::Tetrachoric,
         value: point.map(|p| p.value).map_err(Reason::from),
         boundary: point.ok().and_then(|p| p.boundary),
+        se: None,
     }
 }
 
@@ -1425,6 +1769,7 @@ fn pearson(value: Result<f64, Reason>) -> Estimate {
         estimator: Estimator::Pearson,
         value,
         boundary: None,
+        se: None,
     }
 }
 
@@ -1444,6 +1789,7 @@ fn phi(table: [[u64; 2]; 2]) -> Estimate {
         estimator: Estimator::Phi,
         value,
         boundary: None,
+        se: None,
     }
 }
 
@@ -1481,7 +1827,14 @@ const METHOD: [(&str, &str); 7] = [
          block of known strata (a threshold, or a mean and SD, per stratum and side), \
          leaving out the blocks of a stratum whose side is constant",
     ),
-    ("se", "none (ADR 0009)"),
+    (
+        "se",
+        "with se, a cluster sandwich (ADR 0013): each entry's influence on the estimate summed \
+         over its pair's MRCA and over each member, meat = sum over MRCAs + sum over members - \
+         sum over (member, MRCA), SE = sqrt(meat), no small-sample factor; none within_person, \
+         nor when |meat| <= max(1024, 4 sqrt(n)) eps x its scale, the three sums of squares at \
+         influence 1/n over the n entries (degenerate_meat)",
+    ),
 ];
 
 impl Estimate {
@@ -1490,13 +1843,20 @@ impl Estimate {
             Ok(v) => (Value::Float(v), Value::Null),
             Err(r) => (Value::Null, r.name().into()),
         };
-        Value::Map(vec![
+        let mut entries = vec![
             ("estimator", self.estimator.name().into()),
             ("primary", primary.into()),
             ("value", value),
             ("reason", reason),
             ("boundary", self.boundary.into()),
-        ])
+        ];
+        if let Some(se) = self.se {
+            entries.extend(match se {
+                Ok(se) => [("se", Value::Float(se)), ("se_reason", Value::Null)],
+                Err(r) => [("se", Value::Null), ("se_reason", r.name().into())],
+            });
+        }
+        Value::Map(entries)
     }
 }
 
@@ -1558,6 +1918,49 @@ impl Stratified {
             ("n_degenerate_stratum", self.n_degenerate_stratum.into()),
             ("estimate", self.estimate.to_value(true)),
         ])
+    }
+}
+
+impl<E> Cell<E> {
+    /// The same cell, each estimate through `f`.
+    fn map<F>(self, mut f: impl FnMut(E) -> F) -> Cell<F> {
+        let estimates = self.estimates.into_iter().map(&mut f).collect();
+        let strata = self.strata.map(|strata| {
+            strata
+                .into_iter()
+                .map(|s| StratumCell {
+                    label: s.label,
+                    n: s.n,
+                    n_dropped: s.n_dropped,
+                    n_entries: s.n_entries,
+                    counts: s.counts,
+                    estimates: s.estimates.into_iter().map(&mut f).collect(),
+                })
+                .collect()
+        });
+        let stratified = self.stratified.map(|s| Stratified {
+            n: s.n,
+            n_entries: s.n_entries,
+            n_degenerate_stratum: s.n_degenerate_stratum,
+            estimate: f(s.estimate),
+        });
+        Cell {
+            category: self.category,
+            members: self.members,
+            symmetric: self.symmetric,
+            roles: self.roles,
+            first_trait: self.first_trait,
+            second_trait: self.second_trait,
+            n: self.n,
+            n_dropped: self.n_dropped,
+            n_entries: self.n_entries,
+            counts: self.counts,
+            estimates,
+            strata,
+            n_cross_stratum: self.n_cross_stratum,
+            n_unknown_stratum: self.n_unknown_stratum,
+            stratified,
+        }
     }
 }
 
@@ -1626,6 +2029,7 @@ impl RelativePairCorrelation {
                     ("trait_kind", self.kind.name().into()),
                     ("memory_budget_bytes", self.memory_budget_bytes.into()),
                     ("threads", (self.threads as u64).into()),
+                    ("se", self.se.into()),
                     (
                         "quantization_exponents",
                         exponents
@@ -1652,6 +2056,10 @@ impl RelativePairCorrelation {
 mod tests {
     use super::*;
     use crate::input::PedigreeInput;
+
+    fn point(table: [[u64; 2]; 2]) -> Result<Point, FitReason> {
+        correlation::fitted(table).map(|(_, point)| point)
+    }
 
     const NA: f64 = f64::NAN;
 
@@ -1698,6 +2106,7 @@ mod tests {
             None,
             categories.as_deref(),
             DEFAULT_MEMORY_BUDGET_BYTES,
+            false,
         )
     }
 
@@ -1853,7 +2262,7 @@ mod tests {
             pooled
         );
         assert_eq!(po.n, 10);
-        let point = correlation::point(table(po)).unwrap();
+        let point = point(table(po)).unwrap();
         assert_eq!(po.estimates[0].value, Ok(point.value));
     }
 
@@ -1966,6 +2375,7 @@ mod tests {
             None,
             Some(entries),
             DEFAULT_MEMORY_BUDGET_BYTES,
+            false,
         )
     }
 
@@ -1990,6 +2400,7 @@ mod tests {
                 None,
                 categories,
                 budget,
+                false,
             )
             .unwrap_err()
             .code()
@@ -2097,7 +2508,9 @@ mod tests {
             n_codes: 1,
         };
         let blocks = Blocks::pairs(&table, &counts, layout, View::of(1, false)[0]).unwrap();
-        let mo = blocks.cell(single(Category::MO), None).unwrap();
+        let mo = blocks
+            .cell(single(Category::MO), None, &mut Influences(None))
+            .unwrap();
         assert_eq!(mo.counts, Counts::Table([[5, 3], [2, 6]]));
     }
 
@@ -2130,6 +2543,17 @@ mod tests {
         stratum: &[f64],
         categories: Option<&[Entry]>,
     ) -> Result<RelativePairCorrelation, Error> {
+        run_strata_se(ped, values, kind, stratum, categories, false)
+    }
+
+    fn run_strata_se(
+        ped: (&[i64], &[i64], &[i64]),
+        values: &[f64],
+        kind: TraitKind,
+        stratum: &[f64],
+        categories: Option<&[Entry]>,
+        se: bool,
+    ) -> Result<RelativePairCorrelation, Error> {
         let labels: Vec<i64> = stratum
             .iter()
             .map(|&s| if s.is_nan() { 0 } else { s as i64 })
@@ -2156,6 +2580,7 @@ mod tests {
             }),
             categories.as_deref(),
             DEFAULT_MEMORY_BUDGET_BYTES,
+            se,
         )
     }
 
@@ -2360,6 +2785,7 @@ mod tests {
                 Some(strata),
                 Some(&[]),
                 budget as i64,
+                false,
             )
         };
         // A stratum per row and the unknown code, three labels each, one
@@ -2573,6 +2999,268 @@ mod tests {
         }
     }
 
+    /// The stratified fits' SE against brute force on the entries with
+    /// both strata known: each entry's influence from an independent fit
+    /// (the Polychoric Fit's cell influence; assortative's per-pair Pearson
+    /// influence), and the meat summed over every two entries that share a
+    /// member or the MRCA, here the mother.
+    #[test]
+    fn the_stratified_fits_se_is_the_brute_force_cluster_sum() {
+        use crate::assortative::{pearson_influence, InfluenceSide};
+        use crate::polychoric::table::Grid;
+        use crate::polychoric::{cell_influence, Tables};
+        let k = 5;
+        for kind in [TraitKind::Binary, TraitKind::Continuous] {
+            let Fixture {
+                ids,
+                mother,
+                father,
+                stratum,
+                values: v,
+            } = stratified_fixture(kind);
+            let ped = (&ids[..], &mother[..], &father[..]);
+            let res = run_strata_se(ped, &v, kind, &stratum, None, true).unwrap();
+            let code = code_of(&stratum);
+            for (name, symmetric) in [("MO", false), ("FS", true)] {
+                let entries = known_pairs(&mother, &stratum, &v, symmetric);
+                let phi: Vec<f64> = if kind == TraitKind::Binary {
+                    let mut table = Table::zeros(k, k, 2, 2);
+                    for &(a, b) in &entries {
+                        let at = table.index(code(a), code(b), v[a] as usize, v[b] as usize);
+                        table.data[at] += 1.0;
+                    }
+                    let shown = |margin: Grid<f64>| Grid {
+                        rows: margin.rows,
+                        cols: margin.cols,
+                        data: margin.data.iter().map(|&m| m > 0.0).collect(),
+                    };
+                    let (rows, cols) = (shown(table.row_margin()), shown(table.col_margin()));
+                    let tables = Tables::from_counts(table, &rows, &cols).unwrap();
+                    let point = tables.fit(0.0);
+                    let influence = cell_influence(&tables, point.value).unwrap();
+                    entries
+                        .iter()
+                        .map(|&(a, b)| influence.at(code(a), code(b), v[a] as usize, v[b] as usize))
+                        .collect()
+                } else {
+                    let side = |pick: fn(&(usize, usize)) -> usize| {
+                        let rows: Vec<usize> = entries.iter().map(pick).collect();
+                        let x: Vec<f64> = rows.iter().map(|&r| v[r]).collect();
+                        let s: Vec<usize> = rows.iter().map(|&r| code(r)).collect();
+                        let (mut n, mut sum, mut ss) = (vec![0.0; k], vec![0.0; k], vec![0.0; k]);
+                        for (&x, &s) in x.iter().zip(&s) {
+                            n[s] += 1.0;
+                            sum[s] += x;
+                        }
+                        let mean: Vec<f64> = sum.iter().zip(&n).map(|(s, n)| s / n).collect();
+                        for (&x, &s) in x.iter().zip(&s) {
+                            ss[s] += (x - mean[s]).powi(2);
+                        }
+                        let var: Vec<f64> = ss.iter().zip(&n).map(|(s, n)| s / n).collect();
+                        (x, s, mean, var)
+                    };
+                    let ((xa, sa, ma, va), (xb, sb, mb, vb)) = (side(|p| p.0), side(|p| p.1));
+                    pearson_influence(
+                        InfluenceSide {
+                            x: &xa,
+                            stratum: &sa,
+                            mean: &ma,
+                            var: &va,
+                        },
+                        InfluenceSide {
+                            x: &xb,
+                            stratum: &sb,
+                            mean: &mb,
+                            var: &vb,
+                        },
+                        &vec![1.0; entries.len()],
+                    )
+                };
+                let mut meat = 0.0;
+                for (e, &(a, b)) in entries.iter().enumerate() {
+                    for (f, &(c, d)) in entries.iter().enumerate() {
+                        if a == c || a == d || b == c || b == d || mother[a] == mother[c] {
+                            meat += phi[e] * phi[f];
+                        }
+                    }
+                }
+                let stratified = cell(&res, name).stratified.unwrap();
+                assert_eq!(stratified.n_degenerate_stratum, 0, "{kind:?} {name}");
+                let se = stratified.estimate.se.unwrap().unwrap();
+                assert!(
+                    (se * se - meat).abs() <= 1e-10 * meat,
+                    "{kind:?} {name}: {} {}",
+                    se * se,
+                    meat
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_meat_within_rounding_of_zero_is_degenerate_and_one_below_it_negative() {
+        let at = |value: f64, scale, entries| {
+            SeReason::of_meat(Meat {
+                value,
+                scale,
+                entries,
+            })
+        };
+        let floor = DEGENERATE_FLOOR * f64::EPSILON;
+        for entries in [0, 1, 1 << 16] {
+            assert_eq!(degenerate(entries), floor);
+            assert_eq!(at(floor, 1.0, entries), Err(SeReason::DegenerateMeat));
+            assert_eq!(at(-floor, 1.0, entries), Err(SeReason::DegenerateMeat));
+            assert_eq!(at(2.0 * floor, 1.0, entries), Ok((2.0 * floor).sqrt()));
+            assert_eq!(at(-2.0 * floor, 1.0, entries), Err(SeReason::NegativeMeat));
+        }
+        // 4 √(2^20) = 2^12: a million entries' rounding passes the floor.
+        assert_eq!(degenerate(1 << 20), 4.0 * floor);
+        assert_eq!(at(2.0 * floor, 1.0, 1 << 20), Err(SeReason::DegenerateMeat));
+        assert_eq!(
+            at(-4.0 * floor, 1.0, 1 << 20),
+            Err(SeReason::DegenerateMeat)
+        );
+        assert_eq!(at(5.0 * floor, 1.0, 1 << 20), Ok((5.0 * floor).sqrt()));
+        assert_eq!(at(0.0, 0.0, 0), Err(SeReason::DegenerateMeat));
+        assert_eq!(at(0.25, 0.5, 9), Ok(0.5));
+        assert_eq!(at(f64::NAN, 1.0, 9), Err(SeReason::SandwichUndefined));
+    }
+
+    #[test]
+    fn a_meat_of_rounding_noise_or_below_zero_has_no_se() {
+        // FS: sibs 4-6 share one MRCA, so their influences cancel inside
+        // it.  MO: mother 2's entry as daughter of 0 cancels her four as
+        // mother.  GP: the grandchildren's sums net to less than their
+        // per-grandparent parts.
+        let (ids, mother, father) = family();
+        let ped = (&ids[..], &mother[..], &father[..]);
+        let one_stratum = [0.0; 9];
+        for (kind, values) in [
+            (
+                TraitKind::Continuous,
+                [0.3, 1.2, -0.5, 0.9, 0.1, 2.0, -1.1, 0.4, 0.7],
+            ),
+            (
+                TraitKind::Binary,
+                [0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0],
+            ),
+        ] {
+            let res = run_strata_se(ped, &values, kind, &one_stratum, None, true).unwrap();
+            let reasons: Vec<(&str, Option<&str>)> = res
+                .cells
+                .iter()
+                .filter(|c| c.n > 0)
+                .map(|c| {
+                    let estimate = c.estimates.last().unwrap();
+                    let se = estimate.se.unwrap();
+                    (c.category.as_str(), se.err().map(SeReason::name))
+                })
+                .collect();
+            assert_eq!(
+                reasons,
+                [
+                    ("MO", Some("degenerate_meat")),
+                    ("FO", None),
+                    ("FS", Some("degenerate_meat")),
+                    ("MHS", Some("degenerate_meat")),
+                    ("GP", Some("negative_meat")),
+                ],
+                "{kind:?}"
+            );
+        }
+    }
+
+    /// The SE's reserve ([`influence::reserve`]: the ancestry, the
+    /// influences and one sweep) is charged in full before the pass: one
+    /// byte short of the engine's one lane and the reserve is refused with
+    /// exactly their sum, and the same plus a MiB for the store's rows gives
+    /// the SEs of an ample budget.
+    #[test]
+    fn the_se_reserve_is_held_back_from_the_budget() {
+        let Fixture {
+            ids,
+            mother,
+            father,
+            stratum,
+            values,
+        } = stratified_fixture(TraitKind::Continuous);
+        let labels: Vec<i64> = stratum
+            .iter()
+            .map(|&s| if s.is_nan() { 0 } else { s as i64 })
+            .collect();
+        let known: Vec<bool> = stratum.iter().map(|s| !s.is_nan()).collect();
+        let strata = Strata {
+            labels: &labels,
+            known: &known,
+        };
+        let trait_ = Trait {
+            values: &values,
+            kind: TraitKind::Continuous,
+            n_levels: None,
+        };
+        let input = PedigreeInput {
+            ids: &ids,
+            mother: &mother,
+            father: &father,
+            twin: None,
+            sex: None,
+        };
+        let pedigree = PedigreeArg::Columns(input).resolve().unwrap();
+        let ancestry = Ancestry::of(&pedigree, 1 << 30).unwrap().bytes();
+        assert_eq!(ancestry, 8 * ids.len() as u64);
+        let run = |budget: u64| {
+            correlation(
+                PedigreeArg::Columns(input),
+                &[trait_],
+                Some(strata),
+                None,
+                budget as i64,
+                true,
+            )
+        };
+        let (codes, strata_labels) = strata.codes();
+        let members = Members::of(&[trait_])
+            .unwrap()
+            .stratified(&codes, strata_labels.len() + 1);
+        let requests = default_requests();
+        let union: CategorySet = requests.iter().flat_map(|r| r.members.clone()).collect();
+        let reserve = |budget| {
+            influence::reserve(
+                members.layout,
+                &requests,
+                Some(strata_labels.len()),
+                ids.len(),
+                budget,
+                ancestry,
+            )
+            .0
+        };
+        let one_lane = pedigree_graph_core::relationships::MomentsPlan::new(
+            members.input().shape(union),
+            NonZeroUsize::MIN,
+            1 << 30,
+        )
+        .unwrap()
+        .estimated_peak_bytes;
+        let fixed = one_lane + reserve(1 << 30);
+        assert_eq!(reserve(fixed - 1), reserve(1 << 30));
+        assert!(reserve(fixed) > 16 * ids.len() as u64);
+        match run(fixed - 1) {
+            Err(Error::Pedigree(PgError::MemoryBudgetExceeded {
+                operation,
+                estimated_bytes,
+                budget_bytes,
+            })) => {
+                assert_eq!(operation, "relative_pairs_se");
+                assert_eq!((estimated_bytes, budget_bytes), (fixed, fixed - 1));
+            }
+            other => panic!("{other:?}"),
+        }
+        let ample = run(1 << 30).unwrap();
+        assert_eq!(run(fixed + (1 << 20)).unwrap().cells, ample.cells);
+    }
+
     #[test]
     fn dropping_a_constant_stratum_can_make_another_constant() {
         // Five families of two (mother, unknown father, two children).
@@ -2610,7 +3298,7 @@ mod tests {
             assert_eq!((stratified.n, stratified.n_degenerate_stratum), (6, 4));
             let r = stratified.estimate.value.unwrap();
             let expected = if kind == TraitKind::Binary {
-                correlation::point(left).unwrap().value
+                point(left).unwrap().value
             } else {
                 pearson(&x, &y)
             };
@@ -2690,6 +3378,7 @@ mod tests {
             strata,
             categories.as_deref(),
             DEFAULT_MEMORY_BUDGET_BYTES,
+            false,
         )
     }
 
@@ -2815,7 +3504,7 @@ mod tests {
             let table = table_of(&entries, &x, &y);
             assert_eq!(cell.counts, Counts::Table(table), "{name}");
             assert_eq!((cell.n, cell.n_entries), (3, Some(entries.len() as u64)));
-            assert_eq!(cell.estimates[0], tetrachoric(correlation::point(table)));
+            assert_eq!(cell.estimates[0], tetrachoric(point(table)));
             assert_eq!(cell.estimates[1], phi(table));
             // The same-trait cells keep their Concordance.
             assert!(matches!(
@@ -3053,7 +3742,7 @@ mod tests {
                 let entries: Vec<(usize, usize)> = rows.iter().map(|&r| (r, r)).collect();
                 if kind == TraitKind::Binary {
                     let table = table_of(&entries, &x, &y);
-                    let estimates = vec![tetrachoric(correlation::point(table)), phi(table)];
+                    let estimates = vec![tetrachoric(point(table)), phi(table)];
                     (Counts::Table(table), estimates)
                 } else {
                     let (a, b): (Vec<f64>, Vec<f64>) = rows.iter().map(|&r| (x[r], y[r])).unzip();
@@ -3174,6 +3863,7 @@ mod tests {
                 strata,
                 Some(&[code("XX")]),
                 DEFAULT_MEMORY_BUDGET_BYTES,
+                false,
             )
             .unwrap_err()
         };

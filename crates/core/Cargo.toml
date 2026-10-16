@@ -14,4 +14,5 @@ name = "pg_phenotype_core"
 [dependencies]
 pedigree-graph-core.workspace = true
 rayon.workspace = true
+rustc-hash.workspace = true
 libm = "0.2"

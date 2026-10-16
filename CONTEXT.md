@@ -175,6 +175,15 @@ spread, or threshold, on each side of the pair, and the strata share one
 correlation.
 _Avoid_: relative correlation, familial correlation
 
+**MRCA** (of a Relative Pair):
+The most recent common ancestor the pair's relationship runs through: the
+ancestor member of a lineal pair, the shared parent of a half
+relationship, the shared mother of a full one (MZ: the twins' mother).  It
+can be an external parent, an id with no row.  The Relative-Pair
+Correlation's SE clusters two pairs together when they share an MRCA or a
+member.
+_Avoid_: common ancestor (a pair can have several), founder
+
 **Stratum** (of a Relative Pair):
 The stratum label that places a Relative Pair in a stratum cell: a directed
 pair's first role's label; a symmetric pair's shared label, when both

@@ -122,13 +122,9 @@ fn fit(table: [[u64; 2]; 2]) -> Result<Estimate, Reason> {
     Ok(Estimate { point, se, ci })
 }
 
-/// The point estimate alone: [`tetrachoric`]'s value and boundary flag,
-/// without the SE work.
-pub(crate) fn point(table: [[u64; 2]; 2]) -> Result<Point, Reason> {
-    fitted(table).map(|(_, point)| point)
-}
-
-fn fitted(table: [[u64; 2]; 2]) -> Result<(Tables, Point), Reason> {
+/// [`tetrachoric`]'s fit: its first step and its point estimate, without
+/// the SE work.
+pub(crate) fn fitted(table: [[u64; 2]; 2]) -> Result<(Tables, Point), Reason> {
     let mut counts = Table::zeros(1, 1, 2, 2);
     counts.data = table.iter().flatten().map(|&c| c as f64).collect();
     fit_counts(counts)

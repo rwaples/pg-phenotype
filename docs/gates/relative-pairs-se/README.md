@@ -9,6 +9,12 @@ Network designs (`mn`, `mn_person`) match them while networks stay small.
 When serial mating joins most of a generation into one network, the
 spread of r̂ is 1.5-2.3 times their SE, and coverage falls to 0.61-0.78.
 
+The shipped SE (ADR 0013's `mrca_person`, `relative_pairs.correlation(...,
+se=True)`) reproduces this script's per rep and calibrates the same way,
+the stratified shared-rho fit included: median SD(r̂)/SE 0.94-1.09 and
+coverage 0.89-0.97 per scenario, category type, estimator and fit (see
+[The shipped SE](#the-shipped-se-through-the-public-api---rust)).
+
 Run 2026-10-16 on 600 simACE reps, against the pg-phenotype working tree
 on `012a0f2`:
 
@@ -46,7 +52,7 @@ Cells: the 12 categories up to degree 3, plus the groups PO (MO, FO) and HS
 trait1, trait2 and their cross-trait combinations (both orientations of a
 symmetric pair); Pearson on liability and the tetrachoric and phi on case
 status, over the rows whose case status is observed.  The stratified
-shared-rho fit is not calibrated here (see the ADR).
+shared-rho fit is calibrated through the public API below.
 
 ## Method
 
@@ -135,3 +141,101 @@ Findings:
    0.5% cumulative incidence and under one expected concordant pair per
    cell: ratio near 2 and coverage near 0.3 under all six designs.  The
    Wald SE fails there whatever the clusters; it is not a design effect.
+
+## The shipped SE through the public API (`--rust`)
+
+Run 2026-10-16 on the same 600 reps, against a release wheel of the
+pg-phenotype working tree on `f161268` (the Relative-Pair SE, uncommitted):
+
+    PG_PHENOTYPE_THREADS=1 POLARS_MAX_THREADS=1 pixi run python -B \
+        tools/relative_pairs_se_calibration.py <simACE>/results/se_calibration \
+        --rust --jobs 11 --out docs/gates/relative-pairs-se --reps <scratch>/rust_reps.tsv
+
+Per rep, `relative_pairs.correlation(..., stratum=generation, se=True)`
+with both traits, once for the 12 codes and once for the PO and HS groups,
+on liability (Pearson) and case status (tetrachoric, phi), each over the
+rows whose case status is observed: the cells above, plus each cell's
+stratified fit.  Beside each pooled and stratum estimate, this script's r̂
+and `mrca_person` SE for the same rep.  `rust_calibration.tsv` has the
+columns of `calibration.tsv` for the one design `rust`, plus `mean_n11`
+(a binary cell's mean count of pairs with both members affected; the
+stratified fit reads its pooled cell's) and `no_se_<reason>` (reps whose
+estimate has a value and no SE).  A boundary tetrachoric is left out of
+r̂'s statistics, as above, and counted in `no_se_boundary`.
+`rust_summary.tsv` has the medians per scenario, category type, estimator
+and fit (`cells`: pooled and stratum; `stratified`), over the cells
+estimated in every rep with at least 1000 pairs on average.
+`--rust --from-reps` rebuilds both tables, byte for byte.
+
+**Against this script.**  Over the 261,864 pooled and stratum estimates
+with both SEs, the largest relative gap is 3.5e-6, a tetrachoric at
+ρ̂ 0.997 in an MZ stratum of 86 pairs; Pearson and phi agree to the per-rep
+file's 8 decimals, and r̂ to 1.1e-13.  In 29 estimates, phi = 1 in an MZ
+stratum of at most 120 pairs, the Rust SE is `degenerate_meat` where this
+script gives a rounding-sized SE (below 5e-9).  So in all 2381 cells of the
+medians, SD(r̂)/SE and coverage equal `calibration.tsv`'s `mrca_person`
+columns to 4 decimals.
+
+**Result.**  Median SD(r̂)/SE, with median Wald coverage in parentheses:
+
+| scenario | type | Pearson | phi | tetrachoric | stratified Pearson | stratified tetrachoric |
+|---|---|---|---|---|---|---|
+| λ 0.5, K 0.10 | sibling | 0.98 (0.95) | 0.99 (0.94) | 0.99 (0.95) | 0.96 (0.95) | 0.99 (0.95) |
+| | lineal | 1.01 (0.95) | 0.99 (0.96) | 0.99 (0.96) | 1.02 (0.96) | 0.99 (0.96) |
+| | collateral | 1.00 (0.95) | 0.99 (0.95) | 0.99 (0.96) | 1.00 (0.95) | 0.99 (0.96) |
+| λ 0.5, K 0.02 | sibling | 0.97 (0.95) | 1.07 (0.89) | 1.07 (0.93) | 0.96 (0.95) | 1.08 (0.94) |
+| | lineal | 0.99 (0.96) | 1.07 (0.91) | 1.08 (0.94) | 1.00 (0.96) | 1.09 (0.94) |
+| | collateral | 1.00 (0.95) | 1.05 (0.92) | 1.05 (0.94) | 1.01 (0.95) | 1.05 (0.94) |
+| λ 0.5, K 0.10, high A | sibling | 0.96 (0.96) | 1.00 (0.95) | 1.01 (0.95) | 0.94 (0.96) | 1.00 (0.95) |
+| | lineal | 0.99 (0.96) | 1.01 (0.96) | 1.01 (0.95) | 1.00 (0.96) | 1.01 (0.95) |
+| | collateral | 1.02 (0.95) | 0.99 (0.95) | 0.99 (0.95) | 1.02 (0.94) | 0.99 (0.96) |
+| λ 3, K 0.10 | sibling | 1.00 (0.95) | 1.01 (0.95) | 1.01 (0.95) | 1.03 (0.95) | 0.98 (0.95) |
+| | lineal | 1.00 (0.95) | 0.94 (0.96) | 0.94 (0.96) | 1.01 (0.95) | 0.96 (0.96) |
+| | collateral | 1.00 (0.95) | 0.96 (0.96) | 0.96 (0.96) | 1.02 (0.94) | 0.98 (0.96) |
+| λ 3, K 0.02 | sibling | 0.99 (0.96) | 1.04 (0.92) | 1.03 (0.95) | 1.03 (0.95) | 0.99 (0.94) |
+| | lineal | 0.99 (0.95) | 1.07 (0.92) | 1.07 (0.94) | 1.01 (0.95) | 1.09 (0.94) |
+| | collateral | 0.99 (0.95) | 1.05 (0.91) | 1.04 (0.95) | 0.99 (0.94) | 1.00 (0.95) |
+| λ 3, K 0.10, high A | sibling | 0.99 (0.96) | 1.04 (0.94) | 1.04 (0.94) | 1.03 (0.95) | 1.06 (0.94) |
+| | lineal | 1.02 (0.94) | 1.00 (0.95) | 0.99 (0.95) | 1.04 (0.94) | 0.97 (0.96) |
+| | collateral | 1.02 (0.95) | 0.98 (0.96) | 0.98 (0.95) | 1.04 (0.95) | 0.95 (0.96) |
+| all | sibling | 0.98 (0.96) | 1.02 (0.93) | 1.02 (0.95) | 1.00 (0.95) | 1.01 (0.95) |
+| | lineal | 1.00 (0.95) | 1.01 (0.94) | 1.02 (0.95) | 1.01 (0.95) | 1.02 (0.95) |
+| | collateral | 1.00 (0.95) | 1.00 (0.95) | 1.00 (0.95) | 1.02 (0.95) | 0.99 (0.95) |
+
+1. **The stratified fit calibrates.**  Over its 514 cells the median ratio
+   is 1.01 (5th-95th percentile 0.89-1.15), the log ratio's SD 0.078
+   against 0.071 from 100 reps alone, and median coverage 0.95 (5th
+   percentile 0.91).  Its SE varies less across reps than a stratum's
+   (median CV 0.036 against 0.058 over the pooled and stratum cells).
+2. **Pooled and stratum cells** match the script's `mrca_person` (2381
+   cells: median ratio 1.01, 5th-95th percentile 0.88-1.15; median
+   coverage 0.95).  By estimator the log ratio's SD is 0.071 for Pearson,
+   0.082 for the tetrachoric and 0.101 for phi.
+3. **Low prevalence.**  At K 0.02 the binary estimators' medians are
+   0.99-1.09, most 3-9% above 1, and phi's coverage 0.89-0.92, as finding
+   5 above.  By the mean count of pairs with both members affected
+   (`mean_n11`), over every binary pooled and stratum cell:
+
+   | `mean_n11` | cells | median ratio | median coverage | lowest coverage |
+   |---|---|---|---|---|
+   | under 1 | 43 | 2.54 | 0.31 | 0.00 |
+   | 1-5 | 192 | 0.97 | 0.93 | 0.55 |
+   | 5-20 | 315 | 1.06 | 0.92 | 0.84 |
+   | 20 or more | 1224 | 1.00 | 0.95 | 0.85 |
+
+   Under about one expected concordant pair the Wald SE fails, as ADR 0013
+   records; it is not a cluster effect.
+4. **No SE.**  4252 estimates stop at the tetrachoric's bound
+   (`boundary`; 3083 of them in MZ cells, the rest with no concordant
+   pair), 421 of them stratified fits.  33 are `degenerate_meat` (phi = 1
+   in an MZ stratum).  None is `sandwich_undefined` or `negative_meat`.
+5. **One cell type sits above the band.**  The father-offspring Pearson of
+   trait1 at λ 3 in generation 5: 1.28 at K 0.10 and at K 0.02 (independent
+   seeds) and 1.18 at high A, coverage 0.86-0.92; pooled 1.11-1.23.  Its
+   mother-offspring counterpart is 0.98-1.03, and trait2's FO 1.02-1.04.
+   It is the same in `calibration.tsv` under `person`, `mrca` and
+   `mrca_person`, which coincide for a lineal stratum cell, so it is not
+   the implementation.  A probe that also joins pairs through the child's
+   mother, or through the father's mother or father, leaves the ratio at
+   1.27-1.29: the extra spread does not come from those links.  Its source
+   is open.

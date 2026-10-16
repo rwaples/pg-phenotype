@@ -8,8 +8,9 @@ or a Category Group's.  `pg_phenotype.relative_pairs.ace` (R:
 additive genetic (A), common environment (C) and unique environment (E)
 shares and, with two traits, the cross-trait correlations rA, rC and rE.
 This page describes what both compute and what they return.  The reasons
-behind the design are in [ADR 0009](adr/0009-relative-pair-correlation.md)
-and [ADR 0012](adr/0012-relative-pair-strata-two-traits-and-the-ace-fit.md).
+behind the design are in [ADR 0009](adr/0009-relative-pair-correlation.md),
+[ADR 0012](adr/0012-relative-pair-strata-two-traits-and-the-ace-fit.md) and,
+for the SE, [ADR 0013](adr/0013-relative-pair-se-clusters-by-common-ancestor.md).
 The comparison with simACE is in
 [the gate report](gates/relative-pairs/README.md).
 
@@ -25,9 +26,10 @@ res = relative_pairs.correlation(
     [Trait(liability1), Trait(liability2)],  # or one Trait
     categories=["MZ", "FS", "MHS", "PHS", {"PO": ["MO", "FO"]}, "1C"],
     stratum=generation,  # None by default
+    se=True,  # False by default
 )
 fs = res.cell("FS")  # trait 0 in both members
-fs.primary.value, fs.n, fs.stratified.estimate.value, fs.strata[3].n
+fs.primary.value, fs.primary.se, fs.n, fs.stratified.estimate.value, fs.strata[3].n
 res.cell("FS", first_trait=0, second_trait=1).n_entries
 res.within_person.primary.value
 
@@ -40,7 +42,7 @@ fit.cross.rA, fit.cross.rC, fit.cross.rE
 ped <- pedigree(ped_df)
 res <- relative_pairs_correlation(ped, list(trait(ped_df$liability1), trait(ped_df$liability2)),
                                   categories = list("MZ", "FS", "MHS", "PHS", PO = c("MO", "FO"), "1C"),
-                                  stratum = ped_df$generation)
+                                  stratum = ped_df$generation, se = TRUE)
 fit <- relative_pairs_ace(res, shared_environment = c("MZ", "FS", "MHS"))
 ```
 
@@ -50,7 +52,8 @@ fit <- relative_pairs_ace(res, shared_environment = c("MZ", "FS", "MHS"))
 | `traits` | A continuous or binary `Trait` on the pedigree's rows, or a sequence of one or two of one kind | required |
 | `categories` | The entries, in order: Relationship Category codes (`"FS"`, `"MO"`, `"1C"`) and mappings of a Category Group's name to its codes (`{"PO": ["MO", "FO"]}`; R: a named list element) | `None`: every category up to degree 3 |
 | `stratum` | One integer label per row (a generation, a birth cohort), NA where unknown | `None` (no strata) |
-| `memory_budget_bytes` | The bound on the engine's accumulators and, with two traits, the within-person accumulator | 2^30 (1 GiB) |
+| `memory_budget_bytes` | The bound on the engine's accumulators, with two traits the within-person accumulator, and with `se` the per-cluster sums | 2^30 (1 GiB) |
+| `se` | Whether every estimate gets its cluster sandwich SE; see [SE](#se) | `False` |
 
 The thread count is the package budget (`configure_threads`, or
 `PG_PHENOTYPE_THREADS`).  Traits and strata are matched to the pedigree's
@@ -180,6 +183,57 @@ member (a directed cell's first role), columns by trait `second_trait` of
 the other, a symmetric cell's two orientations summed.  A continuous cell
 reports neither.
 
+## SE
+
+With `se=True` every estimate of a Relationship Category's cells, pooled,
+stratum and `stratified`, gets a cluster sandwich SE.  Relative Pairs share
+people, so an SE that treats pairs as independent is too small.  Two pairs
+are in one cluster when they share a member or share their most recent
+common ancestor (MRCA), by inclusion-exclusion:
+
+```text
+meat = sum over MRCAs m of Phi_m^2 + sum over members i of S_i^2
+       - sum over (member, MRCA) of S_(i,m)^2
+SE   = sqrt(meat)
+```
+
+`Phi` and `S` sum the influences on the estimate of the entries (complete
+orientations) in each cluster, each influence divided by the fit's
+entries.  With both orientations of every pair this is the pair-level
+formula of ADR 0013; a symmetric cross-trait cell whose pairs are complete
+in one orientation only counts each entry once, as its estimate does.
+There is no small-sample factor.
+
+A pair's MRCA is the ancestor member of a lineal pair (MO, GP, ...), the
+shared parent of a half relationship, and the shared mother of a full one
+(MZ by the twins' mother), found up the category's meioses in (mother,
+father) order.  The shared parent can be an external parent, an id with no
+row.  A pair with no common ancestor, MZ twins without parents, is its own
+cluster.
+
+The influence is Pearson's (phi's) `u v - r/2 (u^2 + v^2)`, the two-step
+tetrachoric's threshold-corrected cell influence, and for `stratified`
+the influence of its stratum-standardised Pearson or its Polychoric Fit.
+
+`se` is `None` exactly when `se_reason` says why:
+
+| `se_reason` | Cause |
+|---|---|
+| `no_estimate` | The estimate has no value; its `reason` says why |
+| `boundary` | The tetrachoric fit stopped at a bound |
+| `sandwich_undefined` | The two-step fit's Hessian is not negative definite, or the meat is not a number |
+| `degenerate_meat` | The meat is zero to within rounding: over n entries, at most max(1024, 4 sqrt(n)) eps of its scale, its three sums of squares added as if every entry had the influence 1/n.  A cell whose pairs share one MRCA, or whose estimate is ±1, has a meat of zero |
+| `negative_meat` | The inclusion-exclusion meat is negative |
+| `within_person` | The within-person cell, which has no cluster design |
+
+The SE is computed in the same pass over the pedigree as the cells, from
+exact per-cluster sums kept beside the engine's.  These cost memory, held
+to `memory_budget_bytes`, and time.  On a 120k-row pedigree the call
+takes 1.5-1.6 times as long with one trait and 2.4-3.7 times with two
+traits and generation strata at one thread, and 1.6-1.8 and 2.1-3.3 times
+at eight.  Without `se` the call does neither.  The SEs do not depend on the thread count.  Near the budget
+edge, whether the call raises `memory_budget_exceeded` can.
+
 ## Result
 
 `correlation` returns a frozen `RelativePairCorrelation`.  In R the same
@@ -190,7 +244,7 @@ values come as nested lists with the same names, `NULL` where Python has
 |---|---|
 | `cells` | Each entry's cells in request order, each entry's in the order above |
 | `within_person` | With two traits, the within-person `Cell`; `None` with one |
-| `settings` | `categories` (the entries' names), `trait_kind`, `memory_budget_bytes`, `threads`, `quantization_exponents`, `quantization_steps` (both `None` for binary traits) |
+| `settings` | `categories` (the entries' names), `trait_kind`, `memory_budget_bytes`, `threads`, `se` (whether the SE was asked for), `quantization_exponents`, `quantization_steps` (both `None` for binary traits) |
 | `method` | `entry`, `traits`, `within_person`, `estimators`, `quantization`, `strata`, `se`: the method in words |
 | `metadata` | `pg_phenotype_version`, `pedigree_graph_core_rev` |
 
@@ -206,9 +260,10 @@ values come as nested lists with the same names, `NULL` where Python has
 | `n_cross_stratum`, `n_unknown_stratum` | With `stratum`; else 0 |
 | `stratified` | With `stratum`: `Stratified(n, n_entries, n_degenerate_stratum, estimate)` |
 
-An `Estimate` holds `estimator`, `primary`, `value` or `reason`, and
+An `Estimate` holds `estimator`, `primary`, `value` or `reason`,
 `boundary`, the tetrachoric fit's bound flag (`None` for other
-estimators).
+estimators), and `se` or `se_reason` (see [SE](#se); both `None`
+without `se`, and R leaves both out).
 
 ## ACE Fit
 
@@ -244,7 +299,7 @@ orientations, so each counts once: a symmetric cell's `n_entries`, a
 directed cell's `n`, since each of its (0, 1) and (1, 0) cells holds one
 orientation of a pair.  A directed pair complete both ways then weighs as
 much in the cross solve as a symmetric one.  Values are unconstrained.
-There is no SE.
+The ACE Fit has no SE yet (issue #19).
 
 A component that no row informs does not take the others with it.  When
 no same-trait row that entered is a Shared-Environment Category's, C is
@@ -331,7 +386,8 @@ A value that is `None` comes with one of these reasons.
 | `nonpositive_component` | `rA`, `rC`, `rE` | The component is at most 0 in a trait |
 
 An `AceRow` whose value is undefined carries the estimate's own reason and
-does not enter the fit.
+does not enter the fit.  An estimate's `se_reason` is listed under
+[SE](#se).
 
 ## Errors
 
@@ -354,7 +410,8 @@ traits in order, then `stratum`, then `categories`, then the budget.
 | `mixed_category_group` | `ValidationError` | A group mixing symmetric and directed categories, or directed roles |
 | `insufficient_precision` | `ValidationError` | A continuous trait's quantization step above 2^-20 of its spread |
 | `parameter_out_of_range` | `ParameterError` | `memory_budget_bytes` below 1 |
-| `memory_budget_exceeded` | `ResourceError` | The accumulators do not fit the budget |
+| `memory_budget_exceeded` | `ResourceError` | The accumulators, or with `se` the per-cluster sums (operation `relative_pairs_se`), do not fit the budget |
+| `allocation_failed` | `ResourceError` | With `se`, the allocator refused the per-cluster sums |
 | `unknown_entry` | `ValidationError` | An `ace` `categories` name that is no entry of the result |
 | `mixed_kinship` | `ValidationError` | A group fitted whose categories differ in degree |
 | `mixed_shared_environment` | `ValidationError` | A group fitted with categories both in and out of `shared_environment` |
@@ -369,9 +426,10 @@ values.
 
 ## Caveats
 
-- No SE or CI yet.  Relative Pairs share people, so an SE that treats
-  pairs as independent is too small.  The cluster design waits on a
-  calibration study ([ADR 0009](adr/0009-relative-pair-correlation.md), #19).
+- The SE is a Wald SE: no CI is reported, and in a sparse binary cell (under
+  about one expected concordant pair) the Wald interval fails under every
+  cluster design ([ADR 0013](adr/0013-relative-pair-se-clusters-by-common-ancestor.md)).
+  The ACE Fit has no SE yet (#19).
 - The ACE model assumes no assortative mating, no dominance, and C shared
   in full by the declared categories and not at all by the others.
 - Count weights let a large cell dominate the fit, and the fit

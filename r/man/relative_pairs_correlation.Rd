@@ -9,7 +9,8 @@ relative_pairs_correlation(
   traits,
   categories = NULL,
   stratum = NULL,
-  memory_budget_bytes = 2^30
+  memory_budget_bytes = 2^30,
+  se = FALSE
 )
 }
 \arguments{
@@ -34,15 +35,40 @@ birth cohort), `NA` where unknown.  `within_person` puts each row in its
 own stratum.  The pooled fields do not change.}
 
 \item{memory_budget_bytes}{The bound on the engine's accumulators and,
-with two traits, the within-person accumulator.}
+with two traits, the within-person accumulator, and with `se` the
+per-cluster sums.}
+
+\item{se}{`TRUE` gives every estimate, in `crude`, each stratum's `crude`
+and `stratified`, its cluster sandwich SE (ADR 0013) as `se`, or `NULL`
+with `se_reason` saying why; `FALSE` (the default) leaves both fields
+out.  Each entry (a pair's complete orientation) adds its influence on
+the estimate, divided by the fit's entries, to its pair's MRCA, to each
+member, and to each (member, MRCA); the meat is the sum of squares over
+MRCAs plus over members minus over (member, MRCA), and the SE its square
+root, with no small-sample factor.  A pair's MRCA is the ancestor member
+of a lineal pair, the shared parent of a half relationship and the
+shared mother of a full one (MZ: the twins' mother), and can be an
+external parent.  `se_reason` is `"no_estimate"` (the estimate has no
+value), `"boundary"` (the tetrachoric fit stopped at a bound),
+`"sandwich_undefined"` (the two-step fit's Hessian is not negative
+definite, or the meat is not a number), `"degenerate_meat"` (the meat
+is zero to within rounding, at most max(1024, 4 sqrt(n)) machine
+epsilons of its scale over n entries, as when a cell's pairs share one
+MRCA or its estimate is +-1),
+`"negative_meat"` (the meat is negative) or `"within_person"` (the
+Within-Person cell has no cluster design).  The SE comes from the same
+pass over the pedigree as the cells, costs 1.5 to 1.8 times the call's
+time with one trait and 2.1 to 3.7 times with two traits and strata,
+and does not depend on the thread count.}
 }
 \value{
 An object of class `pgphenotype_relative_pairs`: a list with
   `cells` (each entry's, in request order: one with one trait; with two,
   a symmetric entry's trait 1 x 1, 2 x 2, 1 x 2 and a directed entry's
   1 x 1, 1 x 2, 2 x 1, 2 x 2), `within_person` (with two traits, a cell
-  over the rows; `NULL` with one), `settings` (with continuous traits'
-  `quantization_exponents` and `quantization_steps`, one per trait),
+  over the rows; `NULL` with one), `settings` (`se`, whether the SE was
+  asked for, and with continuous traits' `quantization_exponents` and
+  `quantization_steps`, one per trait),
   `method` and `metadata`.  Each cell holds `category` (the code, the
   group's name, or `"within_person"`), `members`, `symmetric`, `roles`
   (`NULL` when symmetric), `first_trait` and `second_trait` (the traits,
@@ -56,7 +82,8 @@ An object of class `pgphenotype_relative_pairs`: a list with
   one member, a directed cell's first role, and columns by `second_trait`
   of the other, a symmetric cell's orientations summed) and `crude`: each
   estimator's `estimator`, `primary`, `value`, `reason` (why `value` is
-  `NULL`) and `boundary`, the primary first.
+  `NULL`), `boundary` and, with `se = TRUE`, `se` and `se_reason`, the
+  primary first.
   With `stratum`, a cell also holds `strata` (one record per known label,
   ascending, with its `stratum` and the pooled fields `n`, `n_dropped`,
   `n_entries`, `concordance`, `table` and `crude` over its pairs; `n = 0`
@@ -84,10 +111,11 @@ its same-trait Pearson is intraclass and its tetrachoric fits one
 threshold; a directed category's pairs enter once, in its roles' order
 (offspring then parent).  With two traits of one kind, each entry gets a
 cell per trait combination, and `within_person` is the Within-Person
-Cross-Trait Correlation: each row's trait 1 against its trait 2.  There
-is no SE yet: relative pairs share people, and the cluster design waits
-on a calibration study.  With `stratum`, each cell
-also gets one cell per known stratum and a stratified fit: a directed pair
+Cross-Trait Correlation: each row's trait 1 against its trait 2.  With
+`se = TRUE`, each estimate also gets a cluster sandwich SE: relative
+pairs share people, so two pairs are in one cluster when they share a
+member or their most recent common ancestor (MRCA).  With `stratum`, each
+cell also gets one cell per known stratum and a stratified fit: a directed pair
 is in its first role's stratum (the offspring's, the descendant's),
 whatever the second member's; a symmetric pair is in a stratum only when
 both members are.  The same inputs give the same numbers as the Python
@@ -105,4 +133,5 @@ relative_pairs_correlation(ped, x, categories = "MO", stratum = c(0, 0, 1, NA, 2
 y <- trait(c(1.0, 0.2, -0.5, 0.7, 0.4, 1.3, -0.8, 0.6, 0.4))
 r <- relative_pairs_correlation(ped, list(x, y), categories = c("FS", "MO"))
 r$within_person
+relative_pairs_correlation(ped, x, categories = c("FO", "FS"), se = TRUE)
 }

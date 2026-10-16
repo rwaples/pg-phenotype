@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- `relative_pairs.correlation(..., se=True)` (R: `se = TRUE`) gives every
+  Relative-Pair Correlation estimate a cluster sandwich SE (issue #18;
+  ADR 0013): pooled, stratum and stratified cells, Pearson, tetrachoric
+  and phi, same-trait and cross-trait.  Two pairs are in one cluster when
+  they share a member or their most recent common ancestor (MRCA).  Each
+  `Estimate` gains `se` and `se_reason`; `se` is `None` with
+  `no_estimate`, `boundary`, `sandwich_undefined`, `degenerate_meat` (the
+  meat is zero to within rounding, as in a cell whose pairs share one
+  MRCA), `negative_meat` or `within_person` (the Within-Person cell has no
+  cluster design).  The SE comes from the same pass over the pedigree as
+  the cells and does not depend on the thread count.  On a 120k-row
+  pedigree it costs 1.5-1.6 times the call's time with one trait and
+  2.4-3.7 times with two traits and generation strata at one thread
+  (1.6-1.8 and 2.1-3.3 times at eight), and memory held to
+  `memory_budget_bytes`, whose new error is `memory_budget_exceeded` with
+  operation `relative_pairs_se` (or `allocation_failed`).  `se` defaults
+  to `False`, and without it the estimates are unchanged; the result's
+  `settings` gain `se`.  On 600 simACE reps the SE calibrates, the
+  stratified fit included: median SD(r̂)/SE 0.94-1.09 and Wald coverage
+  0.89-0.97 per scenario, category type, estimator and fit
+  (`docs/gates/relative-pairs-se/`).
+
 - pedigree-graph-core is pinned at pedigree-graph's v0.12.4 tag, whose
   errors render their rows and positions in the host's index base.  A
   pedigree error's message in R now counts from 1, like its fields and like
