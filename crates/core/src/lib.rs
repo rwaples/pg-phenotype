@@ -19,7 +19,7 @@
 )]
 
 /// The pedigree-graph revision this build links, as `Cargo.toml` pins it.
-pub const PG_CORE_REV: &str = "727159175db19e0315e3743299c1e6538710c0ab";
+pub const PG_CORE_REV: &str = "5be610fe257b1c288a9bbdcdaf3976abac1fb83a";
 
 pub mod ace;
 pub mod assortative;

@@ -6,12 +6,13 @@
 //!
 //! A host renders an error under its [`IndexBase`]: Python counts positions
 //! from 0, R from 1, and the message and the fields count alike.  A pedigree
-//! error is the exception: pedigree-graph-core writes its message, from 0 in
-//! every host, while its fields count from the host's base.
+//! error takes both from pedigree-graph-core, rendered in the same base.
 
 use crate::ace::Estimator as AceEstimator;
 use crate::input::TraitKind;
-use pedigree_graph_core::error::{Error as PgError, ErrorClass, FieldValue as PgField};
+use pedigree_graph_core::error::{
+    Error as PgError, ErrorClass, FieldValue as PgField, IndexBase as PgIndexBase,
+};
 use std::fmt;
 
 /// Which part of a CIP table's contract it breaks.
@@ -148,24 +149,19 @@ pub enum IndexBase {
 }
 
 impl IndexBase {
+    fn pg(self) -> PgIndexBase {
+        match self {
+            IndexBase::Zero => PgIndexBase::Zero,
+            IndexBase::One => PgIndexBase::One,
+        }
+    }
+
     fn offset(self) -> i64 {
         match self {
             IndexBase::Zero => 0,
             IndexBase::One => 1,
         }
     }
-}
-
-/// Whether a pedigree-graph-core field holds 0-based rows or positions.
-///
-/// pedigree-graph-core does not mark its positions, so they are known by name,
-/// by the rule of pedigree-graph's R binding (`is_index_field`), so a pedigree
-/// error's fields read the same from either package.
-fn is_index_name(name: &str) -> bool {
-    matches!(name, "row" | "rows" | "column" | "columns" | "position")
-        || ["_row", "_rows", "_column", "_columns"]
-            .iter()
-            .any(|suffix| name.ends_with(suffix))
 }
 
 /// One keyword field of an error.
@@ -443,18 +439,13 @@ impl Error {
         let int = |n: usize| Int(n as i64);
         match self {
             Error::Pedigree(err) => err
-                .fields()
+                .fields(base.pg())
                 .into_iter()
                 .map(|(name, value)| {
-                    let shift = if is_index_name(name) {
-                        base.offset()
-                    } else {
-                        0
-                    };
                     let value = match value {
-                        PgField::Int(v) => Int(v + shift),
+                        PgField::Int(v) => Int(v),
                         PgField::Str(v) => Str(v),
-                        PgField::Ints(v) => Ints(v.into_iter().map(|v| v + shift).collect()),
+                        PgField::Ints(v) => Ints(v),
                         PgField::Strs(v) => FieldValue::Strs(v),
                     };
                     (name, value)
@@ -656,9 +647,7 @@ impl fmt::Display for Message<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let base = self.base;
         match self.err {
-            // pedigree-graph-core writes this message, counting from 0 in
-            // every host, as pedigree-graph's own R binding shows it.
-            Error::Pedigree(err) => write!(f, "{err}"),
+            Error::Pedigree(err) => f.write_str(&err.message(base.pg())),
             Error::DegreeOutOfRange { value, minimum, maximum } => {
                 write!(f, "ndegree must be in {minimum}..={maximum}, got {value}")
             }
@@ -919,10 +908,13 @@ mod tests {
     fn samples() -> Vec<Error> {
         let (p, q) = (Position(61), Position(93));
         vec![
-            Error::Pedigree(PgError::MzSelfReference { row: 61, id: 5 }),
+            Error::Pedigree(PgError::MzSelfReference {
+                row: 61.into(),
+                id: 5,
+            }),
             Error::Pedigree(PgError::DuplicateId {
                 id: 5,
-                rows: vec![61, 93],
+                rows: vec![61.into(), 93.into()],
                 duplicate_count: 1,
             }),
             Error::DegreeOutOfRange {
@@ -1110,6 +1102,15 @@ mod tests {
         assert!(missing.is_empty(), "add a sample of variant(s) {missing:?}");
     }
 
+    /// Whether a field holds a row, column or position, by the naming rule of
+    /// pedigree-graph's R binding (`is_index_field`).
+    fn is_index_name(name: &str) -> bool {
+        matches!(name, "row" | "rows" | "column" | "columns" | "position")
+            || ["_row", "_rows", "_column", "_columns"]
+                .iter()
+                .any(|suffix| name.ends_with(suffix))
+    }
+
     /// An integer field's values, if it has any.
     fn ints(value: &FieldValue) -> Option<Vec<i64>> {
         match value {
@@ -1141,15 +1142,12 @@ mod tests {
                 shifted = true;
                 for (p0, p1) in p0.iter().zip(&p1) {
                     assert_eq!(*p1, p0 + 1, "{name} of {err:?}");
-                    // pedigree-graph-core writes its own message, from 0.
-                    if !matches!(err, Error::Pedigree(_)) {
-                        assert!(message_zero.contains(&p0.to_string()), "{message_zero}");
-                        assert!(message_one.contains(&p1.to_string()), "{message_one}");
-                        assert!(!message_one.contains(&p0.to_string()), "{message_one}");
-                    }
+                    assert!(message_zero.contains(&p0.to_string()), "{message_zero}");
+                    assert!(message_one.contains(&p1.to_string()), "{message_one}");
+                    assert!(!message_one.contains(&p0.to_string()), "{message_one}");
                 }
             }
-            if !shifted || matches!(err, Error::Pedigree(_)) {
+            if !shifted {
                 assert_eq!(message_zero, message_one, "{err:?}");
             }
         }

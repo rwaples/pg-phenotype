@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- pedigree-graph-core is pinned at pedigree-graph's v0.12.4 tag, whose
+  errors render their rows and positions in the host's index base.  A
+  pedigree error's message in R now counts from 1, like its fields and like
+  every other pg-phenotype error (it counted from 0 in v0.4.0 and before).
+  Python output is unchanged.
+
 ## v0.4.0
 
 The Relative-Pair Correlation takes strata and two traits, and the new ACE

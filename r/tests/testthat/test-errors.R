@@ -23,8 +23,8 @@ test_that("the pedigree is validated", {
   dup$id[2] <- 10L
   err <- expect_pgp_error(pafgrs_prepare(dup), "validation", "duplicate_id")
   expect_identical(err$fields$rows, c(1, 2))
-  # pedigree-graph writes a pedigree error's message, counting from 0.
-  expect_match(conditionMessage(err), "rows (0, 1)", fixed = TRUE)
+  # A pedigree error's message counts from 1, like its fields.
+  expect_match(conditionMessage(err), "rows (1, 2)", fixed = TRUE)
   cyc <- ped
   cyc$mother[1] <- 15L
   expect_pgp_error(pafgrs_prepare(cyc), "validation")
