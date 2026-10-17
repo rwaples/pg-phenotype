@@ -2,7 +2,9 @@
 
 **Status:** accepted; amended 2026-10-16 (what the implementation settled:
 the MRCA key, the entry-level meat, one engine pass, opt-in, the
-degenerate and negative meats, the calibration through the public API)
+degenerate and negative meats, the calibration through the public API);
+amended 2026-10-17 by ADR 0014 (the cells' covariance and the
+Within-Person SE)
 **Date:** 2026-10-16
 **Context:** issue #18 (cells), issue #19 (the ACE Fit); ADR 0009, ADR 0012;
 `docs/relative-pairs-se-research.md`; `docs/gates/relative-pairs-se/`
@@ -151,7 +153,8 @@ Rejected:
   √(16n) ε = 4√n ε.  Below 2¹⁶ entries the floor 2¹⁰ ε holds: the
   rounding in the tests is below 0.05 ε of the scale, while the smallest
   true meat there is 10⁻⁵ of it.  The Within-Person cell has no cluster
-  design and no SE (`within_person`).
+  design and no SE (`within_person`); ADR 0014 gives it one under
+  `covariance=True`.
 - The SE's memory counts against `memory_budget_bytes`.  The engine's
   lanes are planned first, then the bytes kept back for after the pass:
   the MRCA ancestry (8 bytes a row), every request's influences (each
@@ -181,3 +184,14 @@ Rejected:
   local or Mate Network: the father-offspring Pearson
   of trait1 at mating_lambda 3 in generation 5 (1.18-1.28 in three
   scenarios); its source is open.
+
+## Amendment (2026-10-17): ADR 0014
+
+- With `covariance=True` the result carries the covariance between the
+  estimates the ACE Fit reads: these sums joined across estimates, so two
+  entries count once when they share an MRCA or a member.  Its diagonal is
+  this ADR's meat.
+- The Within-Person SE is ADR 0014's kinship kernel over relative pairs of
+  degree at most 2, computed only under `covariance=True`.  Under
+  `se=True` alone the within-person estimates keep
+  `se_reason="within_person"`.

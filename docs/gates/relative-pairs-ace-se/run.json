@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-17T01:22:26+00:00",
+  "command": [
+    "tools/relative_pairs_ace_se_calibration.py",
+    "/data/Documents/simACE/results/se_calibration",
+    "--jobs",
+    "8",
+    "--out",
+    "docs/gates/relative-pairs-ace-se",
+    "--reps",
+    "/tmp/claude-1000/-data-Documents-simACE/2fb2e362-fa55-4017-8749-177aa7b205a8/scratchpad/u4a/ace_se_reps.tsv"
+  ],
+  "threads": {
+    "PG_PHENOTYPE_THREADS": "1",
+    "RAYON_NUM_THREADS": "1",
+    "POLARS_MAX_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1"
+  },
+  "jobs": 8,
+  "reps": 600,
+  "rows": 111000,
+  "wall_seconds": 478.3,
+  "numpy_check": {
+    "reps": 6,
+    "value": 9.021672298104022e-13,
+    "se": 4.063490931705353e-12,
+    "fits": 90.0,
+    "se_checked": 1029.0
+  },
+  "tree": {
+    "describe": "v0.4.0-7-g4a6bd19-dirty",
+    "head": "4a6bd1997fca8feb0eb482d276609e55801e8664",
+    "tree_diff_sha256": "53cfce2e83399c80450dad04bb33dfdc0a38fe045b3bde18e709b753e104e38e",
+    "tool_sha256": "5a0569bc82371a304667765be32d9b9e855e891cdec4885083aa981eb08cc8df"
+  },
+  "results": "/data/Documents/simACE/results/se_calibration"
+}

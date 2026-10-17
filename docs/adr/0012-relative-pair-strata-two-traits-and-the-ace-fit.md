@@ -1,6 +1,7 @@
 # ADR 0012: Relative-Pair cells take strata and two traits, and the ACE Fit solves A, C and E from them
 
-**Status:** accepted
+**Status:** accepted; amended 2026-10-17 by ADR 0014 (the ACE Fit's SE,
+inverse-variance and GLS weights, the default per solve)
 **Date:** 2026-10-15
 **Context:** issues #17, #6 and #1; simACE
 `plans/pg-phenotype-relative-pairs-v2.md` (D1-D11); amends ADR 0009
@@ -160,7 +161,7 @@ The ACE Fit:
   (`categories=["MZ", "FS"], shared_environment=["MZ", "FS"]`),
   half-sibs (`["PHS"]`, A) and cousins (`["1C"]`, A).  The
   parent-offspring estimate stays `parent_offspring`'s slope.
-- No SE, as ADR 0009.
+- No SE, as ADR 0009.  ADR 0014 adds it.
 - PA-FGRS's parameters stay inputs (ADR 0002).  The ACE Fit is a separate
   estimator.  A caller may pass its `A` and `rA` to PA-FGRS as `h2` and
   `rg`; nothing in PA-FGRS calls it.
@@ -216,7 +217,8 @@ Rejected:
   weight.  On #17, PHS cells at 20000 people per generation were too
   sparse: 4 of 12 reps gave NaN.
 - Inverse-variance weights.  They need an SE, which waits on ADR 0009's
-  calibration study (#19).  Counts are the weights until then.
+  calibration study (#19).  Counts are the weights until then.  ADR 0014
+  adds them and GLS.
 - Pair-count weights in the cross solve.  A directed pair enters two
   cross cells, (0, 1) and (1, 0), each weighted by its pairs, while a
   symmetric pair enters one double-entered cell weighted once, though its
@@ -245,3 +247,13 @@ Rejected:
 - fitACE can replace `estimate_rg` and its Falconer `h2_source=estimated`
   with `ace` on stratified cells.  That switch is a fitACE follow-up.
 - The SE unit is #19; polychoric and biserial cells are #20.
+
+## Amendment (2026-10-17): ADR 0014
+
+- The ACE Fit's SE, `inverse_variance` and `gls` weights, and the default
+  weighting are decided in ADR 0014.  This ADR's count weights (D7) are the
+  `"pairs"` weighting, whose values are unchanged.
+- `weights=None` is `"pairs"` for phi or without the covariance of the
+  form read; otherwise each solve is `"gls"` when its block of the
+  covariance has a Cholesky factor, else `"pairs"`.  A result without
+  `covariance=True` fits as this ADR describes.
