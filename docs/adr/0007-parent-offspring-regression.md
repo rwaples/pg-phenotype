@@ -9,7 +9,7 @@
 simACE regresses a child's trait on its midparent's twice:
 `simace/analysis/stats/correlations.py` (`_po_regression`, liability by
 generation and by sex x generation, affected status pooled) and
-`simace/analysis/validate/heritability.py` (`_midparent_regression`).  Both
+`simace/analysis/quality/heritability.py` (`_midparent_regression`).  Both
 report the OLS SE.  Siblings share a midparent, and a parent who remates
 links two sibships, so the OLS SE is too small.  pg-phenotype's Pedigree
 already holds the Mating Pairs and Mate Networks that `mate_correlation`
