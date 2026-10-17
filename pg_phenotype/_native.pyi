@@ -112,6 +112,7 @@ def relative_pairs_correlation(
     categories: list[tuple[int, str, list[str] | None]] | None,
     memory_budget_bytes: int,
     se: bool,
+    covariance: bool,
     /,
 ) -> dict[str, Any]: ...
 def relative_pairs_ace(
@@ -121,5 +122,7 @@ def relative_pairs_ace(
     shared_environment: list[str] | None,
     estimator: str,
     estimate: str,
+    weights: str | None,
+    covariance: tuple[np.ndarray, np.ndarray | None, np.ndarray | None] | None,
     /,
 ) -> dict[str, Any]: ...

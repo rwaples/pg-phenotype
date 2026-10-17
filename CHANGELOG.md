@@ -10,8 +10,8 @@
   `Estimate` gains `se` and `se_reason`; `se` is `None` with
   `no_estimate`, `boundary`, `sandwich_undefined`, `degenerate_meat` (the
   meat is zero to within rounding, as in a cell whose pairs share one
-  MRCA), `negative_meat` or `within_person` (the Within-Person cell has no
-  cluster design).  The SE comes from the same pass over the pedigree as
+  MRCA), `negative_meat` or `within_person` (a within-person estimate
+  under `se=True` alone; see the covariance below).  The SE comes from the same pass over the pedigree as
   the cells and does not depend on the thread count.  On a 120k-row
   pedigree it costs 1.5-1.6 times the call's time with one trait and
   2.4-3.7 times with two traits and generation strata at one thread
@@ -23,6 +23,79 @@
   stratified fit included: median SD(r̂)/SE 0.94-1.09 and Wald coverage
   0.89-0.97 per scenario, category type, estimator and fit
   (`docs/gates/relative-pairs-se/`).
+
+- `relative_pairs.correlation(..., se=True, covariance=True)` (R:
+  `covariance = TRUE`) adds `covariance`, a `CellCovariance` (R: a list of
+  matrices with dimnames) with the covariance between the estimates the
+  ACE Fit reads (issue #19; ADR 0014).  One symmetric matrix per form:
+  `pooled` (the primary estimate), `phi` (binary traits) and `stratified`
+  (with `stratum`), over `cells` in order and then `within_person`.  Two
+  entries count together when they share an MRCA or a member, whichever
+  cells they are in.  The diagonal is each SE squared, bit for bit, and the
+  row and column of an estimate with no SE are NaN.  The matrices do not
+  depend on the thread count.  `covariance` defaults to `False`;
+  `covariance=True` without `se=True` raises `ValueError`.  On a 120k-row
+  pedigree it adds 3-6% to the `se=True` call with one trait, 20-35% with
+  two traits and generation strata, and 1.4-2.3 times with two traits and
+  `categories=["MZ"]`.  Its sums count against `memory_budget_bytes`
+  (`memory_budget_exceeded` with operation `relative_pairs_covariance`).
+  `settings` gains `covariance`, and `method` gains `covariance`.
+- With two traits and `covariance=True`, every within-person estimate gets
+  an SE: each row is an entry, and the meat is a kinship kernel, its rows'
+  squared influences plus twice their products over every relative pair of
+  degree at most 2 (MZ, MO, FO, FS, MHS, PHS, GP, Av).  The pass traverses
+  those categories whether `categories` names them or not, so the SE does
+  not depend on the request, and the requested cells do not change.  A
+  negative kernel meat gives `negative_meat`.  On 600 simACE reps SD/SE is
+  0.88-1.07.  Under `se=True` alone, `se_reason="within_person"` now means
+  "the Within-Person SE comes with the covariance".
+- `relative_pairs.ace` reports an SE for every value (`A_se`,
+  `A_se_reason`, ..., `rA_se`, `rA_se_reason`) from the result's
+  covariance: `sqrt(g Sigma g')` over each solve's linear map, with E and
+  rA, rC, rE by the delta method, weights treated as fixed.  Without the
+  covariance every SE is `None` with `no_covariance`.  SE reasons:
+  `no_covariance`, `row_without_se`, `negative_variance`,
+  `covariance_not_positive_definite`.  `AceRow` gains `variance`,
+  `TraitShares` and `CrossShares` gain `weights` (the weighting each solve
+  used), and `settings` gains `weights` (the request, `"default"` for
+  `None`).  Every field added since v0.4.0, `RelativePairCorrelation`'s
+  `covariance` included, comes last with a `None` default, so positional
+  construction from v0.4.0 still works.
+- `relative_pairs.ace` takes `weights=`: `"pairs"` (the count weights of
+  v0.4.0), `"inverse_variance"` or `"gls"`.  The last two need the
+  result's covariance of the estimate read (`missing_covariance`
+  otherwise), and leave out a row with no SE (row reason `no_se`).
+  `weights="gls"` asked for refuses a covariance block with no Cholesky
+  factor: the solve's values and SEs are
+  `covariance_not_positive_definite`.  The default, `weights=None` (R:
+  `NULL`), is `"pairs"` for phi and without the covariance of the estimate
+  read; otherwise each trait's solve and the cross solve take `"gls"` when
+  their entered cells' block has a Cholesky factor and `"pairs"` when it
+  has none, so the default always returns values.  A result without
+  `covariance=True` fits as in v0.4.0, bit for bit.  Under `"pairs"` a cell
+  with no SE (a boundary MZ tetrachoric) leaves every value that reads it
+  `row_without_se`; leave the category out, or use `"inverse_variance"` or
+  `"gls"`.  Code that needs updating: an `ace` call on a result computed
+  with `covariance=True` now fits GLS where it can for the primary
+  estimator; pass `weights="pairs"` for the v0.4.0 values.  On 600
+  simACE reps GLS's spread is 0.78-0.85 of the count weights' for
+  continuous A, E, sA, rA, sE and rE.  Continuous A, E, sA and rA spread 7-21% more than their SE
+  under every weighting; against each rep's realized truth the SE holds
+  (`docs/gates/relative-pairs-ace-se/`).
+- In Rust, `relative_pairs::correlation` takes `se: Se` (`Off`,
+  `Estimates`, `Covariance`) where #18 took `se: bool`, and
+  `RelativePairCorrelation` gains `covariance: Option<Covariance>`.
+  `ace::fit` takes `covariance: Option<&Covariance>`.  `TraitFit` and
+  `CrossFit` hold `Result<Solved, Reason>`, a value and its SE, where they
+  held `Result<f64, Reason>`.  `AceRequest` gains `weights:
+  Option<Weights>`, `None` the default, which the core resolves per fit;
+  `TraitFit` and `CrossFit` gain `weights: Weights`; `Row` gains
+  `variance`; `Covariance::new` returns `Result` with
+  `covariance_shape_mismatch`, and `Se::from_flags` maps a host's `se` and
+  `covariance` flags; `Reason` gains
+  `CovarianceNotPositiveDefinite`, `NoCovariance`, `RowWithoutSe` and
+  `NegativeVariance`; `Error` gains `MissingCovariance` and
+  `CovarianceShapeMismatch` (`covariance_shape_mismatch`).
 
 - pedigree-graph-core is pinned at pedigree-graph's v0.12.4 tag, whose
   errors render their rows and positions in the host's index base.  A

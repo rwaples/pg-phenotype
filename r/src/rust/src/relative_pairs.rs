@@ -9,10 +9,10 @@ use crate::pedigree::Source;
 use extendr_api::prelude::*;
 use pg_phenotype_core::ace::{
     self, AceCell, AceRequest, Components, CrudeEstimate, Estimate, Estimator, Pairs,
-    StratifiedEstimate,
+    StratifiedEstimate, Weights,
 };
 use pg_phenotype_core::assortative::Strata;
-use pg_phenotype_core::relative_pairs::{self, Entry};
+use pg_phenotype_core::relative_pairs::{self, Covariance, Entry, Se};
 
 fn strings(what: &str, x: &Robj) -> HostResult<Vec<String>> {
     x.as_string_vector()
@@ -53,6 +53,7 @@ fn entries(names: &Robj, members: &Robj) -> HostResult<Option<Vec<Entry>>> {
         .map(Some)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn correlation_impl(
     pedigree: &Robj,
     traits: &List,
@@ -61,7 +62,10 @@ fn correlation_impl(
     members: &Robj,
     memory_budget_bytes: &Robj,
     se: bool,
+    covariance: bool,
 ) -> HostResult<Robj> {
+    let se = Se::from_flags(se, covariance)
+        .ok_or_else(|| HostError::usage("covariance needs se".into()))?;
     let pedigree = Source::read(pedigree)?;
     let traits = traits
         .values()
@@ -98,6 +102,7 @@ fn correlation_impl(
 
 /// The Relative-Pair Correlation of one or two traits, in the pool.
 #[extendr]
+#[allow(clippy::too_many_arguments)]
 fn relative_pairs_correlation(
     pedigree: Robj,
     traits: List,
@@ -106,6 +111,7 @@ fn relative_pairs_correlation(
     members: Robj,
     memory_budget_bytes: Robj,
     se: bool,
+    covariance: bool,
 ) -> Robj {
     finish(correlation_impl(
         &pedigree,
@@ -115,6 +121,7 @@ fn relative_pairs_correlation(
         &members,
         &memory_budget_bytes,
         se,
+        covariance,
     ))
 }
 
@@ -216,6 +223,28 @@ fn named<T>(what: &str, name: &str, parsed: Option<T>) -> HostResult<T> {
     parsed.ok_or_else(|| HostError::usage(format!("{what} {name:?} is not one this fit takes")))
 }
 
+/// A result's covariance as the R wrapper passes it: `NULL`, or the pooled,
+/// phi and stratified matrices, each a row-major double vector or `NULL`.
+type Matrices = (Vec<f64>, Option<Vec<f64>>, Option<Vec<f64>>);
+
+fn matrices(covariance: &Robj) -> HostResult<Option<Matrices>> {
+    if covariance.is_null() {
+        return Ok(None);
+    }
+    let [pooled, phi, stratified] = input::list_of(covariance, "the covariance")?;
+    let optional = |what: &str, x: &Robj| {
+        (!x.is_null())
+            .then(|| input::doubles(what, x).map(<[f64]>::to_vec))
+            .transpose()
+    };
+    Ok(Some((
+        input::doubles("pooled", &pooled)?.to_vec(),
+        optional("phi", &phi)?,
+        optional("stratified", &stratified)?,
+    )))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn ace_impl(
     cells: &List,
     categories: &Robj,
@@ -223,11 +252,16 @@ fn ace_impl(
     shared_environment: &Robj,
     estimator: &Robj,
     estimate: &Robj,
+    weights: &Robj,
+    covariance: &Robj,
 ) -> HostResult<Robj> {
     let optional = |what: &str, x: &Robj| (!x.is_null()).then(|| strings(what, x)).transpose();
     let components = strings("components", components)?;
     let names: Vec<&str> = components.iter().map(String::as_str).collect();
     let (estimator, estimate) = (one("estimator", estimator)?, one("estimate", estimate)?);
+    let weights = (!weights.is_null())
+        .then(|| one("weights", weights))
+        .transpose()?;
     let request = AceRequest {
         categories: optional("categories", categories)?,
         components: named(
@@ -238,16 +272,25 @@ fn ace_impl(
         shared_environment: optional("shared_environment", shared_environment)?,
         estimator: named("estimator", &estimator, Estimator::parse(&estimator))?,
         estimate: named("estimate", &estimate, Estimate::parse(&estimate))?,
+        weights: weights
+            .map(|w| named("weights", &w, Weights::parse(&w)))
+            .transpose()?,
     };
     let cells = cells
         .values()
         .map(|c| cell(&c))
         .collect::<HostResult<Vec<_>>>()?;
-    crossing::result(ace::fit(&cells, &request)?.to_value())
+    let covariance = matrices(covariance)?
+        .map(|(pooled, phi, stratified)| Covariance::new(cells.len(), pooled, phi, stratified))
+        .transpose()?;
+    crossing::result(ace::fit(&cells, &request, covariance.as_ref())?.to_value())
 }
 
-/// The ACE Fit of a result's cells, which the R wrapper checked and resolved.
+/// The ACE Fit of a result's cells, which the R wrapper checked, with the
+/// result's covariance when it has one; `weights` `NULL` is the core's
+/// default.
 #[extendr]
+#[allow(clippy::too_many_arguments)]
 fn relative_pairs_ace(
     cells: List,
     categories: Robj,
@@ -255,6 +298,8 @@ fn relative_pairs_ace(
     shared_environment: Robj,
     estimator: Robj,
     estimate: Robj,
+    weights: Robj,
+    covariance: Robj,
 ) -> Robj {
     finish(ace_impl(
         &cells,
@@ -263,6 +308,8 @@ fn relative_pairs_ace(
         &shared_environment,
         &estimator,
         &estimate,
+        &weights,
+        &covariance,
     ))
 }
 

@@ -17,9 +17,13 @@
 //! merge ([`merge`]) that adds a key several lanes hold by integer
 //! addition, so what the store yields does not depend on lanes or threads.
 //! [`Clusters::meats`] forms every float after that merge, in key order.
+//!
+//! With the covariance and two traits the lanes also sum the Within-Person
+//! kernel ([`Kin`]), over categories the call may not have asked for.
 
 use super::influence::Weights;
 use super::mrca::{Ancestry, Cluster};
+use super::within_person::{Kernel, KernelLane};
 use super::{Members, Request};
 use crate::error::Error;
 use pedigree_graph_core::error::Error as PgError;
@@ -33,6 +37,7 @@ use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::num::NonZeroUsize;
+use std::ops::Range;
 
 /// The operation the store's budget and allocation errors name.
 pub(super) const OPERATION: &str = "relative_pairs_se";
@@ -145,6 +150,7 @@ impl<const K: usize> Row<K> {
     /// sums, the second's, their sums of squares, then each product's
     /// cross sum.  `own` is the row's member's values; every product is
     /// first x second, as [`Members`] requests them.
+    #[inline(always)]
     fn stride(&self, own: &[i64], products: &[Product], out: &mut [i128]) {
         let p = &self.partners;
         let n = i128::from(p.count);
@@ -181,9 +187,9 @@ enum Overflow {
 }
 
 /// One engine lane, wrapped: CellReducer's accumulators untouched, the
-/// lane's own rows and their index, and the rows of the lanes merged into
-/// it, each a run whose index is gone.
-struct KeyedLane<const K: usize> {
+/// lane's own rows and their index, the rows of the lanes merged into it,
+/// each a run whose index is gone, and the kernel's sums.
+struct KeyedLane<const K: usize, L> {
     cells: Vec<i128>,
     rows: Vec<Row<K>>,
     /// Each of `rows`' keys, to its position.  Never iterated, so its
@@ -195,9 +201,10 @@ struct KeyedLane<const K: usize> {
     memo: Option<(Category, u32, u32, Cluster)>,
     /// Set instead of failing inside `reduce`.
     overflow: Option<Overflow>,
+    kernel: L,
 }
 
-impl<const K: usize> KeyedLane<K> {
+impl<const K: usize, L> KeyedLane<K, L> {
     /// Add `partners` to `key`'s row, or start one while the lane has room.
     #[inline]
     fn upsert(&mut self, key: Key, partners: Partners<K>, max_rows: usize) {
@@ -226,9 +233,54 @@ impl<const K: usize> KeyedLane<K> {
     }
 }
 
+/// What the pass sums besides the table and the store: the Within-Person
+/// kernel, or nothing ([`NoKernel`]).
+pub(super) trait Kin: Sync {
+    type Lane: Send;
+    fn lane(&self) -> Self::Lane;
+    /// Whether `cat` is traversed for the kernel alone: no cell, no row.
+    fn only(&self, cat: Category) -> bool;
+    /// One entry the engine sends, its members' engine labels `labels`.
+    fn pair(&self, lane: &mut Self::Lane, cat: Category, first: u32, second: u32, labels: [u32; 2]);
+    fn merge(&self, into: &mut Self::Lane, from: Self::Lane);
+    /// The categories the pass traverses: `union` and the kernel's own.
+    fn traversal(&self, union: CategorySet) -> CategorySet;
+    fn finish(lane: Self::Lane) -> Option<KernelLane>;
+}
+
+/// The pass without the kernel: a separate monomorph whose `reduce` is the
+/// one the SE had before the kernel.
+pub(super) struct NoKernel;
+
+impl Kin for NoKernel {
+    type Lane = ();
+
+    #[inline(always)]
+    fn lane(&self) {}
+
+    #[inline(always)]
+    fn only(&self, _: Category) -> bool {
+        false
+    }
+
+    #[inline(always)]
+    fn pair(&self, _: &mut (), _: Category, _: u32, _: u32, _: [u32; 2]) {}
+
+    #[inline(always)]
+    fn merge(&self, _: &mut (), _: ()) {}
+
+    fn traversal(&self, union: CategorySet) -> CategorySet {
+        union
+    }
+
+    fn finish(_: ()) -> Option<KernelLane> {
+        None
+    }
+}
+
 /// pedigree-graph's CellReducer, extended: its reduce, then the entry's
-/// two rows.
-struct Keyed<'a, const K: usize> {
+/// two rows and its kernel term.
+struct Keyed<'a, const K: usize, Q> {
     cells: CellReducer<'a>,
     labels: &'a [i32],
     values: &'a [i64],
@@ -244,9 +296,10 @@ struct Keyed<'a, const K: usize> {
     seen: Vec<bool>,
     /// The rows a lane may hold.
     max_rows: usize,
+    kernel: Q,
 }
 
-impl<const K: usize> Keyed<'_, K> {
+impl<const K: usize, Q> Keyed<'_, K, Q> {
     #[inline]
     fn partners(&self, row: u32) -> Partners<K> {
         let at = row as usize * K;
@@ -254,10 +307,10 @@ impl<const K: usize> Keyed<'_, K> {
     }
 }
 
-impl<const K: usize> Reducer for Keyed<'_, K> {
-    type Lane = KeyedLane<K>;
+impl<const K: usize, Q: Kin> Reducer for Keyed<'_, K, Q> {
+    type Lane = KeyedLane<K, Q::Lane>;
 
-    fn lane(&self) -> Result<KeyedLane<K>, PgError> {
+    fn lane(&self) -> Result<Self::Lane, PgError> {
         Ok(KeyedLane {
             cells: self.cells.lane()?,
             rows: Vec::new(),
@@ -265,19 +318,31 @@ impl<const K: usize> Reducer for Keyed<'_, K> {
             merged: Vec::new(),
             memo: None,
             overflow: None,
+            kernel: self.kernel.lane(),
         })
     }
 
     #[inline]
-    fn reduce(&self, lane: &mut KeyedLane<K>, cat: Category, first: u32, second: u32) {
+    fn reduce(&self, lane: &mut Self::Lane, cat: Category, first: u32, second: u32) {
+        let labels = |a: u32, b: u32| {
+            [
+                self.labels[a as usize] as u32,
+                self.labels[b as usize] as u32,
+            ]
+        };
+        if self.kernel.only(cat) {
+            let la_lb = labels(first, second);
+            self.kernel
+                .pair(&mut lane.kernel, cat, first, second, la_lb);
+            return;
+        }
         self.cells.reduce(&mut lane.cells, cat, first, second);
         if lane.overflow.is_some() {
             return;
         }
-        let (la, lb) = (
-            self.labels[first as usize] as u32,
-            self.labels[second as usize] as u32,
-        );
+        let [la, lb] = labels(first, second);
+        self.kernel
+            .pair(&mut lane.kernel, cat, first, second, [la, lb]);
         if !(self.seen[la as usize] && self.seen[lb as usize]) {
             return;
         }
@@ -294,8 +359,9 @@ impl<const K: usize> Reducer for Keyed<'_, K> {
         lane.upsert(key(second, Side::Second), self.partners(first), max_rows);
     }
 
-    fn merge(&self, into: &mut KeyedLane<K>, from: KeyedLane<K>) {
+    fn merge(&self, into: &mut Self::Lane, from: Self::Lane) {
         self.cells.merge(&mut into.cells, from.cells);
+        self.kernel.merge(&mut into.kernel, from.kernel);
         into.merged.push(from.rows);
         into.merged.extend(from.merged);
         into.overflow = into.overflow.or(from.overflow);
@@ -371,7 +437,7 @@ impl Plan {
     }
 }
 
-/// [`Pass::run`]'s inputs but the budget and the reserve.
+/// [`Pass::run`]'s inputs but the budget, the reserve and the kernel.
 type Args<'a, 'p> = (
     &'p relationships::Pedigree<'p>,
     MaxDegree,
@@ -382,10 +448,12 @@ type Args<'a, 'p> = (
     NonZeroUsize,
 );
 
-/// The pass's outputs: the engine table, unchanged, and the finished store.
+/// The pass's outputs: the engine table, unchanged, the finished store and
+/// the kernel's sums when it rode the pass.
 pub(super) struct Pass<'a> {
     pub(super) table: MomentsTable<'static>,
     pub(super) clusters: Clusters<'a>,
+    pub(super) kernel: Option<KernelLane>,
 }
 
 /// The store, one variant per value-column count.
@@ -409,7 +477,9 @@ impl<'a> Pass<'a> {
     /// engine plan, `CellReducer::new`, `reduce_pairs` with `view = None`
     /// and `Symmetric::Both`, `CellReducer::finish`), its table identical,
     /// with the store riding the same lanes.  `reserve` is the bytes kept
-    /// back for after the pass ([`Plan`]).
+    /// back for after the pass ([`Plan`]).  With `kernel` the pass also
+    /// traverses the kernel's categories `union` lacks, for its sums alone,
+    /// and `max_degree` covers them.
     ///
     /// # Errors
     ///
@@ -429,20 +499,34 @@ impl<'a> Pass<'a> {
         threads: NonZeroUsize,
         budget: u64,
         reserve: u64,
+        kernel: Option<&Kernel>,
     ) -> Result<Pass<'a>, Error> {
         let args = (ped, max_degree, union, requests, members, ancestry, threads);
-        match members.exponents.len() {
-            0 => Pass::keyed(args, budget, reserve, Clusters::Binary),
-            1 => Pass::keyed(args, budget, reserve, Clusters::One),
-            _ => Pass::keyed(args, budget, reserve, Clusters::Two),
+        match kernel {
+            None => Pass::with(args, budget, reserve, NoKernel),
+            Some(kernel) => Pass::with(args, budget, reserve, kernel),
+        }
+    }
+
+    fn with<Q: Kin>(
+        args: Args<'a, '_>,
+        budget: u64,
+        reserve: u64,
+        kernel: Q,
+    ) -> Result<Pass<'a>, Error> {
+        match args.4.exponents.len() {
+            0 => Pass::keyed(args, budget, reserve, kernel, Clusters::Binary),
+            1 => Pass::keyed(args, budget, reserve, kernel, Clusters::One),
+            _ => Pass::keyed(args, budget, reserve, kernel, Clusters::Two),
         }
     }
 
     /// [`Pass::run`] with `K` value columns, its store wrapped by `wrap`.
-    fn keyed<const K: usize>(
+    fn keyed<const K: usize, Q: Kin>(
         (ped, max_degree, union, requests, members, ancestry, threads): Args<'a, '_>,
         budget: u64,
         reserve: u64,
+        kernel: Q,
         wrap: fn(Store<'a, K>) -> Clusters<'a>,
     ) -> Result<Pass<'a>, Error> {
         let input = members.input();
@@ -465,7 +549,8 @@ impl<'a> Pass<'a> {
         let seen = (0..input.n_labels_first)
             .map(|label| (0..layout.n_traits).any(|t| layout.shows(label % n_joint, t)))
             .collect();
-        let keyed = Keyed::<K> {
+        let traversal = kernel.traversal(union);
+        let keyed = Keyed::<K, Q> {
             cells: CellReducer::new(input, union, plan.engine),
             labels: &members.labels,
             values: &members.values,
@@ -476,11 +561,12 @@ impl<'a> Pass<'a> {
             n_labels: input.n_labels_second as u32,
             seen,
             max_rows: plan.max_rows,
+            kernel,
         };
         let reduced = reduce_pairs(
             ped,
             max_degree,
-            union,
+            traversal,
             None,
             Symmetric::Both,
             plan.engine.lanes,
@@ -493,6 +579,7 @@ impl<'a> Pass<'a> {
             index,
             mut merged,
             overflow,
+            kernel,
             ..
         } = reduced.lane;
         let (width, bytes) = keyed.cells.finish(&cells)?;
@@ -542,6 +629,7 @@ impl<'a> Pass<'a> {
                 values: &members.values,
                 products: members.products(),
             }),
+            kernel: Q::finish(kernel),
         })
     }
 }
@@ -574,6 +662,18 @@ pub(super) struct Sum {
 }
 
 impl Sum {
+    /// The influences summed.
+    #[inline]
+    pub(super) fn value(self) -> f64 {
+        self.value
+    }
+
+    /// The entries summed.
+    #[inline]
+    pub(super) fn entries(self) -> u64 {
+        self.entries
+    }
+
     #[inline]
     fn add(&mut self, value: f64, entries: u64) {
         self.value += value;
@@ -599,12 +699,23 @@ impl Clusters<'_> {
     /// (cluster, person) group's are consecutive.  An entry adds one row
     /// per member, so a cluster's rows sum to `2Φ_m`.  The per-person
     /// totals are dense and squared in row order at the end.  Batching
-    /// repeats the sweep and never changes a float's order.
-    pub(super) fn meats(&self, request: u32, weights: &Weights, batch: usize) -> Vec<Meat> {
+    /// repeats the sweep and never changes a float's order.  Each sweep
+    /// hands its sums to the [`Sink`] `sink` makes for its range of
+    /// estimates; the sinks come back in range order.
+    // One function per sink, out of line, so `Discard`'s compiles as the
+    // sweep did before it had a sink.
+    #[inline(never)]
+    pub(super) fn meats<S: Sink>(
+        &self,
+        request: u32,
+        weights: &Weights,
+        batch: usize,
+        sink: impl FnMut(Range<usize>) -> S,
+    ) -> (Vec<Meat>, Vec<S>) {
         match self {
-            Clusters::Binary(store) => store.meats(request, weights, batch),
-            Clusters::One(store) => store.meats(request, weights, batch),
-            Clusters::Two(store) => store.meats(request, weights, batch),
+            Clusters::Binary(store) => store.meats(request, weights, batch, sink),
+            Clusters::One(store) => store.meats(request, weights, batch, sink),
+            Clusters::Two(store) => store.meats(request, weights, batch, sink),
         }
     }
 
@@ -647,6 +758,7 @@ impl<const K: usize> Store<'_, K> {
     }
 
     /// [`Store::merged`] over one request's rows.
+    #[inline(always)]
     fn rows(&self, request: u32) -> impl Iterator<Item = Row<K>> + '_ {
         merge(self.spans(request).collect())
     }
@@ -662,23 +774,33 @@ impl<const K: usize> Store<'_, K> {
         &self.values[at..at + K]
     }
 
-    fn meats(&self, request: u32, weights: &Weights, batch: usize) -> Vec<Meat> {
-        let (n, batch) = (weights.n_estimates, batch.max(1));
-        let mut meat = vec![Meat::default(); n];
-        for start in (0..n).step_by(batch) {
-            let end = (start + batch).min(n);
-            self.sweep(request, weights, start..end, &mut meat[start..end]);
-        }
-        meat
-    }
-
-    /// [`Clusters::meats`] of the estimates in `range`, into `meat`.
-    fn sweep(
+    fn meats<S: Sink>(
         &self,
         request: u32,
         weights: &Weights,
-        range: std::ops::Range<usize>,
+        batch: usize,
+        mut sink: impl FnMut(Range<usize>) -> S,
+    ) -> (Vec<Meat>, Vec<S>) {
+        let (n, batch) = (weights.n_estimates, batch.max(1));
+        let mut meat = vec![Meat::default(); n];
+        let mut sinks = Vec::new();
+        for start in (0..n).step_by(batch) {
+            let end = (start + batch).min(n);
+            let mut s = sink(start..end);
+            self.sweep(request, weights, start..end, &mut meat[start..end], &mut s);
+            sinks.push(s);
+        }
+        (meat, sinks)
+    }
+
+    /// [`Clusters::meats`] of the estimates in `range`, into `meat`.
+    fn sweep<S: Sink>(
+        &self,
+        request: u32,
+        weights: &Weights,
+        range: Range<usize>,
         meat: &mut [Meat],
+        sink: &mut S,
     ) {
         let width = range.len();
         let mut cluster = vec![Sum::default(); width];
@@ -691,11 +813,13 @@ impl<const K: usize> Store<'_, K> {
         let mut at: Option<(u64, usize)> = None;
         for row in self.rows(request) {
             let here = (row.key.hi, row.key.person());
-            if let Some((hi, _)) = at.filter(|&at| at != here) {
+            if let Some((hi, person)) = at.filter(|&at| at != here) {
+                sink.group(Cluster(hi as u32), person as u32, &group);
                 for (meat, g) in meat.iter_mut().zip(&mut group) {
                     meat.add(-1.0, std::mem::take(g));
                 }
                 if hi != here.0 {
+                    sink.cluster(Cluster(hi as u32), &cluster);
                     for ((meat, c), n) in meat.iter_mut().zip(&mut cluster).zip(&mut entries) {
                         let c = std::mem::take(c).half();
                         *n += c.entries;
@@ -726,12 +850,17 @@ impl<const K: usize> Store<'_, K> {
                 totals[e].add(v, n);
             }
         }
+        if let Some((hi, person)) = at {
+            sink.group(Cluster(hi as u32), person as u32, &group);
+            sink.cluster(Cluster(hi as u32), &cluster);
+        }
         for e in 0..width {
             let c = cluster[e].half();
             entries[e] += c.entries;
             meat[e].add(-1.0, group[e]);
             meat[e].add(1.0, c);
         }
+        sink.persons(&person, width);
         for totals in person.chunks_exact(width) {
             for (meat, &t) in meat.iter_mut().zip(totals) {
                 meat.add(1.0, t);
@@ -746,16 +875,64 @@ impl<const K: usize> Store<'_, K> {
     }
 }
 
+/// What a sweep hands out besides its meats: each sum of its range's
+/// estimates before it is squared, in key order.
+pub(super) trait Sink {
+    /// A (cluster, person) group's sums.
+    fn group(&mut self, cluster: Cluster, person: u32, sums: &[Sum]);
+    /// A cluster's sums as summed: each entry's two rows, not yet halved.
+    fn cluster(&mut self, cluster: Cluster, sums: &[Sum]);
+    /// The per-person totals, row-major `[rows, width]`, once at the end.
+    fn persons(&mut self, totals: &[Sum], width: usize);
+}
+
+/// The SE's own sweep: the sums go nowhere.  The sweep's helpers
+/// ([`Row::stride`], [`Store::rows`], [`merge`]) are inlined always: with
+/// two sinks they have two callers, and left to the inliner they come out
+/// of the loop and slow it.
+pub(super) struct Discard;
+
+impl Sink for Discard {
+    #[inline(always)]
+    fn group(&mut self, _: Cluster, _: u32, _: &[Sum]) {}
+
+    #[inline(always)]
+    fn cluster(&mut self, _: Cluster, _: &[Sum]) {}
+
+    #[inline(always)]
+    fn persons(&mut self, _: &[Sum], _: usize) {}
+}
+
 /// Every distinct key's row of `runs` (each sorted, its keys unique) in
 /// key order, a key several runs hold summed by integer addition.
-fn merge<const K: usize>(runs: Vec<&[Row<K>]>) -> impl Iterator<Item = Row<K>> + '_ {
-    let mut at = vec![0usize; runs.len()];
-    let mut heap: BinaryHeap<Reverse<(Key, usize)>> = runs
+#[inline(always)]
+fn merge<const K: usize>(runs: Vec<&[Row<K>]>) -> Merge<'_, K> {
+    let heap = runs
         .iter()
         .enumerate()
         .filter_map(|(r, run)| run.first().map(|row| Reverse((row.key, r))))
         .collect();
-    std::iter::from_fn(move || {
+    Merge {
+        at: vec![0usize; runs.len()],
+        heap,
+        runs,
+    }
+}
+
+/// [`merge`]'s rows: each run, its next row's position, and the runs'
+/// next keys.
+struct Merge<'a, const K: usize> {
+    runs: Vec<&'a [Row<K>]>,
+    at: Vec<usize>,
+    heap: BinaryHeap<Reverse<(Key, usize)>>,
+}
+
+impl<const K: usize> Iterator for Merge<'_, K> {
+    type Item = Row<K>;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Row<K>> {
+        let Merge { runs, at, heap } = self;
         let Reverse((key, _)) = *heap.peek()?;
         let mut row: Option<Row<K>> = None;
         while let Some(&Reverse((next, r))) = heap.peek() {
@@ -774,7 +951,7 @@ fn merge<const K: usize>(runs: Vec<&[Row<K>]>) -> impl Iterator<Item = Row<K>> +
             }
         }
         row
-    })
+    }
 }
 
 #[cfg(test)]
@@ -988,6 +1165,7 @@ mod tests {
                             NonZeroUsize::new(lanes).unwrap(),
                             BUDGET,
                             0,
+                            None,
                         )
                     })
                     .unwrap();
@@ -1068,6 +1246,7 @@ mod tests {
                 NonZeroUsize::MIN,
                 budget,
                 reserve,
+                None,
             )
             .err()
         };

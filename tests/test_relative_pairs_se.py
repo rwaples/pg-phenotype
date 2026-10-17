@@ -20,6 +20,7 @@ from pg_phenotype import correlation as pgc
 from pg_phenotype import relative_pairs as rp
 from tests.oracle.relative_pairs_reference import SYMMETRIC, _reader, graph
 from tests.oracle.relative_pairs_se import (
+    Units,
     degenerate,
     meats,
     parent_indices,
@@ -96,14 +97,20 @@ def _pairs(ped: dict[str, np.ndarray], members: list[str]) -> tuple[np.ndarray, 
     return tuple(np.concatenate(parts) for parts in zip(*out, strict=True))
 
 
-def _meat(phi: np.ndarray, first: np.ndarray, second: np.ndarray, m: np.ndarray) -> tuple[float, float, int]:
+def _meat(units: Units) -> tuple[float, float, int]:
     """The meat, its scale, and its entries."""
-    out = meats(phi, first, second, m, m)
-    return out["mrca_person"], out["mrca_person_scale"], len(phi)
+    first, second = units.members
+    out = meats(units.psi, first, second, units.mrca, units.mrca)
+    return out["mrca_person"], out["mrca_person_scale"], len(units.psi)
 
 
 def _oracle(read: _Read, a: np.ndarray, b: np.ndarray, m: np.ndarray) -> dict[str, tuple[float, float, int] | None]:
-    """Each estimator's meat over the entries of pairs (a, b) with MRCA m: influence / entries per entry."""
+    """Each estimator's meat over the entries of pairs (a, b) with MRCA m."""
+    return {est: None if units is None else _meat(units) for est, units in _estimate_units(read, a, b, m).items()}
+
+
+def _estimate_units(read: _Read, a: np.ndarray, b: np.ndarray, m: np.ndarray) -> dict[str, Units | None]:
+    """Each estimator's entries over pairs (a, b) with MRCA m, influence / entries each; ``None`` at a boundary."""
     first, second, pair = read.entries(a, b)
     x, y = read.x[first], read.y[second]
     if read.kind == "continuous":
@@ -118,11 +125,11 @@ def _oracle(read: _Read, a: np.ndarray, b: np.ndarray, m: np.ndarray) -> dict[st
             "tetrachoric": (tet.value, tetrachoric_if(t.astype(float), tet.value)[xi, yi]) if defined else None,
             "phi": pearson_if(x, y),
         }
-    return {est: None if fit is None else _meat(fit[1] / len(x), first, second, m[pair]) for est, fit in fits.items()}
+    return {est: None if fit is None else Units(fit[1] / len(x), (first, second), m[pair]) for est, fit in fits.items()}
 
 
 def _stratified_pearson(read: _Read, a: np.ndarray, b: np.ndarray, m: np.ndarray, stratum: np.ndarray):
-    """ρ and its meat over the entries with both strata known, each side standardised within its stratum.
+    """ρ and its entries over the pairs with both strata known, each side standardised within its stratum.
 
     The influence is assortative's ``kernels::pearson_influence``: ψ = z₁z₂ − ρ less each side's mean
     and variance terms, over the entries.
@@ -148,7 +155,7 @@ def _stratified_pearson(read: _Read, a: np.ndarray, b: np.ndarray, m: np.ndarray
             at = code == c
             big_a, big_b = zb[at].sum(), (za * zb)[at].sum()
             psi[at] -= big_a * za[at] / at.sum() + big_b * (za[at] ** 2 - 1) / (2 * at.sum())
-    return rho, _meat(psi / n, first, second, m[known][pair])
+    return rho, Units(psi / n, (first, second), m[known][pair])
 
 
 def _close(estimate, reference: tuple[float, float, int] | None, where: str) -> str:
@@ -195,9 +202,9 @@ def _check(res, ped, values, kind, stratum) -> Counter[str]:
         fit = cell.stratified
         # The reference keeps every block: fits that left a constant stratum out are the Rust test's.
         if kind == "continuous" and fit.estimate.value is not None and fit.n_degenerate_stratum == 0:
-            rho, meat = _stratified_pearson(read, a, b, m, stratum)
+            rho, units = _stratified_pearson(read, a, b, m, stratum)
             assert abs(fit.estimate.value - rho) < 1e-12, where
-            checked[_close(fit.estimate, meat, f"{where} stratified")] += 1
+            checked[_close(fit.estimate, _meat(units), f"{where} stratified")] += 1
     return checked
 
 
@@ -249,7 +256,7 @@ def test_the_se_is_opt_in_and_leaves_the_estimates_unchanged(kind):
     def raw(se):
         entries = rp._entries(None)
         native = rp.native_pedigree(ped)
-        return _native.relative_pairs_correlation(native, traits, rp.strata(stratum), entries, 2**30, se)
+        return _native.relative_pairs_correlation(native, traits, rp.strata(stratum), entries, 2**30, se, False)
 
     def keys(tree, out):
         if isinstance(tree, dict):

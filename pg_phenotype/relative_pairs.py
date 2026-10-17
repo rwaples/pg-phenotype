@@ -21,6 +21,9 @@ Within-Person Cross-Trait Correlation: each row's trait 0 against its trait 1.  
 exact sums as pedigree-graph-core finds them and never stored.  With
 ``se=True`` every estimate gets a cluster sandwich SE over the pairs' most
 recent common ancestors and members (ADR 0013); without it there is none.
+With ``covariance=True`` as well, the result's :class:`CellCovariance` holds
+the covariance between the estimates :func:`ace` reads (ADR 0014), and with
+two traits the within-person estimates get their SEs.
 
 With ``stratum=`` (a generation, a birth cohort), each cell also gets one
 :class:`StratumCell` per known stratum and a :class:`Stratified` fit.  A
@@ -55,6 +58,7 @@ __all__ = [
     "AceFit",
     "AceRow",
     "Cell",
+    "CellCovariance",
     "CrossShares",
     "Estimate",
     "RelativePairCorrelation",
@@ -86,7 +90,7 @@ class Estimate:
     zero to within rounding, at most max(1024, 4√n) epsilons of its scale
     over n entries, as when the cell's pairs share one most recent common
     ancestor or the estimate is ±1), ``negative_meat`` (the meat is negative) or ``within_person`` (the
-    Within-Person cell has no cluster design).  Both are ``None`` without
+    Within-Person SE comes with the covariance).  Both are ``None`` without
     ``se=True``.
     """
 
@@ -239,6 +243,63 @@ class Cell(_Crude):
     stratified: Stratified | None
 
 
+@dataclass(frozen=True, eq=False)
+class CellCovariance:
+    """The covariance of a result's estimates that :func:`ace` reads (ADR 0014).
+
+    Each matrix is ``(n, n)``, read-only, over the result's ``cells`` in
+    order and then, with two traits, ``within_person``: entry ``(j, k)`` is
+    ``Cov(r_j, r_k)`` of the two cells' estimates of one form.  Its
+    diagonal is each estimate's SE squared (``sqrt`` of it is ``se`` bit for
+    bit).  The row and column of an estimate with no SE are NaN.  Two
+    pairs' entries count together when the pairs share a most recent
+    common ancestor or a member, whichever cells they are in, as the SE
+    counts them within one; a within-person row and a pair count together
+    when the row is one of the pair's members.  Two are equal when every
+    matrix is, NaN matching NaN.
+
+    Attributes:
+        pooled: The pooled primary estimates (``crude[0]``).
+        phi: The pooled phi estimates; ``None`` for continuous traits.
+        stratified: The stratified fits' estimates; ``None`` without
+            *stratum*.
+    """
+
+    pooled: np.ndarray
+    phi: np.ndarray | None
+    stratified: np.ndarray | None
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, CellCovariance):
+            return NotImplemented
+
+        def same(a: np.ndarray | None, b: np.ndarray | None) -> bool:
+            return a is b if a is None or b is None else np.array_equal(a, b, equal_nan=True)
+
+        return all(same(getattr(self, f), getattr(other, f)) for f in ("pooled", "phi", "stratified"))
+
+    __hash__ = None
+
+
+def _matrix(n: int, flat: Sequence[float]) -> np.ndarray:
+    """A row-major ``n * n`` sequence as a read-only ``(n, n)`` array."""
+    out = np.asarray(flat, dtype=np.float64).reshape(n, n)
+    out.flags.writeable = False
+    return out
+
+
+def _cell_covariance(raw: dict | None) -> CellCovariance | None:
+    """The native result's covariance as a :class:`CellCovariance`; ``None`` without one."""
+    if raw is None:
+        return None
+    n, phi, stratified = raw["n"], raw["phi"], raw["stratified"]
+    return CellCovariance(
+        pooled=_matrix(n, raw["pooled"]),
+        phi=None if phi is None else _matrix(n, phi),
+        stratified=None if stratified is None else _matrix(n, stratified),
+    )
+
+
 @dataclass(frozen=True)
 class RelativePairCorrelation:
     """The result of :func:`correlation`.
@@ -253,12 +314,15 @@ class RelativePairCorrelation:
             stratum); ``None`` with one.
         settings: ``categories`` (the entries' names), ``trait_kind``,
             ``memory_budget_bytes``, ``threads``, ``se`` (whether the SE
-            was asked for), and continuous traits'
-            ``quantization_exponents`` e, one per trait, and
-            ``quantization_steps`` 2^-e (``None`` for binary traits).
+            was asked for), ``covariance`` (whether the covariance was),
+            and continuous traits' ``quantization_exponents`` e, one per
+            trait, and ``quantization_steps`` 2^-e (``None`` for binary
+            traits).
         method: How pairs and traits enter, the estimators, the
-            quantization, the strata, and the SE.
+            quantization, the strata, the SE and the covariance.
         metadata: ``pg_phenotype_version`` and ``pedigree_graph_core_rev``.
+        covariance: With ``covariance=True``, the :class:`CellCovariance`
+            of the estimates :func:`ace` reads; ``None`` without.
     """
 
     cells: tuple[Cell, ...]
@@ -266,6 +330,7 @@ class RelativePairCorrelation:
     settings: Mapping[str, object]
     method: Mapping[str, object]
     metadata: Mapping[str, object]
+    covariance: CellCovariance | None = None
 
     def cell(self, category: str, *, first_trait: int = 0, second_trait: int = 0) -> Cell:
         """The cell of *category*, a code or a group's name, reading *first_trait* against *second_trait*."""
@@ -361,6 +426,7 @@ def correlation(
     stratum: object = None,
     memory_budget_bytes: int = DEFAULT_MEMORY_BUDGET_BYTES,
     se: bool = False,
+    covariance: bool = False,
 ) -> RelativePairCorrelation:
     """The Relative-Pair Correlation of *traits* in each requested category.
 
@@ -405,6 +471,22 @@ def correlation(
             cells and do not depend on the thread count.  They cost 1.5 to
             1.8 times the call's time with one trait and 2.1 to 3.7 times
             with two traits and strata; ``False`` (the default) skips them.
+        covariance: With *se*, also give the :class:`CellCovariance` of
+            the estimates :func:`ace` reads: each cell's pooled primary, its
+            phi and its stratified fit, one matrix per form (ADR 0014).
+            Its sums come from the SE's sweeps, joined across cells, and do
+            not depend on the thread count; they are held until the end of
+            the call and count against *memory_budget_bytes*.  With two
+            traits it also gives every within-person estimate its SE: each
+            row is an entry, and the meat is its rows' squared influences
+            plus twice their products over every relative pair of degree at
+            most 2 (MZ, MO, FO, FS, MHS, PHS, GP, Av) between its rows, a
+            kinship kernel that can come out negative (``negative_meat``).
+            The pass traverses those categories whether *categories* asks
+            for them or not, and the cells stay as they are.  The covariance
+            adds 3 to 6% to the SE's time with one trait and 20 to 35% with
+            two traits and strata, the kernel's included; with two traits
+            and MZ alone it takes 1.4 to 2.3 times the SE's time.
 
     Returns:
         A :class:`RelativePairCorrelation`.
@@ -425,25 +507,35 @@ def correlation(
             (``parameter_out_of_range``).
         ResourceError: The accumulators, or with *se* the per-cluster
             sums, do not fit the budget (``memory_budget_exceeded``; the
-            sums' operation is ``relative_pairs_se``), or the allocator
-            refused the sums (``allocation_failed``).
+            sums' operation is ``relative_pairs_se``), or with *covariance*
+            the per-key sums it keeps may not (operation
+            ``relative_pairs_covariance``, raised after the pass and before
+            the SE's sweeps), or the allocator refused the sums
+            (``allocation_failed``).
         TypeError: *traits* is not a :class:`~pg_phenotype.Trait` or a
-            sequence of them, *se* is not a bool, or an argument has the
-            wrong type.
-        ValueError: A group mapping in *categories* is empty.
+            sequence of them, *se* or *covariance* is not a bool, or an
+            argument has the wrong type.
+        ValueError: A group mapping in *categories* is empty, or
+            *covariance* is asked for without *se*.
     """
     trait_list = as_traits(traits)
     entries = _entries(categories)
     budget = count("memory_budget_bytes", memory_budget_bytes)
-    if not isinstance(se, (bool, np.bool_)):
-        raise TypeError(f"se must be a bool, got {se!r}")
+    for name, flag in (("se", se), ("covariance", covariance)):
+        if not isinstance(flag, (bool, np.bool_)):
+            raise TypeError(f"{name} must be a bool, got {flag!r}")
+    if covariance and not se:
+        raise ValueError("covariance=True needs se=True")
     native = native_pedigree(pedigree)
     by_stratum = None if stratum is None else strata(stratum)
-    raw = _native.relative_pairs_correlation(native, trait_list, by_stratum, entries, budget, bool(se))
+    raw = _native.relative_pairs_correlation(
+        native, trait_list, by_stratum, entries, budget, bool(se), bool(covariance)
+    )
     within = raw["within_person"]
     return RelativePairCorrelation(
         cells=tuple(_cell(c) for c in raw["cells"]),
         within_person=None if within is None else _cell(within),
+        covariance=_cell_covariance(raw["covariance"]),
         settings=MappingProxyType(dict(raw["settings"])),
         method=MappingProxyType(dict(raw["method"])),
         metadata=MappingProxyType(raw["metadata"]),
@@ -471,7 +563,12 @@ class AceRow:
             within person).
         used: Whether it entered the fit (its value is defined).
         reason: Why ``value`` is ``None``: the estimate's own reason,
-            ``no_stratified_form``, or ``no_complete_pairs`` for a weight of 0.
+            ``no_stratified_form``, ``no_complete_pairs`` for a weight of 0,
+            or ``no_se`` for a row without ``variance`` in a fit weighted by
+            the covariance.
+        variance: The estimate's variance, its SE squared, from the
+            result's covariance; ``None`` without one or where the estimate
+            has no SE.
     """
 
     entry: str
@@ -484,16 +581,21 @@ class AceRow:
     weight: int
     used: bool
     reason: str | None
+    variance: float | None = None
 
 
 @dataclass(frozen=True)
 class TraitShares:
-    """One trait's variance shares on the correlation scale.
+    """One trait's variance shares on the correlation scale, with their SEs.
 
     Each share is ``None`` exactly when its ``_reason`` says why:
     ``not_requested`` (a component left out of the fit, though its share is
-    0 in ``E``) or ``not_identified`` (the cells that entered do not
-    determine it).
+    0 in ``E``), ``not_identified`` (the cells that entered do not
+    determine it), or ``covariance_not_positive_definite`` (``"gls"``
+    weights asked for whose covariance has no Cholesky factor).  Each SE is
+    ``None`` exactly when its ``_se_reason`` says why: the share's reason,
+    or ``no_covariance``, ``row_without_se`` or ``negative_variance`` (see
+    :func:`ace`).
 
     Attributes:
         trait: The trait (0-based).
@@ -504,6 +606,14 @@ class TraitShares:
         E: The remainder, ``1 - A - C``.
         E_reason: Why ``E`` is ``None``.
         rows: The entries of the rows that entered.
+        A_se: The SE of ``A``.
+        A_se_reason: Why ``A_se`` is ``None``.
+        C_se: The SE of ``C``.
+        C_se_reason: Why ``C_se`` is ``None``.
+        E_se: The SE of ``E``.
+        E_se_reason: Why ``E_se`` is ``None``.
+        weights: The weighting this trait's solve used: ``"pairs"``,
+            ``"inverse_variance"`` or ``"gls"``.
     """
 
     trait: int
@@ -514,16 +624,26 @@ class TraitShares:
     E: float | None
     E_reason: str | None
     rows: tuple[str, ...]
+    A_se: float | None = None
+    A_se_reason: str | None = None
+    C_se: float | None = None
+    C_se_reason: str | None = None
+    E_se: float | None = None
+    E_se_reason: str | None = None
+    weights: str | None = None
 
 
 @dataclass(frozen=True)
 class CrossShares:
-    """Two traits' cross-trait covariance shares and correlations.
+    """Two traits' cross-trait covariance shares and correlations, with their SEs.
 
     A value is ``None`` exactly when its ``_reason`` says why:
     ``not_requested``, ``not_identified`` (``sE`` and ``rE`` without the
-    within-person cell), or ``nonpositive_component`` (a correlation whose
-    component is <= 0 in a trait).
+    within-person cell), ``nonpositive_component`` (a correlation whose
+    component is <= 0 in a trait), or ``covariance_not_positive_definite``.
+    An SE is ``None`` exactly when its ``_se_reason`` says why, as in
+    :class:`TraitShares`.  A correlation's SE is the delta method's over
+    the joint covariance of the cross and trait solves.
 
     Attributes:
         sA: The additive genetic covariance.
@@ -543,6 +663,21 @@ class CrossShares:
         rE_out_of_range: Whether ``|rE| > 1``.
         rows: The entries of the rows that entered: cross-trait cells and
             ``"within_person"``.
+        sA_se: The SE of ``sA``.
+        sA_se_reason: Why ``sA_se`` is ``None``.
+        sC_se: The SE of ``sC``.
+        sC_se_reason: Why ``sC_se`` is ``None``.
+        sE_se: The SE of ``sE``.
+        sE_se_reason: Why ``sE_se`` is ``None``.
+        rA_se: The SE of ``rA``.
+        rA_se_reason: Why ``rA_se`` is ``None``.
+        rC_se: The SE of ``rC``.
+        rC_se_reason: Why ``rC_se`` is ``None``.
+        rE_se: The SE of ``rE``.
+        rE_se_reason: Why ``rE_se`` is ``None``.
+        weights: The weighting the cross solve used.  The correlations
+            also read the trait solves, each under its own
+            :attr:`TraitShares.weights`.
     """
 
     sA: float | None
@@ -561,6 +696,19 @@ class CrossShares:
     rE_reason: str | None
     rE_out_of_range: bool | None
     rows: tuple[str, ...]
+    sA_se: float | None = None
+    sA_se_reason: str | None = None
+    sC_se: float | None = None
+    sC_se_reason: str | None = None
+    sE_se: float | None = None
+    sE_se_reason: str | None = None
+    rA_se: float | None = None
+    rA_se_reason: str | None = None
+    rC_se: float | None = None
+    rC_se_reason: str | None = None
+    rE_se: float | None = None
+    rE_se_reason: str | None = None
+    weights: str | None = None
 
 
 @dataclass(frozen=True)
@@ -573,9 +721,11 @@ class AceFit:
         rows: Every cell considered, in the result's order, the
             within-person cell last.
         settings: The request: ``categories``, ``components``,
-            ``shared_environment``, ``estimator`` and ``estimate`` (resolved).
+            ``shared_environment``, ``estimator``, ``estimate`` as
+            resolved, and ``weights`` as asked, ``"default"`` for ``None``
+            (each solve's weighting is its own ``weights``).
         method: The model, weights, solve, ``E``, the cross-trait
-            correlations and the absence of an SE.
+            correlations and the SE.
         metadata: ``pg_phenotype_version`` and ``pedigree_graph_core_rev``.
     """
 
@@ -590,6 +740,7 @@ class AceFit:
 _COMPONENTS = ("A", "C")
 _ESTIMATORS = ("primary", "phi")
 _ESTIMATES = ("stratified", "pooled")
+_WEIGHTS = ("pairs", "inverse_variance", "gls")
 
 
 def _names(name: str, value: object) -> list[str] | None:
@@ -628,6 +779,18 @@ def _ace_cell(cell: Cell, *, within_person: bool) -> tuple:
     )
 
 
+def _flat(matrix: np.ndarray) -> np.ndarray:
+    """A covariance matrix row-major and flat, as the native fit reads it."""
+    return np.ascontiguousarray(matrix, dtype=np.float64).ravel()
+
+
+def _matrices(cov: CellCovariance | None) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None] | None:
+    if cov is None:
+        return None
+    phi, stratified = cov.phi, cov.stratified
+    return _flat(cov.pooled), None if phi is None else _flat(phi), None if stratified is None else _flat(stratified)
+
+
 def ace(
     result: RelativePairCorrelation,
     *,
@@ -636,6 +799,7 @@ def ace(
     shared_environment: Sequence[str] | None = None,
     estimator: str = "primary",
     estimate: str | None = None,
+    weights: str | None = None,
 ) -> AceFit:
     """The ACE Fit of *result*'s cells: A, C and E shares, and cross-trait correlations.
 
@@ -644,12 +808,12 @@ def ace(
     kinship of its categories and ``s`` 1 for a Shared-Environment Category,
     else 0; a Category Group's members must share both.  Each trait's
     components are the weighted least-squares solution over its same-trait
-    cells, each weighted by the unordered pairs that entered the estimate
-    read (the pooled cell's ``n``, or its ``stratified.n``), with
-    ``E = 1 - A - C``.  A component not requested is fixed at 0.  With two
+    cells, under ``"pairs"`` weights each weighted by the unordered pairs
+    that entered the estimate read (the pooled cell's ``n``, or its
+    ``stratified.n``), with ``E = 1 - A - C``.  A component not requested is fixed at 0.  With two
     traits the cross-trait cells give ``r12 = 2 phi sA + s sC`` and the
-    within-person cell ``r_wp = sA + sC + sE``, solved together, a
-    cross-trait cell weighted by its complete orientations so each counts
+    within-person cell ``r_wp = sA + sC + sE``, solved together, under
+    ``"pairs"`` a cross-trait cell weighted by its complete orientations so each counts
     once (a symmetric cell's ``n_entries`` or ``stratified.n_entries``, a
     directed cell's ``n``) and the within-person cell by its ``n``; then
     ``rA = sA / sqrt(A_1 A_2)``, ``rC`` and ``rE`` alike.  Values are as
@@ -661,7 +825,41 @@ def ace(
     is solved alone; without a shared cross-trait cell, sC and sE meet only
     in the within-person cell, which is left out, and sA is solved alone.
     Otherwise fewer independent cells than unknowns gives
-    ``not_identified``.  There is no SE.
+    ``not_identified``.
+
+    With *result*'s covariance (``correlation(..., se=True,
+    covariance=True)``), each value has an SE (ADR 0014).  Each solve is
+    linear in the cells it reads, ``theta = G r``, so a value's SE is
+    ``sqrt(g Sigma g')``, ``g`` its row of ``G`` and ``Sigma`` the cells'
+    covariance of the estimate read; ``E`` and the cross-trait correlations
+    take the delta method through the trait and cross solves together.
+    Weights are treated as fixed.  Without the covariance every SE is
+    ``None`` with ``no_covariance``.  A covariance that is not positive
+    semidefinite in a value's direction gives ``negative_variance``.
+
+    Under ``"pairs"`` weights a cell with no SE (a tiny cell, or a
+    tetrachoric fit at its boundary, as a small MZ cell's often is) still
+    enters, so every value that reads it has ``row_without_se``: that
+    cell's variance is part of the value's, and it is unknown.  To get those
+    SEs, leave the cell out with *categories*, or use ``"inverse_variance"``
+    or ``"gls"``, which leave it out (row reason ``no_se``).  Phi meets this
+    most, since its default is ``"pairs"``.
+
+    *weights* ``"inverse_variance"`` weighs each cell by ``1 / Var(r)`` and
+    ``"gls"`` by the inverse of the entered cells' covariance; both need
+    the covariance and leave out a cell with no SE.  ``"gls"`` asked for
+    refuses a covariance with no Cholesky factor: the solve's values and
+    SEs are ``covariance_not_positive_definite``.  The default (``None``)
+    is ``"pairs"`` for phi, whose ``"inverse_variance"`` and ``"gls"`` fits
+    are unreliable at low prevalence, and for a result without the
+    covariance of the estimate read, which then fits exactly as before the
+    covariance existed.  Otherwise the default fits each trait's solve and
+    the cross solve apart: ``"gls"`` when that solve's entered cells'
+    covariance has a Cholesky factor, else ``"pairs"`` for that solve
+    alone, as small pedigrees' covariances often lack one.  Each
+    :class:`TraitShares` and the :class:`CrossShares` record the weighting
+    their solve used in ``weights``; ``settings["weights"]`` records the
+    request, ``"default"`` for ``None``.
 
     The binary primary estimate, the tetrachoric, is on the liability scale,
     so the shares are too, with no Dempster-Lerner step;
@@ -691,6 +889,11 @@ def ace(
         estimate: ``"stratified"`` reads each cell's stratified fit,
             ``"pooled"`` its pooled estimate; ``None`` is ``"stratified"``
             when *result* has strata, else ``"pooled"``.
+        weights: ``"pairs"`` (each cell's count of what entered it),
+            ``"inverse_variance"`` or ``"gls"``; ``None`` is the default:
+            ``"pairs"`` for phi or without the covariance of the estimate
+            read, else ``"gls"`` per solve, ``"pairs"`` for a solve whose
+            covariance has no Cholesky factor.
 
     Returns:
         An :class:`AceFit`.
@@ -701,12 +904,15 @@ def ace(
             name that is no entry of *result* (``unknown_entry``), or a
             Category Group fitted whose categories differ in kinship degree
             (``mixed_kinship``) or straddle *shared_environment*
-            (``mixed_shared_environment``).
-        ValueError: *components*, *estimator* or *estimate* is not one of
-            its values; C without *shared_environment*
+            (``mixed_shared_environment``); a covariance that is not over
+            *result*'s cells (``covariance_shape_mismatch``).
+        ValueError: *components*, *estimator*, *estimate* or *weights* is
+            not one of its values; C without *shared_environment*
             (``missing_shared_environment``); stratified with phi, or with
             no cell carrying a stratified form (``no_stratified_form``); phi
-            of a continuous cell (``missing_estimator``).
+            of a continuous cell (``missing_estimator``); *weights*
+            ``"inverse_variance"`` or ``"gls"`` given without the covariance
+            of the estimate read (``missing_covariance``).
         TypeError: *result* is not a :class:`RelativePairCorrelation`, or
             *categories* or *shared_environment* is not a sequence of str.
     """
@@ -721,10 +927,13 @@ def ace(
         estimate = "stratified" if any(c.stratified is not None for c in result.cells) else "pooled"
     elif estimate not in _ESTIMATES:
         raise ValueError(f"estimate must be one of {_ESTIMATES}, got {estimate!r}")
+    if weights is not None and weights not in _WEIGHTS:
+        raise ValueError(f"weights must be one of {_WEIGHTS}, got {weights!r}")
     cells = [_ace_cell(c, within_person=False) for c in result.cells]
     if result.within_person is not None:
         cells.append(_ace_cell(result.within_person, within_person=True))
-    raw = _native.relative_pairs_ace(cells, names, parts, shared, estimator, estimate)
+    matrices = _matrices(result.covariance)
+    raw = _native.relative_pairs_ace(cells, names, parts, shared, estimator, estimate, weights, matrices)
     cross = raw["cross"]
     return AceFit(
         traits=tuple(TraitShares(**_rows_as_tuple(t)) for t in raw["traits"]),

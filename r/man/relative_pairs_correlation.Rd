@@ -10,7 +10,8 @@ relative_pairs_correlation(
   categories = NULL,
   stratum = NULL,
   memory_budget_bytes = 2^30,
-  se = FALSE
+  se = FALSE,
+  covariance = FALSE
 )
 }
 \arguments{
@@ -56,10 +57,27 @@ is zero to within rounding, at most max(1024, 4 sqrt(n)) machine
 epsilons of its scale over n entries, as when a cell's pairs share one
 MRCA or its estimate is +-1),
 `"negative_meat"` (the meat is negative) or `"within_person"` (the
-Within-Person cell has no cluster design).  The SE comes from the same
+Within-Person SE comes with the covariance).  The SE comes from the same
 pass over the pedigree as the cells, costs 1.5 to 1.8 times the call's
 time with one trait and 2.1 to 3.7 times with two traits and strata,
 and does not depend on the thread count.}
+
+\item{covariance}{With `se = TRUE`, `TRUE` also gives `covariance`: the
+covariance of the estimates [relative_pairs_ace()] reads (ADR 0014).
+Its sums come from the SE's sweeps, joined across cells, so two pairs'
+entries count together when the pairs share an MRCA or a member,
+whichever cells they are in; they do not depend on the thread count and
+count against `memory_budget_bytes`.  They add 3 to 6% to the SE's time
+with one trait and 20 to 35% with two traits and strata, the
+within-person kernel's included.  With two
+traits it also gives every within-person estimate its SE: each row is an
+entry, and the meat is its rows' squared influences plus twice their
+products over every relative pair of degree at most 2 (MZ, MO, FO, FS,
+MHS, PHS, GP, Av) between its rows, a kinship kernel that can come out
+negative (`"negative_meat"`).  The pass traverses those categories
+whether `categories` asks for them or not, and the cells stay as they
+are: two traits' covariance for MZ alone takes 1.4 to 2.3 times the
+SE's time.  `TRUE` without `se = TRUE` is an error.}
 }
 \value{
 An object of class `pgphenotype_relative_pairs`: a list with
@@ -67,9 +85,18 @@ An object of class `pgphenotype_relative_pairs`: a list with
   a symmetric entry's trait 1 x 1, 2 x 2, 1 x 2 and a directed entry's
   1 x 1, 1 x 2, 2 x 1, 2 x 2), `within_person` (with two traits, a cell
   over the rows; `NULL` with one), `settings` (`se`, whether the SE was
-  asked for, and with continuous traits' `quantization_exponents` and
-  `quantization_steps`, one per trait),
-  `method` and `metadata`.  Each cell holds `category` (the code, the
+  asked for, `covariance`, whether the covariance was, and with
+  continuous traits' `quantization_exponents` and `quantization_steps`,
+  one per trait), `covariance` (with `covariance = TRUE`; else `NULL`),
+  `method` and `metadata`.  `covariance` holds `pooled` (each cell's
+  primary estimate in `crude`), `phi` (binary traits; else `NULL`) and
+  `stratified` (with `stratum`; else `NULL`): square matrices over the
+  cells in order and then, with two traits, `within_person`, named
+  `"category:first_trait:second_trait"` (`"FS:1:2"`,
+  `"within_person:1:2"`).  Entry `[j, k]` is the covariance of the two
+  cells' estimates; the diagonal is each SE squared, and the row and
+  column of an estimate with no SE are `NaN`.  A within-person row and a
+  pair count together when the row is one of the pair's members.  Each cell holds `category` (the code, the
   group's name, or `"within_person"`), `members`, `symmetric`, `roles`
   (`NULL` when symmetric), `first_trait` and `second_trait` (the traits,
   counted from 1, read in the first member and the second), `n`
@@ -134,4 +161,5 @@ y <- trait(c(1.0, 0.2, -0.5, 0.7, 0.4, 1.3, -0.8, 0.6, 0.4))
 r <- relative_pairs_correlation(ped, list(x, y), categories = c("FS", "MO"))
 r$within_person
 relative_pairs_correlation(ped, x, categories = c("FO", "FS"), se = TRUE)
+relative_pairs_correlation(ped, x, categories = c("FO", "FS"), se = TRUE, covariance = TRUE)$covariance
 }

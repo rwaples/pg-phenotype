@@ -6,7 +6,9 @@
 //! The pairs come from one pass of pedigree-graph-core's engine, which
 //! reduces them to exact per-cell sums and never stores them: its
 //! `relationship_moments` table and, when the SE is asked for, beside it
-//! the per-cluster sums the cluster sandwich reads (ADR 0013, `clusters`).
+//! the per-cluster sums the cluster sandwich reads (ADR 0013, `clusters`),
+//! which with the covariance are also joined across estimates (ADR 0014,
+//! `covariance`).
 //! A symmetric category's pairs enter in both orders, so its same-trait
 //! Pearson is intraclass and its tetrachoric fits one threshold; a directed
 //! category's pairs enter once, in its roles' order.
@@ -24,7 +26,8 @@ use crate::pedigree::PedigreeArg;
 use crate::polychoric::table::Table;
 use crate::polychoric::{Point, Reason as FitReason};
 use crate::value::Value;
-use clusters::{Clusters, Meat, Pass};
+use clusters::{Clusters, Discard, Kin, Meat, Pass};
+use covariance::{Emission, Slot, Source};
 use influence::{Influence, StratifiedBlock, Weights};
 use mrca::Ancestry;
 use pedigree_graph_core::error::Error as PgError;
@@ -38,10 +41,15 @@ use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use within_person::Kernel;
 
 mod clusters;
+mod covariance;
 mod influence;
 mod mrca;
+mod within_person;
+
+pub use covariance::{Covariance, Form};
 
 /// The trait's field name with one trait, as errors report it.
 const FIELD: &str = "trait";
@@ -182,7 +190,8 @@ pub enum SeReason {
     DegenerateMeat,
     /// The inclusion-exclusion meat came out negative.
     NegativeMeat,
-    /// The Within-Person Cross-Trait Correlation has no cluster design.
+    /// The Within-Person Cross-Trait Correlation's SE comes with the
+    /// covariance.
     WithinPerson,
 }
 
@@ -357,6 +366,31 @@ impl Influences {
     }
 }
 
+/// What a Relative-Pair Correlation computes beyond the estimates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Se {
+    /// The estimates alone.
+    Off,
+    /// Every estimate's cluster sandwich SE (ADR 0013).
+    Estimates,
+    /// The SEs and the [`Covariance`] of the estimates the ACE Fit reads
+    /// (ADR 0014).
+    Covariance,
+}
+
+impl Se {
+    /// A host's `se` and `covariance` flags; `None` for the covariance
+    /// without the SE, which no `Se` represents.
+    pub fn from_flags(se: bool, covariance: bool) -> Option<Se> {
+        match (se, covariance) {
+            (false, false) => Some(Se::Off),
+            (true, false) => Some(Se::Estimates),
+            (true, true) => Some(Se::Covariance),
+            (false, true) => None,
+        }
+    }
+}
+
 /// The result of [`correlation`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct RelativePairCorrelation {
@@ -375,6 +409,9 @@ pub struct RelativePairCorrelation {
     pub threads: usize,
     /// Whether the call asked for the SE.
     pub se: bool,
+    /// With [`Se::Covariance`], the covariance of the cells' pooled, phi
+    /// and stratified estimates.
+    pub covariance: Option<Covariance>,
 }
 
 /// One entry, resolved.
@@ -390,8 +427,10 @@ struct Request {
 /// over `pedigree`, the cells of each entry of `categories` (default: each
 /// category up to degree 3), with two traits the Within-Person Cross-Trait
 /// Correlation, and with `strata` each cell's stratum cells and stratified
-/// fit.  With `se`, every estimate's cluster sandwich SE (ADR 0013); without
-/// it the call is `relationship_moments` and the fits alone.
+/// fit.  With `se` other than [`Se::Off`], every estimate's cluster
+/// sandwich SE (ADR 0013), and with [`Se::Covariance`] the covariance of
+/// the estimates the ACE Fit reads (ADR 0014); with [`Se::Off`] the call is
+/// `relationship_moments` and the fits alone.
 ///
 /// # Errors
 ///
@@ -404,16 +443,19 @@ struct Request {
 /// `mixed_category_group`; then `parameter_out_of_range` for a budget below
 /// one byte; `insufficient_precision`; with two traits,
 /// `memory_budget_exceeded` for the Within-Person accumulator; the
-/// engine's errors (`memory_budget_exceeded`, ...); and with `se`,
+/// engine's errors (`memory_budget_exceeded`, ...); with `se`,
 /// `memory_budget_exceeded` (operation `relative_pairs_se`) or
-/// `allocation_failed` for the per-cluster sums.
+/// `allocation_failed` for the per-cluster sums; and with the covariance,
+/// `memory_budget_exceeded` (operation `relative_pairs_covariance`) after
+/// the pass and before any sweep when the per-key sums it keeps may not
+/// fit, or `allocation_failed` for them.
 pub fn correlation(
     pedigree: PedigreeArg<'_>,
     traits: &[Trait<'_>],
     strata: Option<Strata<'_>>,
     categories: Option<&[Entry]>,
     memory_budget_bytes: i64,
-    se: bool,
+    se: Se,
 ) -> Result<RelativePairCorrelation, Error> {
     let pedigree = pedigree.resolve()?;
     let n_rows = pedigree.len();
@@ -440,47 +482,83 @@ pub fn correlation(
         members = members.stratified(codes, labels.len() + 1);
     }
     let layout = members.layout;
-    let within_person = if layout.n_traits == 2 {
-        let request = Request {
-            name: WITHIN_PERSON.to_string(),
-            members: Vec::new(),
-            symmetric: false,
-            roles: None,
-        };
-        let cell = Blocks::within_person(&members, budget)?.cell(
-            request,
-            labels.as_deref(),
-            &mut Influences(None),
-        )?;
-        Some(cell.map(|fit| Estimate {
-            se: se.then_some(Err(SeReason::WithinPerson)),
-            ..fit.estimate
-        }))
-    } else {
-        None
+    let kernel_on = se == Se::Covariance && layout.n_traits == 2;
+    let mut within_influences = Influences(kernel_on.then(Vec::new));
+    let within_person = (layout.n_traits == 2)
+        .then(|| {
+            let request = Request {
+                name: WITHIN_PERSON.to_string(),
+                members: Vec::new(),
+                symmetric: false,
+                roles: None,
+            };
+            Blocks::within_person(&members, budget)?.cell(
+                request,
+                labels.as_deref(),
+                &mut within_influences,
+            )
+        })
+        .transpose()?;
+    let shape = CovarianceShape {
+        n: requests
+            .iter()
+            .map(|r| View::of(layout.n_traits, r.symmetric).len())
+            .sum::<usize>()
+            + usize::from(layout.n_traits == 2),
+        forms: [true, layout.kind == TraitKind::Binary, labels.is_some()],
     };
     let mut result = RelativePairCorrelation {
         cells: Vec::new(),
-        within_person,
+        within_person: None,
         kind: layout.kind,
         quantization_exponents: (layout.kind == TraitKind::Continuous)
             .then(|| members.exponents.clone()),
         memory_budget_bytes: budget,
         threads,
-        se,
+        se: se != Se::Off,
+        covariance: None,
     };
     let union: CategorySet = requests.iter().flat_map(|r| r.members.clone()).collect();
-    let Some(top) = union.top_degree() else {
+    let within = match (&within_person, within_influences.0.as_deref()) {
+        (Some(cell), Some(influences)) => {
+            let slots: Vec<Slot> =
+                covariance::slots((shape.n - 1) as u32, cell, influences).collect();
+            let (kernel, source) = Kernel::new(&members, influences, union, &slots, budget)?;
+            Some((kernel, source, slots))
+        }
+        _ => None,
+    };
+    drop(within_influences);
+    let finish_within = |ses: &[Result<f64, SeReason>]| {
+        within_person.clone().map(|cell| {
+            cell.map(|fit| match se {
+                Se::Covariance => fit.finish(ses),
+                Se::Estimates => Estimate {
+                    se: Some(Err(SeReason::WithinPerson)),
+                    ..fit.estimate
+                },
+                Se::Off => fit.estimate,
+            })
+        })
+    };
+    let traversal = within
+        .as_ref()
+        .map_or(union, |(kernel, _, _)| kernel.traversal(union));
+    let Some(top) = traversal.top_degree() else {
+        result.within_person = finish_within(&[]);
+        result.covariance = (se == Se::Covariance).then(|| shape.empty());
         return Ok(result);
     };
     let ped = pedigree.relationships()?;
     let max_degree = MaxDegree::try_new(top)?;
     let lanes = NonZeroUsize::new(threads).unwrap_or(NonZeroUsize::MIN);
-    let ancestry = se.then(|| Ancestry::of(&pedigree, budget)).transpose()?;
+    let ancestry = (se != Se::Off)
+        .then(|| Ancestry::of(&pedigree, budget))
+        .transpose()?;
     let order: Vec<Category> = union.iter().collect();
-    let (table, clusters) = match &ancestry {
+    let (table, clusters, kernel_lane) = match &ancestry {
         Some(ancestry) => {
-            let (reserve, batch) = influence::reserve(
+            let (mut reserve, batch) = influence::reserve(
                 layout,
                 &requests,
                 labels.as_ref().map(Vec::len),
@@ -488,10 +566,23 @@ pub fn correlation(
                 budget,
                 ancestry.bytes(),
             );
+            if se == Se::Covariance {
+                reserve = reserve.saturating_add(covariance::reserve(shape.n, shape.forms));
+            }
+            if let Some((kernel, source, _)) = &within {
+                reserve = reserve
+                    .saturating_add(kernel.bytes(lanes.get()))
+                    .saturating_add(source.as_ref().map_or(0, Source::bytes));
+            }
+            let riding = within
+                .as_ref()
+                .map(|(kernel, _, _)| kernel)
+                .filter(|kernel| kernel.traverses());
             let pass = Pass::run(
                 &ped, max_degree, union, &requests, &members, ancestry, lanes, budget, reserve,
+                riding,
             )?;
-            (pass.table, Some((pass.clusters, batch)))
+            (pass.table, Some((pass.clusters, batch)), pass.kernel)
         }
         None => {
             let input = members.input();
@@ -514,9 +605,114 @@ pub fn correlation(
                 moments.width,
                 Cow::Owned(moments.table),
             )?;
-            (table, None)
+            (table, None, None)
         }
     };
+    let (within_meats, within_source, within_slots) = match within {
+        Some((kernel, source, slots)) => {
+            (kernel.meats(kernel_lane, &table, &order)?, source, slots)
+        }
+        None => (Vec::new(), None, Vec::new()),
+    };
+    let within_ses: Vec<Result<f64, SeReason>> = within_meats
+        .iter()
+        .map(|meat| meat.and_then(SeReason::of_meat))
+        .collect();
+    result.within_person = finish_within(&within_ses);
+    let (cells, influences) = fit(
+        &table,
+        &requests,
+        &order,
+        layout,
+        labels.as_deref(),
+        clusters.is_some(),
+    )?;
+    let Some((clusters, batch)) = clusters else {
+        result.cells = cells
+            .into_iter()
+            .map(|(_, cell)| cell.map(|fit| fit.finish(&[])))
+            .collect();
+        return Ok(result);
+    };
+    let covered = (se == Se::Covariance).then(|| shape.slots(&cells, &influences));
+    let sweeps = Sweeps {
+        clusters: &clusters,
+        members: &members,
+        influences: &influences,
+        batch,
+    };
+    let mut held = (table.bytes().len() as u64)
+        .saturating_add(ancestry.as_ref().map_or(0, Ancestry::bytes))
+        .saturating_add(sweeps.held())
+        .saturating_add(within_source.as_ref().map_or(0, Source::bytes));
+    if let Some(covered) = &covered {
+        let kept = sweeps
+            .tallies(covered)
+            .saturating_add(covariance::reserve(shape.n, shape.forms));
+        let need = held
+            .saturating_add(kept)
+            .saturating_add(influence::one_sweep(
+                &sweeps.shapes(),
+                members.labels.len(),
+                batch,
+            ));
+        if need > budget {
+            return Err(PgError::MemoryBudgetExceeded {
+                operation: covariance::OPERATION,
+                estimated_bytes: need,
+                budget_bytes: budget,
+            }
+            .into());
+        }
+        held = held.saturating_add(kept);
+    }
+    let Swept { meats, mut sources } =
+        sweeps.run(budget.saturating_sub(held), threads, covered.as_deref())?;
+    drop((clusters, influences));
+    sources.extend(within_source);
+    result.covariance = covered.map(|covered| {
+        shape.covariance(&sources, &covered, &meats, (&within_slots, &within_meats))
+    });
+    drop(sources);
+    let ses: Vec<Vec<Result<f64, SeReason>>> = meats
+        .iter()
+        .map(|list| {
+            list.iter()
+                .map(|meat| meat.and_then(SeReason::of_meat))
+                .collect()
+        })
+        .collect();
+    result.cells = cells
+        .into_iter()
+        .map(|(r, cell)| cell.map(|fit| fit.finish(&ses[r])))
+        .collect();
+    Ok(result)
+}
+
+/// A covered estimate's diagonal: its meat where it has an SE.
+fn diagonal(meat: Result<Meat, SeReason>) -> Option<f64> {
+    let meat = meat.ok()?;
+    SeReason::of_meat(meat).ok()?;
+    Some(meat.value)
+}
+
+/// Each request's cells, view by view, with the request's index, and each
+/// request's influences in the order its fits made them (none without
+/// the SE).
+type Fitted = (
+    Vec<(usize, Cell<Fit>)>,
+    Vec<Vec<Result<Influence, SeReason>>>,
+);
+
+/// [`Fitted`] from the pass's `table`, whose categories are `order`.
+fn fit(
+    table: &MomentsTable<'_>,
+    requests: &[Request],
+    order: &[Category],
+    layout: Layout,
+    labels: Option<&[i64]>,
+    se: bool,
+) -> Result<Fitted, Error> {
     let (mut cells, mut influences) = (Vec::new(), Vec::new());
     for (r, request) in requests.iter().enumerate() {
         let positions: Vec<usize> = request
@@ -532,33 +728,73 @@ pub fn correlation(
         let mut fitted = Influences(se.then(Vec::new));
         for view in View::of(layout.n_traits, request.symmetric) {
             let blocks = Blocks::pairs(&joint, &counts, layout, view)?;
-            cells.push((
-                r,
-                blocks.cell(request.clone(), labels.as_deref(), &mut fitted)?,
-            ));
+            cells.push((r, blocks.cell(request.clone(), labels, &mut fitted)?));
         }
         influences.push(fitted.0.unwrap_or_default());
     }
-    let ses = match &clusters {
-        Some((clusters, batch)) => {
-            let held = (table.bytes().len() as u64)
-                .saturating_add(ancestry.as_ref().map_or(0, Ancestry::bytes));
-            let sweeps = Sweeps {
-                clusters,
-                members: &members,
-                influences: &influences,
-                batch: *batch,
-            };
-            sweeps.standard_errors(budget.saturating_sub(held), threads)
+    Ok((cells, influences))
+}
+
+/// The covariance's matrices: their side (the cells, then with two traits
+/// the within-person cell) and which forms they hold.
+#[derive(Clone, Copy, Debug)]
+struct CovarianceShape {
+    n: usize,
+    forms: [bool; 3],
+}
+
+impl CovarianceShape {
+    /// Per request, the covered estimates of its cells whose influences
+    /// are defined.
+    fn slots(
+        self,
+        cells: &[(usize, Cell<Fit>)],
+        influences: &[Vec<Result<Influence, SeReason>>],
+    ) -> Vec<Vec<Slot>> {
+        let mut out = vec![Vec::new(); influences.len()];
+        for (c, (r, cell)) in cells.iter().enumerate() {
+            out[*r].extend(covariance::slots(c as u32, cell, &influences[*r]));
         }
-        None => Vec::new(),
-    };
-    drop(influences);
-    result.cells = cells
-        .into_iter()
-        .map(|(r, cell)| cell.map(|fit| fit.finish(ses.get(r).map_or(&[], Vec::as_slice))))
-        .collect();
-    Ok(result)
+        out
+    }
+
+    /// The covariance from the `sources` (the sweeps', then the
+    /// within-person cell's), the `meats` of each request's estimates,
+    /// `covered` the requests' slots, and the within-person cell's slots
+    /// and meats `within`.
+    fn covariance(
+        self,
+        sources: &[Source],
+        covered: &[Vec<Slot>],
+        meats: &[Vec<Result<Meat, SeReason>>],
+        within: (&[Slot], &[Result<Meat, SeReason>]),
+    ) -> Covariance {
+        let requests = covered
+            .iter()
+            .map(Vec::as_slice)
+            .zip(meats.iter().map(Vec::as_slice));
+        let diagonal = requests.chain([within]).flat_map(|(slots, meats)| {
+            slots.iter().filter_map(|slot| {
+                diagonal(meats[slot.influence as usize]).map(|v| (slot.column, v))
+            })
+        });
+        let sigma = covariance::combine(sources, self.n, self.forms);
+        covariance::finish(sigma, self.n, diagonal)
+    }
+
+    /// The covariance of no estimate: every entry NaN.
+    fn empty(self) -> Covariance {
+        let sigma = covariance::combine(&[], self.n, self.forms);
+        covariance::finish(sigma, self.n, std::iter::empty())
+    }
+}
+
+/// What the sweeps give: per request, each influence's [`Meat`] or why
+/// it has none, and with the covariance each sweep's [`Source`] in
+/// (request, range) order.
+struct Swept {
+    meats: Vec<Vec<Result<Meat, SeReason>>>,
+    sources: Vec<Source>,
 }
 
 /// The SE's last step: each request's [`Weights`] and sweeps over the
@@ -573,61 +809,121 @@ struct Sweeps<'a> {
 }
 
 impl Sweeps<'_> {
-    /// Each request's SEs, in its influences' order, sweeping as many
-    /// requests at once as [`influence::sweeps`] fits in `free` (the
-    /// budget less the table and the ancestry), at most `threads`.  One
-    /// thread sweeps a request whole, its floats in key order, so no SE
-    /// depends on the threads; requests with the most rows go first.
-    fn standard_errors(&self, free: u64, threads: usize) -> Vec<Vec<Result<f64, SeReason>>> {
-        let layout = self.members.layout;
-        let held: u64 = self
-            .influences
+    /// The bytes held through the sweeps: the influences and the store.
+    fn held(&self) -> u64 {
+        self.influences
             .iter()
             .flatten()
             .map(Influence::bytes)
             .sum::<u64>()
-            .saturating_add(self.clusters.bytes());
-        let shapes: Vec<(u64, usize)> = self
-            .influences
+            .saturating_add(self.clusters.bytes())
+    }
+
+    /// Each request's [`Weights::bytes`] and estimates.
+    fn shapes(&self) -> Vec<(u64, usize)> {
+        let layout = self.members.layout;
+        self.influences
             .iter()
             .map(|list| (Weights::bytes(layout, list), list.len()))
-            .collect();
+            .collect()
+    }
+
+    /// The bytes the covariance's tallies may hold, from the store's rows
+    /// ([`covariance::records`]) and as many sources a request as its
+    /// covered estimates over the smallest planned batch.
+    fn tallies(&self, covered: &[Vec<Slot>]) -> u64 {
+        let n_rows = self.members.labels.len();
+        let batch = self.batch.max(1);
+        covered
+            .iter()
+            .zip(self.influences)
+            .enumerate()
+            .filter(|(_, (slots, _))| !slots.is_empty())
+            .map(|(r, (slots, list))| {
+                let records = covariance::records(self.clusters.n_rows(r as u32), n_rows);
+                let sources = slots.len().min(list.len().div_ceil(batch));
+                covariance::tally_bytes(records, slots.len(), sources)
+            })
+            .fold(0, u64::saturating_add)
+    }
+
+    /// Each request's meats, in its influences' order, sweeping as many
+    /// requests at once as [`influence::sweeps`] fits in `free` (the
+    /// budget less everything held through the sweeps), at most
+    /// `threads`.  One thread sweeps a request whole, its floats in key
+    /// order, so no meat depends on the threads; requests with the most
+    /// rows go first.  With `covered`, each request's covered estimates,
+    /// every sweep keeps their sums ([`Emission`]).
+    ///
+    /// # Errors
+    ///
+    /// `allocation_failed` (operation `relative_pairs_covariance`) when the
+    /// allocator refused a sweep's tallies.
+    fn run(
+        &self,
+        free: u64,
+        threads: usize,
+        covered: Option<&[Vec<Slot>]>,
+    ) -> Result<Swept, Error> {
+        let layout = self.members.layout;
         let (width, batch) = influence::sweeps(
-            free.saturating_sub(held),
+            free,
             threads,
-            &shapes,
+            &self.shapes(),
             self.members.labels.len(),
             self.batch,
         );
         let mut order: Vec<usize> = (0..self.influences.len()).collect();
         order.sort_by_key(|&r| Reverse(self.clusters.n_rows(r as u32)));
         let next = AtomicUsize::new(0);
-        let mut meats: Vec<(usize, Vec<Meat>)> = (0..width)
+        let n_rows = self.members.labels.len();
+        let mut swept: Vec<(usize, Vec<Meat>, Vec<Emission>)> = (0..width)
             .into_par_iter()
             .flat_map_iter(|_| {
                 let mut done = Vec::new();
                 while let Some(&r) = order.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let weights =
                         Weights::build(layout, &self.members.exponents, &self.influences[r]);
-                    done.push((r, self.clusters.meats(r as u32, &weights, batch)));
+                    let request = r as u32;
+                    done.push(match covered {
+                        None => {
+                            let (meats, _) =
+                                self.clusters.meats(request, &weights, batch, |_| Discard);
+                            (r, meats, Vec::new())
+                        }
+                        Some(covered) => {
+                            let records =
+                                covariance::records(self.clusters.n_rows(request), n_rows);
+                            let (meats, sinks) =
+                                self.clusters.meats(request, &weights, batch, |range| {
+                                    Emission::new(&covered[r], range, records)
+                                });
+                            (r, meats, sinks)
+                        }
+                    });
                 }
                 done
             })
             .collect();
-        meats.sort_unstable_by_key(|&(r, _)| r);
-        meats
-            .into_iter()
-            .zip(self.influences)
-            .map(|((_, meats), list)| {
-                list.iter()
-                    .zip(meats)
+        swept.sort_unstable_by_key(|&(r, _, _)| r);
+        let mut sources = Vec::new();
+        let mut meats = Vec::with_capacity(swept.len());
+        for ((_, list, sinks), influences) in swept.into_iter().zip(self.influences) {
+            for sink in sinks {
+                sources.extend(sink.finish()?);
+            }
+            meats.push(
+                influences
+                    .iter()
+                    .zip(list)
                     .map(|(influence, meat)| match influence {
-                        Ok(_) => SeReason::of_meat(meat),
+                        Ok(_) => Ok(meat),
                         Err(reason) => Err(*reason),
                     })
-                    .collect()
-            })
-            .collect()
+                    .collect(),
+            );
+        }
+        Ok(Swept { meats, sources })
     }
 }
 
@@ -1793,7 +2089,7 @@ fn phi(table: [[u64; 2]; 2]) -> Estimate {
     }
 }
 
-const METHOD: [(&str, &str); 7] = [
+const METHOD: [(&str, &str); 8] = [
     (
         "entry",
         "a symmetric category's pairs enter in both orders (a same-trait cell is intraclass); \
@@ -1831,9 +2127,23 @@ const METHOD: [(&str, &str); 7] = [
         "se",
         "with se, a cluster sandwich (ADR 0013): each entry's influence on the estimate summed \
          over its pair's MRCA and over each member, meat = sum over MRCAs + sum over members - \
-         sum over (member, MRCA), SE = sqrt(meat), no small-sample factor; none within_person, \
-         nor when |meat| <= max(1024, 4 sqrt(n)) eps x its scale, the three sums of squares at \
-         influence 1/n over the n entries (degenerate_meat)",
+         sum over (member, MRCA), SE = sqrt(meat), no small-sample factor; within_person's \
+         comes with the covariance; none when |meat| <= max(1024, 4 sqrt(n)) eps x its scale, \
+         the three sums of squares at influence 1/n over the n entries (degenerate_meat)",
+    ),
+    (
+        "covariance",
+        "with covariance, Cov(r_j, r_k) of the cells' pooled, phi and stratified estimates, \
+         one matrix each over the cells in order then within_person (ADR 0014): the SE's sums \
+         joined across estimates, sum over MRCAs + sum over members - sum over (member, MRCA) \
+         of the two estimates' influence sums, so two entries count once when they share an \
+         MRCA or a member, and a within_person row and a pair when the row is a member; the \
+         diagonal is the SE squared, and the row and column of an estimate with no SE are NaN.  \
+         With two traits, within_person's SE: each row an entry, meat = sum of its rows' \
+         squared influences + 2 x the sum over every relative pair of degree <= 2 between its \
+         rows (MZ, MO, FO, FS, MHS, PHS, GP, Av, traversed whether requested or not) of their \
+         influences' product, a kinship kernel that can be negative; its scale (n + 2P) / n^2 \
+         over its n rows and P pairs",
     ),
 ];
 
@@ -2030,6 +2340,7 @@ impl RelativePairCorrelation {
                     ("memory_budget_bytes", self.memory_budget_bytes.into()),
                     ("threads", (self.threads as u64).into()),
                     ("se", self.se.into()),
+                    ("covariance", self.covariance.is_some().into()),
                     (
                         "quantization_exponents",
                         exponents
@@ -2043,6 +2354,10 @@ impl RelativePairCorrelation {
                             .into(),
                     ),
                 ]),
+            ),
+            (
+                "covariance",
+                self.covariance.as_ref().map(Covariance::to_value).into(),
             ),
             (
                 "method",
@@ -2106,7 +2421,7 @@ mod tests {
             None,
             categories.as_deref(),
             DEFAULT_MEMORY_BUDGET_BYTES,
-            false,
+            Se::Off,
         )
     }
 
@@ -2159,6 +2474,14 @@ mod tests {
             sxy += (a - mx) * (b - my);
         }
         sxy / (sxx * syy).sqrt()
+    }
+
+    #[test]
+    fn host_flags_are_one_se_each_and_the_covariance_needs_the_se() {
+        assert_eq!(Se::from_flags(false, false), Some(Se::Off));
+        assert_eq!(Se::from_flags(true, false), Some(Se::Estimates));
+        assert_eq!(Se::from_flags(true, true), Some(Se::Covariance));
+        assert_eq!(Se::from_flags(false, true), None);
     }
 
     #[test]
@@ -2375,7 +2698,7 @@ mod tests {
             None,
             Some(entries),
             DEFAULT_MEMORY_BUDGET_BYTES,
-            false,
+            Se::Off,
         )
     }
 
@@ -2400,7 +2723,7 @@ mod tests {
                 None,
                 categories,
                 budget,
-                false,
+                Se::Off,
             )
             .unwrap_err()
             .code()
@@ -2543,7 +2866,7 @@ mod tests {
         stratum: &[f64],
         categories: Option<&[Entry]>,
     ) -> Result<RelativePairCorrelation, Error> {
-        run_strata_se(ped, values, kind, stratum, categories, false)
+        run_strata_se(ped, values, kind, stratum, categories, Se::Off)
     }
 
     fn run_strata_se(
@@ -2552,7 +2875,7 @@ mod tests {
         kind: TraitKind,
         stratum: &[f64],
         categories: Option<&[Entry]>,
-        se: bool,
+        se: Se,
     ) -> Result<RelativePairCorrelation, Error> {
         let labels: Vec<i64> = stratum
             .iter()
@@ -2785,7 +3108,7 @@ mod tests {
                 Some(strata),
                 Some(&[]),
                 budget as i64,
-                false,
+                Se::Off,
             )
         };
         // A stratum per row and the unknown code, three labels each, one
@@ -3019,7 +3342,7 @@ mod tests {
                 values: v,
             } = stratified_fixture(kind);
             let ped = (&ids[..], &mother[..], &father[..]);
-            let res = run_strata_se(ped, &v, kind, &stratum, None, true).unwrap();
+            let res = run_strata_se(ped, &v, kind, &stratum, None, Se::Estimates).unwrap();
             let code = code_of(&stratum);
             for (name, symmetric) in [("MO", false), ("FS", true)] {
                 let entries = known_pairs(&mother, &stratum, &v, symmetric);
@@ -3146,7 +3469,7 @@ mod tests {
                 [0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0],
             ),
         ] {
-            let res = run_strata_se(ped, &values, kind, &one_stratum, None, true).unwrap();
+            let res = run_strata_se(ped, &values, kind, &one_stratum, None, Se::Estimates).unwrap();
             let reasons: Vec<(&str, Option<&str>)> = res
                 .cells
                 .iter()
@@ -3216,7 +3539,7 @@ mod tests {
                 Some(strata),
                 None,
                 budget as i64,
-                true,
+                Se::Estimates,
             )
         };
         let (codes, strata_labels) = strata.codes();
@@ -3259,6 +3582,330 @@ mod tests {
         }
         let ample = run(1 << 30).unwrap();
         assert_eq!(run(fixed + (1 << 20)).unwrap().cells, ample.cells);
+    }
+
+    /// The covariance's matrices, and with two traits the within-person
+    /// kernel and source, join the SE's reserve before the pass, so one byte
+    /// short of the engine's one lane, that reserve and theirs is refused
+    /// with exactly their sum; an ample budget gives the SE alone's SEs.
+    #[test]
+    fn the_covariance_matrices_are_held_back_before_the_pass() {
+        for (kind, n_traits) in [(TraitKind::Continuous, 1), (TraitKind::Binary, 2)] {
+            let Fixture {
+                ids,
+                mother,
+                father,
+                stratum,
+                values,
+            } = stratified_fixture(kind);
+            let second = second_trait(kind, ids.len());
+            let labels: Vec<i64> = stratum
+                .iter()
+                .map(|&s| if s.is_nan() { 0 } else { s as i64 })
+                .collect();
+            let known: Vec<bool> = stratum.iter().map(|s| !s.is_nan()).collect();
+            let strata = Strata {
+                labels: &labels,
+                known: &known,
+            };
+            let traits: Vec<Trait<'_>> = [&values, &second][..n_traits]
+                .iter()
+                .map(|values| Trait {
+                    values,
+                    kind,
+                    n_levels: None,
+                })
+                .collect();
+            let input = PedigreeInput {
+                ids: &ids,
+                mother: &mother,
+                father: &father,
+                twin: None,
+                sex: None,
+            };
+            let run = |budget: u64, se| {
+                correlation(
+                    PedigreeArg::Columns(input),
+                    &traits,
+                    Some(strata),
+                    None,
+                    budget as i64,
+                    se,
+                )
+            };
+            let refused = |budget: u64| match run(budget, Se::Covariance) {
+                Err(Error::Pedigree(PgError::MemoryBudgetExceeded {
+                    operation,
+                    estimated_bytes,
+                    budget_bytes,
+                })) => {
+                    assert_eq!(budget_bytes, budget);
+                    (operation, estimated_bytes)
+                }
+                other => panic!("{other:?}"),
+            };
+            let pedigree = PedigreeArg::Columns(input).resolve().unwrap();
+            let ancestry = Ancestry::of(&pedigree, 1 << 30).unwrap().bytes();
+            let (codes, strata_labels) = strata.codes();
+            let members = Members::of(&traits)
+                .unwrap()
+                .stratified(&codes, strata_labels.len() + 1);
+            let requests = default_requests();
+            let union: CategorySet = requests.iter().flat_map(|r| r.members.clone()).collect();
+            let (reserve, _) = influence::reserve(
+                members.layout,
+                &requests,
+                Some(strata_labels.len()),
+                ids.len(),
+                1 << 30,
+                ancestry,
+            );
+            let one_lane = pedigree_graph_core::relationships::MomentsPlan::new(
+                members.input().shape(union),
+                NonZeroUsize::MIN,
+                1 << 30,
+            )
+            .unwrap()
+            .estimated_peak_bytes;
+            let (n, forms) = if n_traits == 1 {
+                (12, [true, false, true])
+            } else {
+                (5 * 3 + 7 * 4 + 1, [true; 3])
+            };
+            let matrices = covariance::reserve(n, forms);
+            assert_eq!(
+                matrices,
+                (n * n * 8 * 4) as u64 * forms.iter().filter(|&&f| f).count() as u64
+            );
+            let within = if n_traits == 2 {
+                let mut influences = Influences(Some(Vec::new()));
+                let request = Request {
+                    name: WITHIN_PERSON.to_string(),
+                    members: Vec::new(),
+                    symmetric: false,
+                    roles: None,
+                };
+                let cell = Blocks::within_person(&members, 1 << 30)
+                    .unwrap()
+                    .cell(request, Some(&strata_labels), &mut influences)
+                    .unwrap();
+                let influences = influences.0.unwrap();
+                let slots: Vec<Slot> =
+                    covariance::slots((n - 1) as u32, &cell, &influences).collect();
+                let (kernel, source) =
+                    Kernel::new(&members, &influences, union, &slots, 1 << 30).unwrap();
+                let source = source.unwrap().bytes();
+                assert!(source > 0);
+                kernel.bytes(rayon::current_num_threads()) + source
+            } else {
+                0
+            };
+            let fixed = one_lane + reserve + matrices + within;
+            assert_eq!(refused(fixed - 1), ("relative_pairs_se", fixed), "{kind:?}");
+            let ample = run(1 << 30, Se::Covariance).unwrap();
+            assert_eq!(ample.covariance.as_ref().unwrap().n(), n);
+            assert_eq!(ample.cells, run(1 << 30, Se::Estimates).unwrap().cells);
+        }
+    }
+
+    /// After the pass and before any sweep, the tallies' bound, the bytes
+    /// held and one sweep must fit.  Two binary traits' tallies outgrow
+    /// the index the pass frees, so just below the smallest budget the
+    /// covariance passes, the SE alone passes and the covariance is
+    /// refused (`relative_pairs_covariance`); at that budget it is the
+    /// ample budget's.
+    #[test]
+    fn the_covariance_tallies_are_bounded_before_the_sweeps() {
+        let cols = mrca::tests::generated(400, 4, 5);
+        let n = cols.ids.len();
+        let values: Vec<Vec<f64>> = (0..2)
+            .map(|t| {
+                (0..n)
+                    .map(|i| match (i + 3 * t) % 11 {
+                        0 => NA,
+                        _ => f64::from(u8::from(noise(i + 17 * t) < 0.45)),
+                    })
+                    .collect()
+            })
+            .collect();
+        let traits: Vec<Trait<'_>> = values
+            .iter()
+            .map(|values| Trait {
+                values,
+                kind: TraitKind::Binary,
+                n_levels: None,
+            })
+            .collect();
+        let known = vec![true; n];
+        let strata = Strata {
+            labels: &cols.generation,
+            known: &known,
+        };
+        let input = PedigreeInput {
+            ids: &cols.ids,
+            mother: &cols.mother,
+            father: &cols.father,
+            twin: Some(&cols.twin),
+            sex: None,
+        };
+        let run = |budget: u64, se| {
+            correlation(
+                PedigreeArg::Columns(input),
+                &traits,
+                Some(strata),
+                None,
+                budget as i64,
+                se,
+            )
+        };
+        let (mut lo, mut hi) = (1u64, 1u64 << 30);
+        while hi - lo > hi / 1000 {
+            let mid = lo + (hi - lo) / 2;
+            if run(mid, Se::Covariance).is_ok() {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        match run(lo, Se::Covariance) {
+            Err(Error::Pedigree(PgError::MemoryBudgetExceeded {
+                operation,
+                estimated_bytes,
+                budget_bytes,
+            })) => {
+                assert_eq!(operation, "relative_pairs_covariance");
+                assert!(estimated_bytes > budget_bytes && budget_bytes == lo);
+            }
+            other => panic!("{other:?}"),
+        }
+        let ample = run(1 << 30, Se::Covariance).unwrap();
+        assert_eq!(run(lo, Se::Estimates).unwrap().cells, ample.cells);
+        let edge = run(hi, Se::Covariance).unwrap();
+        assert!(edge.cells == ample.cells && edge.covariance == ample.covariance);
+    }
+
+    /// The covariance as [`correlation`] makes it on a generated pedigree,
+    /// from the sweeps [`Sweeps::run`] plans, or with `batch` estimates a
+    /// sweep, one request at a time; and the sources the sweeps gave.
+    fn swept(
+        cols: &mrca::tests::Columns,
+        kind: TraitKind,
+        batch: Option<usize>,
+    ) -> (Vec<Vec<Result<Meat, SeReason>>>, Covariance, usize) {
+        let n = cols.ids.len();
+        let values: Vec<Vec<f64>> = (0..2)
+            .map(|t| {
+                (0..n)
+                    .map(|i| match ((i + 3 * t) % 11, kind) {
+                        (0, _) => NA,
+                        (_, TraitKind::Binary) => f64::from(u8::from(noise(i + 17 * t) < 0.45)),
+                        _ => noise(i + 17 * t) + 0.6 * noise(cols.mother[i].max(0) as usize),
+                    })
+                    .collect()
+            })
+            .collect();
+        let traits: Vec<Trait<'_>> = values
+            .iter()
+            .map(|values| Trait {
+                values,
+                kind,
+                n_levels: None,
+            })
+            .collect();
+        let labels: Vec<i64> = cols.generation.clone();
+        let known: Vec<bool> = (0..n).map(|i| i % 7 != 0).collect();
+        let (codes, strata) = Strata {
+            labels: &labels,
+            known: &known,
+        }
+        .codes();
+        let members = Members::of(&traits)
+            .unwrap()
+            .stratified(&codes, strata.len() + 1);
+        let layout = members.layout;
+        let pedigree = cols.pedigree();
+        let ped = pedigree.relationships().unwrap();
+        let ancestry = Ancestry::of(&pedigree, 1 << 30).unwrap();
+        let requests = default_requests();
+        let union: CategorySet = requests.iter().flat_map(|r| r.members.clone()).collect();
+        let max_degree = MaxDegree::try_new(union.top_degree().unwrap()).unwrap();
+        let (reserve, planned) = influence::reserve(
+            layout,
+            &requests,
+            Some(strata.len()),
+            n,
+            1 << 30,
+            ancestry.bytes(),
+        );
+        let lanes = NonZeroUsize::new(rayon::current_num_threads()).unwrap();
+        let pass = Pass::run(
+            &ped,
+            max_degree,
+            union,
+            &requests,
+            &members,
+            &ancestry,
+            lanes,
+            1 << 30,
+            reserve,
+            None,
+        )
+        .unwrap();
+        let order: Vec<Category> = union.iter().collect();
+        let (cells, influences) =
+            fit(&pass.table, &requests, &order, layout, Some(&strata), true).unwrap();
+        let shape = CovarianceShape {
+            n: cells.len() + 1,
+            forms: [true, kind == TraitKind::Binary, true],
+        };
+        let covered = shape.slots(&cells, &influences);
+        let sweeps = Sweeps {
+            clusters: &pass.clusters,
+            members: &members,
+            influences: &influences,
+            batch: batch.unwrap_or(planned),
+        };
+        let free = if batch.is_some() { 0 } else { u64::MAX };
+        let threads = rayon::current_num_threads();
+        let Swept { meats, sources } = sweeps.run(free, threads, Some(&covered)).unwrap();
+        let covariance = shape.covariance(&sources, &covered, &meats, (&[], &[]));
+        (meats, covariance, sources.len())
+    }
+
+    /// The covariance does not depend on the threads, nor on how many
+    /// estimates a sweep takes: a batch's tallies hold only the keys its
+    /// own estimates reached, and a key one batch lacks adds an exact 0.
+    #[test]
+    fn the_covariance_does_not_depend_on_threads_or_batching() {
+        let cols = mrca::tests::generated(150, 4, 3);
+        for kind in [TraitKind::Binary, TraitKind::Continuous] {
+            let pool = |threads| {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .unwrap()
+            };
+            let (meats, whole, n_sources) = pool(4).install(|| swept(&cols, kind, None));
+            let pooled = whole.of(Form::Pooled).unwrap();
+            let (finite, nonzero) = (
+                pooled.iter().filter(|v| v.is_finite()).count(),
+                pooled
+                    .iter()
+                    .filter(|v| v.is_finite() && **v != 0.0)
+                    .count(),
+            );
+            assert!(
+                nonzero > finite / 2 && finite > 100,
+                "{kind:?} {nonzero} {finite}"
+            );
+            for (threads, batch) in [(1, None), (3, Some(1)), (1, Some(2)), (8, Some(5))] {
+                let (m, c, s) = pool(threads).install(|| swept(&cols, kind, batch));
+                let what = format!("{kind:?}, {threads} threads, batch {batch:?}");
+                assert!(m == meats, "{what}");
+                assert!(c == whole, "{what}");
+                assert!(batch.is_none() || s > n_sources, "{what}: {s} sources");
+            }
+        }
     }
 
     #[test]
@@ -3378,7 +4025,7 @@ mod tests {
             strata,
             categories.as_deref(),
             DEFAULT_MEMORY_BUDGET_BYTES,
-            false,
+            Se::Off,
         )
     }
 
@@ -3863,7 +4510,7 @@ mod tests {
                 strata,
                 Some(&[code("XX")]),
                 DEFAULT_MEMORY_BUDGET_BYTES,
-                false,
+                Se::Off,
             )
             .unwrap_err()
         };

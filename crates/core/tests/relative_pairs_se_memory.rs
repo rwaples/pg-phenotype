@@ -2,7 +2,7 @@
 //! as every test in the binary shares the counter.
 
 use pg_phenotype_core::assortative::Strata;
-use pg_phenotype_core::relative_pairs::correlation;
+use pg_phenotype_core::relative_pairs::{correlation, Form, Se};
 use pg_phenotype_core::{PedigreeArg, PedigreeInput, Trait, TraitKind};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
@@ -116,11 +116,11 @@ fn generated(founders: usize, generations: i64, seed: u64) -> Columns {
     cols
 }
 
-/// With the SE, a call that passes the budget's checks holds no more heap
-/// than the budget and its inputs (the call's heap without any category:
-/// the validated pedigree, the members' labels and values), at the
-/// smallest budget it passes and at twice that, at one thread and four,
-/// with generation strata and with twelve.
+/// With the SE, and with the covariance, a call that passes the budget's
+/// checks holds no more heap than the budget and its inputs (the call's
+/// heap without any category: the validated pedigree, the members' labels
+/// and values), at the smallest budget it passes and at twice that, at one
+/// thread and four, with generation strata and with twelve.
 #[test]
 fn a_call_with_the_se_stays_within_its_budget() {
     let cols = generated(200, 4, 7);
@@ -164,7 +164,10 @@ fn a_call_with_the_se_stays_within_its_budget() {
             labels,
             known: &known,
         });
-        for threads in [1, 4] {
+        for (threads, se) in [1, 4]
+            .into_iter()
+            .flat_map(|t| [(t, Se::Estimates), (t, Se::Covariance)])
+        {
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
                 .build()
@@ -177,7 +180,7 @@ fn a_call_with_the_se_stays_within_its_budget() {
                         strata,
                         categories,
                         budget as i64,
-                        true,
+                        se,
                     )
                 })
             };
@@ -197,7 +200,13 @@ fn a_call_with_the_se_stays_within_its_budget() {
                     .cells
                     .iter()
                     .any(|c| c.estimates[0].se.is_some_and(|se| se.is_ok())));
-                let what = format!("{kind:?} x{n_traits}, {threads} threads, budget {budget}");
+                let covariance = res.covariance.as_ref().map(|c| c.of(Form::Pooled).unwrap());
+                assert_eq!(
+                    covariance.is_some_and(|m| m.iter().any(|v| v.is_finite() && *v != 0.0)),
+                    se == Se::Covariance
+                );
+                let what =
+                    format!("{kind:?} x{n_traits}, {se:?}, {threads} threads, budget {budget}");
                 assert!(
                     held <= budget + inputs,
                     "{what}: {held} > {budget} + {inputs}"

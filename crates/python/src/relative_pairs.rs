@@ -5,11 +5,12 @@
 
 use crate::crossing::{self, StrataArg, TraitArg};
 use crate::{to_pyerr, PedigreeSource};
+use numpy::PyReadonlyArray1;
 use pg_phenotype_core::ace::{
     self, AceCell, AceRequest, Components, CrudeEstimate, Estimate, Estimator, Pairs,
-    StratifiedEstimate,
+    StratifiedEstimate, Weights,
 };
-use pg_phenotype_core::relative_pairs::{self, Entry};
+use pg_phenotype_core::relative_pairs::{self, Covariance, Entry, Se};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -20,9 +21,11 @@ type HostEntry = (usize, String, Option<Vec<String>>);
 /// The Relative-Pair Correlation of one or two traits, in the pool.  Each entry of
 /// `categories` is `(position, code, None)` or `(position, group name, member
 /// codes)`, `position` its index in the caller's request.  `se` asks for
-/// each estimate's cluster sandwich SE.
+/// each estimate's cluster sandwich SE, and `covariance`, with it, for the
+/// covariance of the estimates the ACE Fit reads.
 #[pyfunction]
-#[pyo3(signature = (pedigree, traits, strata, categories, memory_budget_bytes, se, /))]
+#[pyo3(signature = (pedigree, traits, strata, categories, memory_budget_bytes, se, covariance, /))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn relative_pairs_correlation<'py>(
     py: Python<'py>,
     pedigree: PedigreeSource<'py>,
@@ -31,7 +34,10 @@ pub(crate) fn relative_pairs_correlation<'py>(
     categories: Option<Vec<HostEntry>>,
     memory_budget_bytes: i64,
     se: bool,
+    covariance: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
+    let se = Se::from_flags(se, covariance)
+        .ok_or_else(|| PyValueError::new_err("covariance needs se"))?;
     let pedigree = pedigree.arg()?;
     let traits = traits
         .iter()
@@ -121,9 +127,24 @@ fn named<T>(what: &str, name: &str, parsed: Option<T>) -> PyResult<T> {
         .ok_or_else(|| PyValueError::new_err(format!("{what} {name:?} is not one this fit takes")))
 }
 
-/// The ACE Fit of a result's cells, which the wrapper checked and resolved.
+/// A result's covariance as the wrapper passes it: the pooled, phi and
+/// stratified matrices, each flat and row-major.
+type HostCovariance<'py> = (
+    PyReadonlyArray1<'py, f64>,
+    Option<PyReadonlyArray1<'py, f64>>,
+    Option<PyReadonlyArray1<'py, f64>>,
+);
+
+fn flat(matrix: &PyReadonlyArray1<'_, f64>) -> PyResult<Vec<f64>> {
+    Ok(matrix.as_slice()?.to_vec())
+}
+
+/// The ACE Fit of a result's cells, which the wrapper checked, with the
+/// result's covariance when it has one; `weights` `None` is the core's
+/// default.
 #[pyfunction]
-#[pyo3(signature = (cells, categories, components, shared_environment, estimator, estimate, /))]
+#[pyo3(signature = (cells, categories, components, shared_environment, estimator, estimate, weights, covariance, /))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn relative_pairs_ace<'py>(
     py: Python<'py>,
     cells: Vec<HostCell>,
@@ -132,6 +153,8 @@ pub(crate) fn relative_pairs_ace<'py>(
     shared_environment: Option<Vec<String>>,
     estimator: String,
     estimate: String,
+    weights: Option<String>,
+    covariance: Option<HostCovariance<'py>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let names: Vec<&str> = components.iter().map(String::as_str).collect();
     let request = AceRequest {
@@ -144,12 +167,31 @@ pub(crate) fn relative_pairs_ace<'py>(
         shared_environment,
         estimator: named("estimator", &estimator, Estimator::parse(&estimator))?,
         estimate: named("estimate", &estimate, Estimate::parse(&estimate))?,
+        weights: weights
+            .map(|w| named("weights", &w, Weights::parse(&w)))
+            .transpose()?,
     };
+    let matrices = covariance
+        .map(|(pooled, phi, stratified)| -> PyResult<_> {
+            Ok((
+                flat(&pooled)?,
+                phi.as_ref().map(flat).transpose()?,
+                stratified.as_ref().map(flat).transpose()?,
+            ))
+        })
+        .transpose()?;
     let fit = cells
         .into_iter()
         .map(cell)
         .collect::<Result<Vec<_>, _>>()
-        .and_then(|cells| ace::fit(&cells, &request))
+        .and_then(|cells| {
+            let covariance = matrices
+                .map(|(pooled, phi, stratified)| {
+                    Covariance::new(cells.len(), pooled, phi, stratified)
+                })
+                .transpose()?;
+            ace::fit(&cells, &request, covariance.as_ref())
+        })
         .map_err(|e| to_pyerr(py, e))?;
     crossing::result(py, fit.to_value())
 }
