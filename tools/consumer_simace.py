@@ -50,9 +50,9 @@ def cgroup_peak() -> int | None:
 
 
 def today(df: object, params: dict) -> dict:
+    from simace.analysis.quality.am_relatedness import observed_mate_correlations
+    from simace.analysis.quality.assortative_mating import validate_assortative_mating
     from simace.analysis.stats.correlations import compute_mate_correlation
-    from simace.analysis.validate.am_relatedness import observed_mate_correlations
-    from simace.analysis.validate.assortative_mating import validate_assortative_mating
     from simace.core.pedigree_arrays import PedigreeArrays
 
     stats = compute_mate_correlation(df)
@@ -106,9 +106,9 @@ def planned(df: object, built: bool) -> dict:
 def run(args: argparse.Namespace) -> None:
     # Every path's modules load before the timer, so each run pays the same imports.
     import polars as pl
-    import simace.analysis.stats.correlations
-    import simace.analysis.validate.am_relatedness
-    import simace.analysis.validate.assortative_mating  # noqa: F401
+    import simace.analysis.quality.am_relatedness
+    import simace.analysis.quality.assortative_mating
+    import simace.analysis.stats.correlations  # noqa: F401
     import yaml
 
     import pg_phenotype.assortative

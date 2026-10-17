@@ -67,12 +67,12 @@ def plain(obj: object) -> object:
 
 def scenario(name: str, params: dict) -> dict:
     import polars as pl
+    from simace.analysis.quality.heritability import _validate_parent_offspring
     from simace.analysis.stats.correlations import (
         compute_parent_offspring_affected_corr,
         compute_parent_offspring_corr,
         compute_parent_offspring_corr_by_sex,
     )
-    from simace.analysis.validate.heritability import _validate_parent_offspring
     from simace.core.pedigree_arrays import PedigreeArrays
     from simace.phenotype.models._prevalence import case_status_from_liability
     from simace.simulation.simulate import run_simulation
