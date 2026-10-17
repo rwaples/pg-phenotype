@@ -71,6 +71,37 @@ test_that("se = TRUE adds each estimate's SE and leaves the values alone", {
   expect_identical(c(plain$settings$se, r$settings$se), c(FALSE, TRUE))
 })
 
+test_that("covariance = TRUE gives the estimates' covariance, its diagonal each SE squared, within_person's too", {
+  y <- c(1.0, 0.2, -0.5, 0.7, 0.4, 1.3, -0.8, 0.6, 0.4)
+  plain <- relative_pairs_correlation(ped, list(trait(v), trait(y)), categories = cats, se = TRUE)
+  r <- relative_pairs_correlation(ped, list(trait(v), trait(y)), categories = cats, se = TRUE, covariance = TRUE)
+  expect_null(plain$covariance)
+  expect_identical(c(plain$settings$covariance, r$settings$covariance), c(FALSE, TRUE))
+  expect_identical(r$cells, plain$cells)
+  expect_null(r$covariance$phi)
+  expect_null(r$covariance$stratified)
+  m <- r$covariance$pooled
+  labels <- c(sprintf("%s:%d:%d", rep(c("FS", "MHS"), each = 3L), c(1L, 2L, 1L), c(1L, 2L, 2L)),
+              sprintf("%s:%d:%d", rep(c("PO", "GP"), each = 4L), c(1L, 1L, 2L, 2L), c(1L, 2L, 1L, 2L)),
+              "within_person:1:2")
+  expect_identical(dimnames(m), list(labels, labels))
+  expect_true(isSymmetric(unname(m)))
+  cells <- c(r$cells, list(r$within_person))
+  se <- vapply(cells, function(cell) if (is.null(cell$crude[[1L]]$se)) NaN else cell$crude[[1L]]$se, 0)
+  expect_identical(unname(sqrt(diag(m))), se)
+  none <- is.nan(se)
+  expect_identical(unname(is.nan(m)), outer(none, none, "|"))
+  expect_identical(plain$within_person$crude[[1L]]$se_reason, "within_person")
+  expect_false(identical(r$within_person$crude[[1L]]$se_reason, "within_person"))
+  binary <- relative_pairs_correlation(ped, trait(b, kind = "binary"), categories = cats, stratum = c(0, 0, 1, NA, 2, 2, 2, 2, 1),
+                                       se = TRUE, covariance = TRUE)
+  expect_identical(dim(binary$covariance$phi), c(4L, 4L))
+  expect_identical(dim(binary$covariance$stratified), c(4L, 4L))
+  expect_identical(rownames(binary$covariance$phi), c("FS:1:1", "MHS:1:1", "PO:1:1", "GP:1:1"))
+  expect_pgp_error(relative_pairs_correlation(ped, trait(v), covariance = TRUE), "usage")
+  expect_error(relative_pairs_correlation(ped, trait(v), se = TRUE, covariance = NA))
+})
+
 test_that("print shows each estimate's SE, or why it has none", {
   plain <- relative_pairs_correlation(ped, trait(v), categories = c("FS", "FO"))
   r <- relative_pairs_correlation(ped, trait(v), categories = c("FS", "FO"), se = TRUE)

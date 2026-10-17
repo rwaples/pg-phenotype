@@ -558,6 +558,13 @@ fn person_bytes(n_rows: usize) -> u64 {
         .max(1)
 }
 
+/// The bytes of the smallest plan [`sweeps`] makes: one request at a time,
+/// the largest [`Weights`] and `batch` estimates' person totals.
+pub(super) fn one_sweep(requests: &[(u64, usize)], n_rows: usize, batch: usize) -> u64 {
+    let weights = requests.iter().map(|&(w, _)| w).max().unwrap_or(0);
+    weights.saturating_add(person_bytes(n_rows).saturating_mul(batch as u64))
+}
+
 /// How many requests sweep at once and how many estimates a sweep takes,
 /// in the `free` bytes the pass and the fits leave: each request's
 /// estimates in one sweep, as many requests at once as `free` holds, at

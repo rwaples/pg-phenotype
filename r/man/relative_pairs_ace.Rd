@@ -10,7 +10,8 @@ relative_pairs_ace(
   components = c("A", "C"),
   shared_environment = NULL,
   estimator = "primary",
-  estimate = NULL
+  estimate = NULL,
+  weights = NULL
 )
 }
 \arguments{
@@ -31,19 +32,28 @@ household follows the mother); required with C.}
 \item{estimate}{`"stratified"` reads each cell's stratified fit, `"pooled"`
 its pooled estimate; `NULL` is `"stratified"` when `result` has strata,
 else `"pooled"`.}
+
+\item{weights}{`"pairs"` (each cell's count of what entered it),
+`"inverse_variance"` or `"gls"`; `NULL` is the default: `"pairs"` for phi
+or without the covariance of the estimate read, else `"gls"` per solve,
+`"pairs"` for a solve whose covariance has no Cholesky factor.}
 }
 \value{
 An object of class `pgphenotype_ace`: a list with `traits` (per
   trait, its `trait` counted from 1, `A`, `C` and `E`, each with a
-  `_reason`, `NULL` unless the value is, `not_requested` or
-  `not_identified`, and `rows`, the entries that entered), `cross` (with two
-  traits: `sA`, `sC`, `sE`, `rA`, `rC`, `rE` with their `_reason`, each
-  correlation's `_out_of_range`, and `rows`; `NULL` with one trait), `rows`
-  (every cell considered: `entry`, `first_trait` and `second_trait` counted
-  from 1, `within_person`, `kinship`, `shared`, the `value` read, its
-  `weight` (a symmetric cross-trait cell's `n_entries`, else its `n`),
-  `used` and the `reason` it did not enter), `settings` (the request,
-  `estimate` resolved), `method` and `metadata`.
+  `_reason`, `NULL` unless the value is, `not_requested`, `not_identified`
+  or `covariance_not_positive_definite`, its SE `_se` and the SE's
+  `_se_reason`, `rows`, the entries that entered, and `weights`, the
+  weighting its solve used), `cross` (with two traits: `sA`, `sC`, `sE`,
+  `rA`, `rC`, `rE` with their `_reason`, `_se` and `_se_reason`, each
+  correlation's `_out_of_range`, `rows` and `weights`; `NULL` with one
+  trait), `rows` (every cell considered: `entry`, `first_trait` and
+  `second_trait` counted from 1, `within_person`, `kinship`, `shared`, the
+  `value` read, its `weight` (a symmetric cross-trait cell's `n_entries`,
+  else its `n`), its `variance` from the covariance, `used` and the
+  `reason` it did not enter), `settings` (the request, `estimate`
+  resolved, and `weights` as asked, `"default"` for `NULL`),
+  `method` and `metadata`.
 }
 \description{
 Solves a [relative_pairs_correlation()] result's cells for the additive
@@ -53,12 +63,12 @@ with two traits their cross-trait correlations.  On the correlation scale
 `r = 2 phi A_t + s C_t`, `phi = 2^-(degree+1)` the nominal kinship of its
 categories and `s` 1 for a Shared-Environment Category, else 0; a Category
 Group's members must share both.  Each trait's components are the weighted
-least-squares solution over its same-trait cells, each weighted by the
-unordered pairs that entered the estimate read (the pooled cell's `n`, or
-its `stratified$n`), with `E = 1 - A - C`.  A component not requested is
+least-squares solution over its same-trait cells, under `"pairs"` weights
+each weighted by the unordered pairs that entered the estimate read (the
+pooled cell's `n`, or its `stratified$n`), with `E = 1 - A - C`.  A component not requested is
 fixed at 0.  With two traits the cross-trait cells give
 `r12 = 2 phi sA + s sC` and the within-person cell `r_wp = sA + sC + sE`,
-solved together, a cross-trait cell weighted by its complete orientations so
+solved together, under `"pairs"` a cross-trait cell weighted by its complete orientations so
 each counts once (a symmetric cell's `n_entries` or `stratified$n_entries`,
 a directed cell's `n`) and the within-person cell by its `n`; then `rA = sA / sqrt(A_1 A_2)`, `rC` and `rE` alike.
 Values are as solved, unconstrained: a correlation is `NULL` with
@@ -68,9 +78,42 @@ informs is `not_identified` and left out, so the others are still solved:
 without a shared cell, C is `not_identified` and A is solved alone; without
 a shared cross-trait cell, sC and sE meet only in the within-person cell,
 which is left out, and sA is solved alone.  Otherwise fewer independent
-cells than unknowns gives `not_identified`.  There is no SE.
+cells than unknowns gives `not_identified`.
 }
 \details{
+With `result`'s covariance (`relative_pairs_correlation(..., se = TRUE,
+covariance = TRUE)`), each value has an SE (ADR 0014).  Each solve is
+linear in the cells it reads, `theta = G r`, so a value's SE is
+`sqrt(g Sigma g')`, `g` its row of `G` and `Sigma` the cells' covariance of
+the estimate read; `E` and the cross-trait correlations take the delta
+method through the trait and cross solves together.  Weights are treated
+as fixed.  Without the covariance every SE is `NULL` with `no_covariance`.
+A covariance that is not positive semidefinite in a value's direction gives
+`negative_variance`.
+
+Under `"pairs"` weights a cell with no SE (a tiny cell, or a tetrachoric
+fit at its boundary, as a small MZ cell's often is) still enters, so every
+value that reads it has `row_without_se`: that cell's variance is part of
+the value's, and it is unknown.  To get those SEs, leave the cell out with
+`categories`, or use `"inverse_variance"` or `"gls"`, which leave it out
+(row reason `no_se`).  Phi meets this most, since its default is
+`"pairs"`.
+
+`weights = "inverse_variance"` weighs each cell by `1 / Var(r)` and
+`"gls"` by the inverse of the entered cells' covariance; both need the
+covariance (`missing_covariance`) and leave out a cell with no SE.
+`"gls"` asked for refuses a covariance with no Cholesky factor: the
+solve's values and SEs are `covariance_not_positive_definite`.  The
+default (`NULL`) is `"pairs"` for phi, whose `"inverse_variance"` and
+`"gls"` fits are unreliable at low prevalence, and for a result without the
+covariance of the estimate read, which then fits exactly as before the
+covariance existed.  Otherwise the default fits each trait's solve and the
+cross solve apart: `"gls"` when that solve's entered cells' covariance has
+a Cholesky factor, else `"pairs"` for that solve alone, as small
+pedigrees' covariances often lack one.  Each trait and `cross` record the
+weighting their solve used in `weights`; `settings$weights` records the
+request, `"default"` for `NULL`.
+
 The binary primary estimate, the tetrachoric, is on the liability scale, so
 the shares are too, with no Dempster-Lerner step; `estimator = "phi",
 estimate = "pooled"` reads phi, on the observed scale.  An exactly

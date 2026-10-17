@@ -8,7 +8,7 @@
 //! from 0, R from 1, and the message and the fields count alike.  A pedigree
 //! error takes both from pedigree-graph-core, rendered in the same base.
 
-use crate::ace::Estimator as AceEstimator;
+use crate::ace::{Estimator as AceEstimator, Weights as AceWeights};
 use crate::input::TraitKind;
 use pedigree_graph_core::error::{
     Error as PgError, ErrorClass, FieldValue as PgField, IndexBase as PgIndexBase,
@@ -350,6 +350,15 @@ pub enum Error {
         estimator: AceEstimator,
         entry: String,
     },
+    /// An ACE Fit weighted by the covariance without the result's
+    /// covariance of the estimates it reads.
+    MissingCovariance { weights: AceWeights },
+    /// A covariance matrix that is not the ACE Fit's cells squared.
+    CovarianceShapeMismatch {
+        cells: usize,
+        expected_length: usize,
+        actual_length: usize,
+    },
 }
 
 impl From<PgError> for Error {
@@ -428,6 +437,8 @@ impl Error {
             Error::MixedKinship { .. } => (Validation, "mixed_kinship"),
             Error::NoStratifiedForm { .. } => (Class::Usage, "no_stratified_form"),
             Error::MissingEstimator { .. } => (Class::Usage, "missing_estimator"),
+            Error::MissingCovariance { .. } => (Class::Usage, "missing_covariance"),
+            Error::CovarianceShapeMismatch { .. } => (Validation, "covariance_shape_mismatch"),
         }
     }
 
@@ -627,6 +638,16 @@ impl Error {
             Error::MissingEstimator { estimator, entry } => vec![
                 ("estimator", Str(estimator.name())),
                 ("entry", Text(entry.clone())),
+            ],
+            Error::MissingCovariance { weights } => vec![("weights", Str(weights.name()))],
+            Error::CovarianceShapeMismatch {
+                cells,
+                expected_length,
+                actual_length,
+            } => vec![
+                ("cells", int(*cells)),
+                ("expected_length", int(*expected_length)),
+                ("actual_length", int(*actual_length)),
             ],
         }
     }
@@ -832,6 +853,21 @@ impl fmt::Display for Message<'_> {
                 "entry {entry:?} has no {} estimate",
                 estimator.name()
             ),
+            Error::MissingCovariance { weights } => write!(
+                f,
+                "weights {:?} needs the covariance of the estimates the fit reads: compute the \
+                 Relative-Pair Correlation with se and covariance",
+                weights.name()
+            ),
+            Error::CovarianceShapeMismatch {
+                cells,
+                expected_length,
+                actual_length,
+            } => write!(
+                f,
+                "a covariance matrix of {actual_length} entries does not cover the {cells} cells \
+                 ({expected_length} entries): fit the cells of the result the covariance is from"
+            ),
         }
     }
 }
@@ -854,7 +890,7 @@ mod tests {
     use super::*;
 
     /// How many variants `Error` has.
-    const VARIANTS: usize = 40;
+    const VARIANTS: usize = 42;
 
     /// Each variant's number, so `samples` can be checked to hold every
     /// variant: a new variant does not compile until it has an arm here.
@@ -900,6 +936,8 @@ mod tests {
             Error::NoStratifiedForm { .. } => 37,
             Error::MissingEstimator { .. } => 38,
             Error::MixedTraitKinds { .. } => 39,
+            Error::MissingCovariance { .. } => 40,
+            Error::CovarianceShapeMismatch { .. } => 41,
         }
     }
 
@@ -1086,6 +1124,14 @@ mod tests {
             },
             Error::MixedTraitKinds {
                 kinds: [TraitKind::Continuous, TraitKind::Binary],
+            },
+            Error::MissingCovariance {
+                weights: AceWeights::Gls,
+            },
+            Error::CovarianceShapeMismatch {
+                cells: 5,
+                expected_length: 25,
+                actual_length: 16,
             },
         ]
     }

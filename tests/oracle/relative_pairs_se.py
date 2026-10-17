@@ -10,6 +10,13 @@ a symmetric cross-trait pair complete in one orientation count once, as the
 point estimate counts it; a pair with both orientations is the pair-level
 formula.
 
+:func:`cross_meat` joins two estimates' entries over the same three keys,
+the covariance of their estimates (ADR 0014); :func:`brute_cross` is its
+definition, every two entries that share an MRCA or a member.
+:func:`kin_meat` is the Within-Person cell's meat, the kinship kernel over
+its rows' relative pairs of degree at most 2 (:data:`KERNEL`), and
+:func:`within_person_psi` its estimates' influences per row.
+
 ``tools/relative_pairs_se_calibration.py`` imports these too.
 """
 
@@ -17,10 +24,14 @@ from __future__ import annotations
 
 import itertools
 import math
+from typing import NamedTuple
 
 import numpy as np
 from pedigree_graph import RELATIONSHIPS
 from scipy.special import ndtr, ndtri
+
+#: The Within-Person kernel's categories, those of degree at most 2: the WP prototype's ``kin2``.
+KERNEL = tuple(code for code, category in RELATIONSHIPS.items() if category.degree <= 2)
 
 
 def degenerate(entries: int) -> float:
@@ -72,6 +83,67 @@ def _group_sq(keys: np.ndarray, w: np.ndarray) -> float:
     starts = np.flatnonzero(np.r_[True, k[1:] != k[:-1]])
     sums = np.add.reduceat(w[order], starts)
     return float(sums @ sums)
+
+
+def _group_sums(keys: np.ndarray, w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Each distinct key, ascending, and the sum of w at it, by sort."""
+    order = np.argsort(keys, kind="stable")
+    k = keys[order]
+    starts = np.flatnonzero(np.r_[True, k[1:] != k[:-1]])
+    return k[starts], np.add.reduceat(w[order], starts)
+
+
+def _group_dot(keys_j: np.ndarray, w_j: np.ndarray, keys_k: np.ndarray, w_k: np.ndarray) -> float:
+    """Σ over the keys both hold of (Σ w_j at it)(Σ w_k at it), by sort."""
+    if len(keys_j) == 0 or len(keys_k) == 0:
+        return 0.0
+    (kj, sj), (kk, sk) = _group_sums(keys_j, w_j), _group_sums(keys_k, w_k)
+    _, at_j, at_k = np.intersect1d(kj, kk, assume_unique=True, return_indices=True)
+    return float(sj[at_j] @ sk[at_k])
+
+
+class Units(NamedTuple):
+    """One estimate's entries: each one's influence (already over the entries), its members (both of a
+    relative pair's, as two arrays; a within-person entry's one), and its pair's MRCA (``None`` within
+    person, an entry its own cluster)."""
+
+    psi: np.ndarray
+    members: tuple[np.ndarray, ...]
+    mrca: np.ndarray | None
+
+
+def cross_meat(j: Units, k: Units) -> float:
+    """Cov of two estimates over their entries: ``Σ_m Φ_jm Φ_km + Σ_i S_ji S_ki − Σ_(i,m) S_j(i,m) S_k(i,m)``.
+
+    The SE's ``mrca_person`` meat (:func:`meats`) when *j* is *k*: an entry of each adds ψ_e ψ_f once when
+    they share an MRCA or a member.  A within-person estimate has no MRCA, so it joins on members alone.
+    """
+
+    def by_member(u: Units, key) -> tuple[np.ndarray, np.ndarray]:
+        return np.concatenate([key(i) for i in u.members]), np.tile(u.psi, len(u.members))
+
+    person = _group_dot(*by_member(j, lambda i: i), *by_member(k, lambda i: i))
+    if j.mrca is None or k.mrca is None:
+        return person
+    stride = int(max(j.mrca.max(initial=0), k.mrca.max(initial=0))) + 1
+    cluster = _group_dot(j.mrca, j.psi, k.mrca, k.psi)
+    group = _group_dot(*by_member(j, lambda i: i * stride + j.mrca), *by_member(k, lambda i: i * stride + k.mrca))
+    return cluster + person - group
+
+
+def brute_cross(j: Units, k: Units) -> float:
+    """:func:`cross_meat` by its definition: Σ ψ_e ψ_f over every entry e of *j* and f of *k* that share an
+    MRCA or a member, each two once."""
+    total = 0.0
+    for e in range(len(j.psi)):
+        hit = np.zeros(len(k.psi), dtype=bool)
+        if j.mrca is not None and k.mrca is not None:
+            hit |= k.mrca == j.mrca[e]
+        for i in j.members:
+            for other in k.members:
+                hit |= other == i[e]
+        total += j.psi[e] * float(k.psi[hit].sum())
+    return total
 
 
 def meats(phi: np.ndarray, a: np.ndarray, b: np.ndarray, g: np.ndarray, m: np.ndarray) -> dict[str, float]:
@@ -161,3 +233,69 @@ def top_keys(
     # Founder MZ twins have no parents: such a pair is its own cluster under both keys.
     lone = top < 0
     return np.where(lone, net.max() + 1 + a, net[top]), np.where(lone, len(mother) + a, mrca)
+
+
+def kin_meat(psi: np.ndarray, on: np.ndarray, pairs: list[tuple[np.ndarray, np.ndarray]]) -> tuple[float, float, int]:
+    """The Within-Person meat ``Σ_i ψ_i² + 2 Σ_(a<b) ψ_a ψ_b``, its scale and its entries.
+
+    *psi* is each row's influence over the entries, the rows *on*, 0 off them; *pairs* each kernel
+    category's relative pairs (rows a, b), each listed once.  The scale is the meat had each of the n
+    entries the influence 1/n: ``(n + 2P) / n²`` over the P pairs whose rows are both entries.
+    """
+    n = int(on.sum())
+    meat = float(psi @ psi) + 2 * sum(float(psi[a] @ psi[b]) for a, b in pairs)
+    both = sum(int((on[a] & on[b]).sum()) for a, b in pairs)
+    return meat, (n + 2 * both) / n**2, n
+
+
+def within_person_psi(
+    x: np.ndarray, y: np.ndarray, kind: str, stratum: np.ndarray | None, tetrachoric
+) -> dict[tuple[object, str], tuple[float, np.ndarray, np.ndarray] | None]:
+    """Each Within-Person estimate, its influence per row over its entries (0 off them) and its rows;
+    ``None`` at a tetrachoric bound.
+
+    Keyed ``(scope, estimator)``: scope ``"pooled"`` (every row both traits show), each known stratum label
+    (its rows), and with continuous traits ``"stratified"`` (the rows of known strata, each trait
+    standardised within its stratum: ψ = z₁z₂ − r_s/2 (z₁² + z₂²) + r_s − r).  *tetrachoric* maps a 2 x 2
+    table to its fit's ``(value, boundary)``.
+    """
+    n = len(x)
+    both = ~np.isnan(x) & ~np.isnan(y)
+    scopes: list[tuple[object, np.ndarray]] = [("pooled", both)]
+    if stratum is not None:
+        scopes += [(float(s), both & (stratum == s)) for s in np.unique(stratum[~np.isnan(stratum)])]
+    out: dict[tuple[object, str], tuple[float, np.ndarray, np.ndarray] | None] = {}
+    for scope, rows in scopes:
+        a, b = x[rows], y[rows]
+        fits: dict[str, tuple[float, np.ndarray] | None] = {}
+        if kind == "continuous":
+            fits["pearson"] = pearson_if(a, b)
+        else:
+            ai, bi = a.astype(np.int64), b.astype(np.int64)
+            t = np.zeros((2, 2), dtype=np.int64)
+            np.add.at(t, (ai, bi), 1)
+            value, boundary = tetrachoric(t)
+            defined = value is not None and not boundary
+            fits["tetrachoric"] = (value, tetrachoric_if(t.astype(float), value)[ai, bi]) if defined else None
+            fits["phi"] = pearson_if(a, b)
+        for est, fit in fits.items():
+            if fit is None:
+                out[scope, est] = None
+                continue
+            psi = np.zeros(n)
+            psi[rows] = fit[1] / rows.sum()
+            out[scope, est] = (fit[0], psi, rows)
+    if kind == "continuous" and stratum is not None:
+        rows = both & ~np.isnan(stratum)
+        z = [np.zeros(n), np.zeros(n)]
+        r_s = np.zeros(n)
+        for s in np.unique(stratum[rows]):
+            at = rows & (stratum == s)
+            for side, v in enumerate((x, y)):
+                z[side][at] = (v[at] - v[at].mean()) / v[at].std()
+            r_s[at] = (z[0][at] @ z[1][at]) / at.sum()
+        r = float(z[0][rows] @ z[1][rows]) / rows.sum()
+        psi = np.zeros(n)
+        psi[rows] = (z[0] * z[1] - r_s / 2 * (z[0] ** 2 + z[1] ** 2) + r_s - r)[rows] / rows.sum()
+        out["stratified", "pearson"] = (r, psi, rows)
+    return out

@@ -5,18 +5,30 @@
 //! expects `r_k = 2 phi_k A_t + s_k C_t`, with `phi_k = 2^-(degree+1)` the
 //! nominal kinship of its categories and `s_k = 1` for a Shared-Environment
 //! Category, else 0.  Each trait's unknowns are the weighted least-squares
-//! solution over its same-trait cells, weight the cell's `n`; `E = 1 - A - C`.
-//! Two traits add the cross solve over the cross-trait cells,
-//! `r12_k = 2 phi_k sA + s_k sC`, and the Within-Person Cross-Trait
-//! Correlation, `r_wp = sA + sC + sE`; then `rA = sA / sqrt(A_1 A_2)` and so
-//! on.  A cross-trait cell weighs its complete orientations, so each counts
-//! once: a symmetric cell's `n_entries`, a directed cell's `n` (one
-//! orientation per cell).  Values are as solved, with no constraint.
+//! solution over its same-trait cells; `E = 1 - A - C`.  Two traits add the
+//! cross solve over the cross-trait cells, `r12_k = 2 phi_k sA + s_k sC`,
+//! and the Within-Person Cross-Trait Correlation, `r_wp = sA + sC + sE`;
+//! then `rA = sA / sqrt(A_1 A_2)` and so on.  Pairs weights weigh a
+//! same-trait cell by its `n` and a cross-trait cell by its complete
+//! orientations, so each counts once: a symmetric cell's `n_entries`, a
+//! directed cell's `n` (one orientation per cell).  Values are as solved,
+//! with no constraint.
+//!
+//! Given the result's covariance `Σ` of the cells (ADR 0014), each solve is
+//! linear in the cells it reads, `θ = G r` with `G = X̃⁺ T` (`T` the
+//! whitening, `TᵀT` the weights, `X̃ = T X`), so a value's SE is
+//! `sqrt(g Σ gᵀ)`, `g` its row of `G` over the cells; E and the cross-trait
+//! correlations take the gradient through those rows (the delta method).
+//! The rows of every solve index one `Σ`, so the trait and cross solves'
+//! covariance enters `rA`, `rC` and `rE` with no special case.
 //!
 //! The function is pure over cell rows as a host holds them, so a host
 //! passes the cells of the result it already has.
 
+mod linear;
+
 use crate::error::{Error, Position};
+use crate::relative_pairs::{Covariance, Form};
 use crate::value::Value;
 use pedigree_graph_core::relationships::{Category, CategorySet};
 
@@ -103,6 +115,33 @@ impl Estimate {
     }
 }
 
+/// How the rows of a solve are weighted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Weights {
+    /// What entered each row's estimate, counted once.
+    Pairs,
+    /// Each row's `1 / Var(r_k)`, from the covariance's diagonal.
+    InverseVariance,
+    /// The inverse of the covariance of the rows that entered.
+    Gls,
+}
+
+impl Weights {
+    pub fn name(self) -> &'static str {
+        match self {
+            Weights::Pairs => "pairs",
+            Weights::InverseVariance => "inverse_variance",
+            Weights::Gls => "gls",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Weights> {
+        [Weights::Pairs, Weights::InverseVariance, Weights::Gls]
+            .into_iter()
+            .find(|w| w.name() == name)
+    }
+}
+
 /// Whose values a cell correlates.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pairs {
@@ -185,9 +224,15 @@ pub struct AceRequest {
     pub estimator: Estimator,
     /// The host resolves its default before the call.
     pub estimate: Estimate,
+    /// The weighting of every solve; `None` is the default (ADR 0014):
+    /// [`Weights::Pairs`] for phi or without the covariance of the form
+    /// read, else per fit [`Weights::Gls`] when the fit's entered rows'
+    /// block of the covariance has a Cholesky factor and pairs when it has
+    /// none.  Each fit records the weighting it used.
+    pub weights: Option<Weights>,
 }
 
-/// Why a fitted value is undefined.
+/// Why a fitted value or its SE is undefined.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
     /// The component is not among those requested.
@@ -196,6 +241,16 @@ pub enum Reason {
     NotIdentified,
     /// A cross-trait correlation's component is <= 0 in a trait.
     NonpositiveComponent,
+    /// GLS: the covariance of the rows that entered has no Cholesky factor,
+    /// so the solve's values and SEs are undefined.
+    CovarianceNotPositiveDefinite,
+    /// An SE without the result's covariance of the form read.
+    NoCovariance,
+    /// An SE that reads a row with no SE (pairs weights).
+    RowWithoutSe,
+    /// An SE whose `g Σ gᵀ` is negative: the covariance is not positive
+    /// semidefinite in that direction.
+    NegativeVariance,
 }
 
 impl Reason {
@@ -204,6 +259,10 @@ impl Reason {
             Reason::NotRequested => "not_requested",
             Reason::NotIdentified => "not_identified",
             Reason::NonpositiveComponent => "nonpositive_component",
+            Reason::CovarianceNotPositiveDefinite => "covariance_not_positive_definite",
+            Reason::NoCovariance => "no_covariance",
+            Reason::RowWithoutSe => "row_without_se",
+            Reason::NegativeVariance => "negative_variance",
         }
     }
 }
@@ -229,34 +288,49 @@ pub struct Row {
     pub second_trait: usize,
     pub kind: RowKind,
     /// The value the fit reads; an undefined one names why, and the row is
-    /// left out.
+    /// left out.  A solve weighted by the covariance leaves out a row with
+    /// no `variance` as `no_se`.
     pub value: Result<f64, String>,
     /// The estimate's `n_entries` where it has one (a symmetric
     /// cross-trait cell's complete orientations), else its `n`.
     pub weight: u64,
+    /// The estimate's variance, the covariance's diagonal entry; `None`
+    /// without the covariance or where the estimate has no SE.
+    pub variance: Option<f64>,
+}
+
+/// A solved value and its SE, or why the SE is undefined.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Solved {
+    pub value: f64,
+    pub se: Result<f64, Reason>,
 }
 
 /// One trait's shares.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TraitFit {
-    pub a: Result<f64, Reason>,
-    pub c: Result<f64, Reason>,
-    pub e: Result<f64, Reason>,
+    pub a: Result<Solved, Reason>,
+    pub c: Result<Solved, Reason>,
+    pub e: Result<Solved, Reason>,
     /// Indices into [`AceFit::rows`] of the rows that entered.
     pub rows: Vec<usize>,
+    /// The weighting its solve used.
+    pub weights: Weights,
 }
 
 /// The cross-trait covariances and correlations of two traits.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CrossFit {
-    pub s_a: Result<f64, Reason>,
-    pub s_c: Result<f64, Reason>,
-    pub s_e: Result<f64, Reason>,
-    pub r_a: Result<f64, Reason>,
-    pub r_c: Result<f64, Reason>,
-    pub r_e: Result<f64, Reason>,
+    pub s_a: Result<Solved, Reason>,
+    pub s_c: Result<Solved, Reason>,
+    pub s_e: Result<Solved, Reason>,
+    pub r_a: Result<Solved, Reason>,
+    pub r_c: Result<Solved, Reason>,
+    pub r_e: Result<Solved, Reason>,
     /// Indices into [`AceFit::rows`] of the rows that entered.
     pub rows: Vec<usize>,
+    /// The weighting the cross solve used.
+    pub weights: Weights,
 }
 
 /// The result of [`fit`].
@@ -271,44 +345,76 @@ pub struct AceFit {
     pub request: AceRequest,
 }
 
-const METHOD: [(&str, &str); 6] = [
-    (
-        "model",
-        "correlation scale, each trait's variance 1: r_k = 2 phi_k A + s_k C over a trait's \
-         same-trait cells; with two traits r12_k = 2 phi_k sA + s_k sC over the cross-trait \
-         cells and r_wp = sA + sC + sE within person. phi_k = 2^-(degree+1), the nominal \
-         kinship; s_k = 1 for a Shared-Environment Category, else 0. Components not requested \
-         are fixed at 0",
-    ),
-    (
-        "weights",
-        "what entered the estimate read, the pooled cell or the stratified form: a same-trait \
-         row's n (unordered pairs) and the within-person row's n (rows); a cross-trait row's \
-         complete orientations, each once: a symmetric cell's n_entries, a directed cell's n",
-    ),
-    (
-        "solve",
-        "weighted least squares by Householder QR with column pivoting of the sqrt(weight)-scaled \
-         design, rows sorted by decreasing largest entry; a requested component zero in every \
-         row that entered is not_identified and left out of the solve; in the cross solve, sC \
-         zero in every relative row leaves sC and sE to the within-person row alone, so both are \
-         not_identified and that row is left out; any other rank deficiency is not_identified for \
-         the solve's unknowns; values unconstrained",
-    ),
-    ("E", "the remainder: E = 1 - A - C"),
-    (
-        "cross",
-        "rA = sA / sqrt(A_1 A_2), rC = sC / sqrt(C_1 C_2), rE = sE / sqrt(E_1 E_2); \
-         nonpositive_component when a trait's component is <= 0; |r| > 1 is flagged out_of_range. \
-         sE needs the within-person cell",
-    ),
-    ("se", "none"),
-];
+/// How the fit was computed, as the tree's `method` reports it.
+fn method(request: &AceRequest) -> [(&'static str, &'static str); 6] {
+    let weights = match request.weights {
+        None => {
+            "default: pairs for phi or without the result's covariance of the estimates read; \
+             else gls for each fit (each trait's and the cross solve) whose entered rows' \
+             covariance has a Cholesky factor, and pairs for a fit whose has none; each fit's \
+             weights records the weighting it used"
+        }
+        Some(Weights::Pairs) => {
+            "pairs: what entered the estimate read, the pooled cell or the stratified form: a \
+             same-trait row's n (unordered pairs) and the within-person row's n (rows); a \
+             cross-trait row's complete orientations, each once: a symmetric cell's n_entries, a \
+             directed cell's n"
+        }
+        Some(Weights::InverseVariance) => {
+            "inverse_variance: each row's 1 / Var(r_k), the diagonal of the result's covariance \
+             of the estimates read; a row without an SE is left out (no_se)"
+        }
+        Some(Weights::Gls) => {
+            "gls: the inverse of the result's covariance of the estimates of the rows that \
+             entered a solve, through its Cholesky factor L (rows whitened by L^-1); a row \
+             without an SE is left out (no_se); a covariance with no Cholesky factor leaves the \
+             solve's values and SEs covariance_not_positive_definite"
+        }
+    };
+    [
+        (
+            "model",
+            "correlation scale, each trait's variance 1: r_k = 2 phi_k A + s_k C over a trait's \
+             same-trait cells; with two traits r12_k = 2 phi_k sA + s_k sC over the cross-trait \
+             cells and r_wp = sA + sC + sE within person. phi_k = 2^-(degree+1), the nominal \
+             kinship; s_k = 1 for a Shared-Environment Category, else 0. Components not \
+             requested are fixed at 0",
+        ),
+        ("weights", weights),
+        (
+            "solve",
+            "least squares by Householder QR with column pivoting of the whitened design (each \
+             row scaled by sqrt(weight), or under gls premultiplied by L^-1), rows sorted by \
+             decreasing largest entry; a requested component zero in every row that entered is \
+             not_identified and left out of the solve; in the cross solve, sC zero in every \
+             relative row leaves sC and sE to the within-person row alone, so both are \
+             not_identified and that row is left out; any other rank deficiency is \
+             not_identified for the solve's unknowns; values unconstrained",
+        ),
+        ("E", "the remainder: E = 1 - A - C"),
+        (
+            "cross",
+            "rA = sA / sqrt(A_1 A_2), rC = sC / sqrt(C_1 C_2), rE = sE / sqrt(E_1 E_2); \
+             nonpositive_component when a trait's component is <= 0; |r| > 1 is flagged \
+             out_of_range. sE needs the within-person cell",
+        ),
+        (
+            "se",
+            "G Sigma G', G the solve's linear map of the cells read and Sigma their covariance \
+             (ADR 0014): a value's SE is sqrt(g Sigma g') over its row g; E and the cross-trait \
+             correlations by the delta method through the stacked solves; weights treated as \
+             fixed; none without the result's covariance (no_covariance); row_without_se when g \
+             reads a row with no SE (pairs weights); negative_variance when g Sigma g' < 0",
+        ),
+    ]
+}
 
 /// The ACE Fit of `cells`, one cell row each, as `request` asks.
 ///
 /// A cell whose selected value is undefined (`n` = 0 included) does not
-/// enter; its row names the reason.
+/// enter; its row names the reason.  `covariance`, the result's
+/// ([`crate::relative_pairs::RelativePairCorrelation::covariance`]), indexes
+/// `cells` in order; without it every SE is `no_covariance`.
 ///
 /// # Errors
 ///
@@ -318,8 +424,15 @@ const METHOD: [(&str, &str); 6] = [
 /// `unknown_entry` (a `categories` name no cell has); then over the
 /// entries that enter: `empty_category_group`, `mixed_kinship`,
 /// `mixed_shared_environment`, `missing_estimator`; and
-/// `no_stratified_form` when stratified and none has a stratified form.
-pub fn fit(cells: &[AceCell], request: &AceRequest) -> Result<AceFit, Error> {
+/// `no_stratified_form` when stratified and none has a stratified form;
+/// then `covariance_shape_mismatch` (a covariance not over `cells`) and
+/// `missing_covariance` (inverse-variance or GLS weights asked for without
+/// the covariance of the form read).
+pub fn fit(
+    cells: &[AceCell],
+    request: &AceRequest,
+    covariance: Option<&Covariance>,
+) -> Result<AceFit, Error> {
     let top = cells
         .iter()
         .map(|c| c.first_trait.max(c.second_trait))
@@ -359,7 +472,7 @@ pub fn fit(cells: &[AceCell], request: &AceRequest) -> Result<AceFit, Error> {
                     .is_none_or(|n| n.contains(&c.name))
         })
         .collect();
-    let rows = candidates
+    let mut rows = candidates
         .iter()
         .map(|&(i, c)| row(c, i, request, shared.as_ref()))
         .collect::<Result<Vec<Row>, Error>>()?;
@@ -370,14 +483,184 @@ pub fn fit(cells: &[AceCell], request: &AceRequest) -> Result<AceFit, Error> {
             estimator: Estimator::Primary,
         });
     }
+    let sigma = sigma(cells.len(), request, covariance)?;
+    let rule = rule(request, sigma)?;
+    for (row, &(i, _)) in rows.iter_mut().zip(&candidates) {
+        row.variance = sigma.and_then(|s| s.variance(i));
+    }
+    let problem = Problem {
+        rows: &rows,
+        slots: candidates.iter().map(|&(i, _)| i).collect(),
+        width: if sigma.is_some() { cells.len() } else { 0 },
+    };
     let components = request.components;
-    let traits: Vec<TraitFit> = (0..=top).map(|t| trait_fit(&rows, t, components)).collect();
-    let cross = (top == 1).then(|| cross_fit(&rows, &traits, components));
+    let parts: Vec<(TraitParts, Weighting)> = (0..=top)
+        .map(|t| rule.run(|w| trait_fit(&problem, w, t, components), |p| &p.shares))
+        .collect();
+    let cross = (top == 1).then(|| {
+        let traits: Vec<&TraitParts> = parts.iter().map(|(p, _)| p).collect();
+        rule.run(
+            |w| cross_fit(&problem, w, &traits, components),
+            |p| &p.covariances,
+        )
+    });
+    let solved_by = |row: &Row| match &cross {
+        Some((_, w)) if in_cross(row) => *w,
+        _ => parts[row.first_trait].1,
+    };
+    for row in &mut rows {
+        if row.value.is_ok() && !takes(solved_by(row), row) {
+            row.value = Err("no_se".to_string());
+        }
+    }
+    let se = |q: Quantity| q.map(|l| l.solved(sigma));
+    let traits = parts
+        .into_iter()
+        .map(|(p, w)| {
+            let [a, c, e] = p.shares;
+            TraitFit {
+                a: se(a),
+                c: se(c),
+                e: se(e),
+                rows: p.rows,
+                weights: w.weights(),
+            }
+        })
+        .collect();
+    let cross = cross.map(|(p, w)| {
+        let [s_a, s_c, s_e] = p.covariances;
+        let [r_a, r_c, r_e] = p.correlations;
+        CrossFit {
+            s_a: se(s_a),
+            s_c: se(s_c),
+            s_e: se(s_e),
+            r_a: se(r_a),
+            r_c: se(r_c),
+            r_e: se(r_e),
+            rows: p.rows,
+            weights: w.weights(),
+        }
+    });
     Ok(AceFit {
         traits,
         cross,
         rows,
         request: request.clone(),
+    })
+}
+
+/// The covariance of the form a fit reads: `n x n`, row-major, by cell.
+#[derive(Clone, Copy)]
+struct Sigma<'a> {
+    n: usize,
+    matrix: &'a [f64],
+}
+
+impl Sigma<'_> {
+    fn at(self, i: usize, j: usize) -> f64 {
+        self.matrix[i * self.n + j]
+    }
+
+    /// Cell `i`'s variance; `None` where its estimate has no SE (NaN), or
+    /// none a weight can take.
+    fn variance(self, i: usize) -> Option<f64> {
+        Some(self.at(i, i)).filter(|v| *v > 0.0)
+    }
+}
+
+/// The weighting of a solve, with the covariance it reads.
+#[derive(Clone, Copy)]
+enum Weighting<'a> {
+    Pairs,
+    InverseVariance(Sigma<'a>),
+    Gls(Sigma<'a>),
+}
+
+impl Weighting<'_> {
+    fn weights(self) -> Weights {
+        match self {
+            Weighting::Pairs => Weights::Pairs,
+            Weighting::InverseVariance(_) => Weights::InverseVariance,
+            Weighting::Gls(_) => Weights::Gls,
+        }
+    }
+}
+
+/// How each fit's solve is weighted.
+#[derive(Clone, Copy)]
+enum Rule<'a> {
+    /// The one weighting of every solve.
+    Every(Weighting<'a>),
+    /// The default with the covariance read: GLS, and pairs for a fit
+    /// whose entered rows' covariance has no Cholesky factor.
+    GlsElsePairs(Sigma<'a>),
+}
+
+impl<'a> Rule<'a> {
+    /// A fit under this rule, with the weighting it used.  `unknowns` reads
+    /// the fit's solved unknowns, which GLS refuses together.
+    fn run<T>(
+        self,
+        fit: impl Fn(Weighting<'a>) -> T,
+        unknowns: impl Fn(&T) -> &[Quantity; 3],
+    ) -> (T, Weighting<'a>) {
+        let weighting = match self {
+            Rule::Every(weighting) => weighting,
+            Rule::GlsElsePairs(sigma) => Weighting::Gls(sigma),
+        };
+        let out = fit(weighting);
+        let refused = unknowns(&out)
+            .iter()
+            .any(|q| matches!(q, Err(Reason::CovarianceNotPositiveDefinite)));
+        match self {
+            Rule::GlsElsePairs(_) if refused => (fit(Weighting::Pairs), Weighting::Pairs),
+            _ => (out, weighting),
+        }
+    }
+}
+
+/// The covariance of the form the request reads, when `covariance` has it.
+///
+/// # Errors
+///
+/// `covariance_shape_mismatch` for a covariance not over `cells` cells.
+fn sigma<'a>(
+    cells: usize,
+    request: &AceRequest,
+    covariance: Option<&'a Covariance>,
+) -> Result<Option<Sigma<'a>>, Error> {
+    if let Some(covariance) = covariance.filter(|c| c.n() != cells) {
+        return Err(Error::CovarianceShapeMismatch {
+            cells,
+            expected_length: cells.saturating_mul(cells),
+            actual_length: covariance.n().saturating_mul(covariance.n()),
+        });
+    }
+    let form = match (request.estimate, request.estimator) {
+        (Estimate::Stratified, _) => Form::Stratified,
+        (Estimate::Pooled, Estimator::Primary) => Form::Pooled,
+        (Estimate::Pooled, Estimator::Phi) => Form::Phi,
+    };
+    Ok(covariance
+        .and_then(|c| c.of(form))
+        .map(|matrix| Sigma { n: cells, matrix }))
+}
+
+/// The request's rule over the covariance of the form read.
+///
+/// # Errors
+///
+/// `missing_covariance` for weights other than pairs without that
+/// covariance.
+fn rule<'a>(request: &AceRequest, sigma: Option<Sigma<'a>>) -> Result<Rule<'a>, Error> {
+    Ok(match (request.weights, sigma) {
+        (None, Some(sigma)) if request.estimator == Estimator::Primary => Rule::GlsElsePairs(sigma),
+        (None | Some(Weights::Pairs), _) => Rule::Every(Weighting::Pairs),
+        (Some(Weights::InverseVariance), Some(sigma)) => {
+            Rule::Every(Weighting::InverseVariance(sigma))
+        }
+        (Some(Weights::Gls), Some(sigma)) => Rule::Every(Weighting::Gls(sigma)),
+        (Some(weights), None) => return Err(Error::MissingCovariance { weights }),
     })
 }
 
@@ -467,7 +750,177 @@ fn row(
         kind,
         value,
         weight,
+        variance: None,
     })
+}
+
+/// A value and its coefficients over the cells: its row of a solve's
+/// linear map, or its gradient through such rows.
+#[derive(Clone, Debug)]
+struct Linear {
+    value: f64,
+    g: Vec<f64>,
+    /// A bound on `g`'s rounding: an entry no larger is indistinguishable
+    /// from an exact zero.  A solve's row has `m eps max|g|`, the bound
+    /// [`linear::least_squares`] puts on its rank; E and the ratios carry
+    /// their operands' bounds.  Within-person against sA is such a zero.
+    noise: f64,
+}
+
+impl Linear {
+    fn zero(cells: usize) -> Linear {
+        Linear {
+            value: 0.0,
+            g: vec![0.0; cells],
+            noise: 0.0,
+        }
+    }
+
+    /// The value with its SE, `sqrt(g Σ gᵀ)` over `g`'s support: a cell
+    /// with no SE is NaN in `Σ`, and `NaN * 0` would reach every value.
+    fn solved(self, sigma: Option<Sigma<'_>>) -> Solved {
+        let se = sigma.ok_or(Reason::NoCovariance).and_then(|sigma| {
+            let support: Vec<usize> = (0..self.g.len())
+                .filter(|&i| self.g[i].abs() > self.noise)
+                .collect();
+            let variance: f64 = support
+                .iter()
+                .map(|&i| {
+                    let row: f64 = support.iter().map(|&j| sigma.at(i, j) * self.g[j]).sum();
+                    self.g[i] * row
+                })
+                .sum();
+            if variance.is_nan() {
+                Err(Reason::RowWithoutSe)
+            } else if variance < 0.0 {
+                Err(Reason::NegativeVariance)
+            } else {
+                Ok(variance.sqrt())
+            }
+        });
+        Solved {
+            value: self.value,
+            se,
+        }
+    }
+}
+
+/// A solved unknown or a function of solved unknowns, or why it is
+/// undefined.
+type Quantity = Result<Linear, Reason>;
+
+/// What every solve of one fit reads.
+struct Problem<'a> {
+    rows: &'a [Row],
+    /// Each row's cell: its index in the fit's `cells` and the covariance.
+    slots: Vec<usize>,
+    /// The length of each value's `g`: the cells with the covariance, 0
+    /// without, when no SE reads it.
+    width: usize,
+}
+
+/// A row-scaling `T` of a solve's rows, `TᵀT` its weights.
+enum Whitening {
+    Diagonal(Vec<f64>),
+    /// Lower-triangular, row-major.
+    Lower(Vec<f64>),
+}
+
+impl Whitening {
+    /// `T v`.
+    fn apply(&self, v: &[f64]) -> Vec<f64> {
+        match self {
+            Whitening::Diagonal(d) => d.iter().zip(v).map(|(d, v)| d * v).collect(),
+            Whitening::Lower(t) => {
+                let m = v.len();
+                (0..m)
+                    .map(|i| (0..=i).map(|j| t[i * m + j] * v[j]).sum())
+                    .collect()
+            }
+        }
+    }
+
+    /// `T`'s columns.
+    fn columns(&self, m: usize) -> impl Iterator<Item = Vec<f64>> + '_ {
+        (0..m).map(move |j| match self {
+            Whitening::Diagonal(d) => (0..m).map(|i| if i == j { d[j] } else { 0.0 }).collect(),
+            Whitening::Lower(t) => (0..m).map(|i| t[i * m + j]).collect(),
+        })
+    }
+}
+
+impl Problem<'_> {
+    /// The whitening of the rows `entered` under `weighting`.
+    fn whitening(&self, weighting: Weighting, entered: &[usize]) -> Result<Whitening, Reason> {
+        let slot = |i: usize| self.slots[entered[i]];
+        Ok(match weighting {
+            Weighting::Pairs => Whitening::Diagonal(
+                entered
+                    .iter()
+                    .map(|&i| (self.rows[i].weight as f64).sqrt())
+                    .collect(),
+            ),
+            Weighting::InverseVariance(sigma) => Whitening::Diagonal(
+                (0..entered.len())
+                    .map(|i| 1.0 / sigma.at(slot(i), slot(i)).sqrt())
+                    .collect(),
+            ),
+            Weighting::Gls(sigma) => {
+                let m = entered.len();
+                let block: Vec<f64> = (0..m * m)
+                    .map(|x| sigma.at(slot(x / m), slot(x % m)))
+                    .collect();
+                let l = linear::cholesky(&block, m).ok_or(Reason::CovarianceNotPositiveDefinite)?;
+                Whitening::Lower(linear::lower_inverse(&l, m))
+            }
+        })
+    }
+
+    /// The least-squares solution under `weighting` over `entered` of the
+    /// present `columns`, each present column's value and its row of
+    /// `G = X̃⁺ T` scattered to the cells (with the covariance), in column
+    /// order; or why there is none.  Pairs weights take the operations of
+    /// the fit before the SE, so their values are the same bits.
+    fn solve(
+        &self,
+        weighting: Weighting,
+        entered: &[usize],
+        columns: &Columns,
+    ) -> Result<Vec<Linear>, Reason> {
+        let p = columns.iter().filter(|c| c.is_ok()).count();
+        let whitening = self.whitening(weighting, entered)?;
+        let rows: Vec<&Row> = entered.iter().map(|&i| &self.rows[i]).collect();
+        let x: Vec<Vec<f64>> = rows.iter().map(|r| coefficients(r.kind, columns)).collect();
+        let design = (0..p)
+            .map(|k| whitening.apply(&x.iter().map(|x| x[k]).collect::<Vec<f64>>()))
+            .collect();
+        let y: Vec<f64> = rows
+            .iter()
+            .map(|r| r.value.as_ref().map_or(f64::NAN, |v| *v))
+            .collect();
+        let mut rhs = vec![whitening.apply(&y)];
+        if self.width > 0 {
+            rhs.extend(whitening.columns(entered.len()));
+        }
+        let solutions = linear::least_squares(design, rhs).ok_or(Reason::NotIdentified)?;
+        let Some((values, map)) = solutions.split_first() else {
+            return Err(Reason::NotIdentified);
+        };
+        Ok((0..p)
+            .map(|k| {
+                let mut g = vec![0.0; self.width];
+                for (column, &i) in map.iter().zip(entered) {
+                    g[self.slots[i]] = column[k];
+                }
+                let largest = g.iter().fold(0.0, |a: f64, b| a.max(b.abs()));
+                Linear {
+                    value: values[k],
+                    g,
+                    noise: entered.len() as f64 * f64::EPSILON * largest,
+                }
+            })
+            .collect())
+    }
 }
 
 /// Each design column's presence: `Ok` to solve for it, else the reason
@@ -503,10 +956,23 @@ fn coefficients(kind: RowKind, columns: &Columns) -> Vec<f64> {
         .collect()
 }
 
-/// The indices of the defined rows a solve `takes`.
-fn entered(rows: &[Row], takes: impl Fn(&Row) -> bool) -> Vec<usize> {
+/// Whether a solve under `weighting` takes a row whose value is defined:
+/// weights by the covariance leave out a row with no variance (`no_se`).
+fn takes(weighting: Weighting, row: &Row) -> bool {
+    matches!(weighting, Weighting::Pairs) || row.variance.is_some()
+}
+
+/// Whether the cross solve reads `row`; a trait's solve reads the others
+/// of that trait.
+fn in_cross(row: &Row) -> bool {
+    row.first_trait != row.second_trait || row.kind == RowKind::WithinPerson
+}
+
+/// The indices of the defined rows a solve under `weighting` takes among
+/// those it `reads`.
+fn entered(rows: &[Row], weighting: Weighting, reads: impl Fn(&Row) -> bool) -> Vec<usize> {
     (0..rows.len())
-        .filter(|&i| rows[i].value.is_ok() && takes(&rows[i]))
+        .filter(|&i| rows[i].value.is_ok() && takes(weighting, &rows[i]) && reads(&rows[i]))
         .collect()
 }
 
@@ -527,107 +993,32 @@ fn zero_in(rows: &[Row], entered: &[usize], j: usize) -> bool {
     entered.iter().all(|&i| design(rows[i].kind)[j] == 0.0)
 }
 
-/// The WLS solution over `entered`, or `None` when it is not identified.
-fn solve(rows: &[Row], entered: &[usize], columns: &Columns) -> Option<Vec<f64>> {
-    let p = columns.iter().filter(|c| c.is_ok()).count();
-    let mut design = vec![Vec::with_capacity(entered.len()); p];
-    let mut y = Vec::with_capacity(entered.len());
-    for &i in entered {
-        let row = &rows[i];
-        let Ok(value) = row.value else { continue };
-        let scale = (row.weight as f64).sqrt();
-        for (column, x) in design.iter_mut().zip(coefficients(row.kind, columns)) {
-            column.push(scale * x);
-        }
-        y.push(scale * value);
-    }
-    least_squares(design, y)
+/// Each column's unknown, in A, C, E order: a present one's from the
+/// solve, an absent one with its reason.
+fn unknowns(solution: Result<Vec<Linear>, Reason>, columns: Columns) -> [Quantity; 3] {
+    let mut values = solution.map(Vec::into_iter);
+    columns.map(|column| {
+        column.and_then(|()| match &mut values {
+            Ok(values) => values.next().ok_or(Reason::NotIdentified),
+            Err(reason) => Err(*reason),
+        })
+    })
 }
 
-/// The least-squares `b` of `X b = y`, `X` given by columns, or `None`
-/// when `X` has rank below its columns.
-///
-/// Householder QR with column pivoting (each step takes the remaining
-/// column of largest norm), so `|R_kk|` falls along the diagonal and its
-/// first entry is the largest, over rows sorted by decreasing largest entry.
-/// Without the sort, a cell of n = 3 beside one of n = 1e9 loses about
-/// 5e-12 of a Falconer A; with it the error stays near 1e-15 of the
-/// correlations' scale.  Full rank needs every `|R_kk|` above
-/// `m * eps * |R_11|` (`m >= p` rows): Householder QR is backward stable, the
-/// computed `R` being the exact factor of `X + dX` with `|dX|` of order
-/// `m * eps * |X|`, so a diagonal below that bound is
-/// indistinguishable from an exact zero (the bound numpy's `matrix_rank`
-/// puts on singular values).  The design's entries are `sqrt(n)` times `2^-d`
-/// (`d <= 5`), 0 or 1, so an identified design sits orders of magnitude
-/// above the bound unless its weights differ by a factor near `1e20`.
-fn least_squares(columns: Vec<Vec<f64>>, y: Vec<f64>) -> Option<Vec<f64>> {
-    let (m, p) = (y.len(), columns.len());
-    if m < p {
-        return None;
-    }
-    let largest = |i: usize| columns.iter().map(|c| c[i].abs()).fold(0.0, f64::max);
-    let mut by_size: Vec<usize> = (0..m).collect();
-    by_size.sort_by(|&i, &j| largest(j).total_cmp(&largest(i)));
-    let mut columns: Vec<Vec<f64>> = columns
-        .iter()
-        .map(|c| by_size.iter().map(|&i| c[i]).collect())
-        .collect();
-    let mut y: Vec<f64> = by_size.iter().map(|&i| y[i]).collect();
-    let mut order: Vec<usize> = (0..p).collect();
-    let mut diagonal = Vec::with_capacity(p);
-    for k in 0..p {
-        let norms: Vec<f64> = columns[k..]
-            .iter()
-            .map(|c| c[k..].iter().map(|x| x * x).sum())
-            .collect();
-        let pivot = (0..norms.len()).max_by(|&i, &j| norms[i].total_cmp(&norms[j]))? + k;
-        columns.swap(k, pivot);
-        order.swap(k, pivot);
-        let alpha = norms[pivot - k].sqrt();
-        if alpha == 0.0 {
-            return None;
-        }
-        let r_kk = if columns[k][k] >= 0.0 { -alpha } else { alpha };
-        let mut v = columns[k][k..].to_vec();
-        v[0] -= r_kk;
-        let vv: f64 = v.iter().map(|x| x * x).sum();
-        let reflect = |target: &mut [f64]| {
-            let f = 2.0 * v.iter().zip(&*target).map(|(a, b)| a * b).sum::<f64>() / vv;
-            target.iter_mut().zip(&v).for_each(|(t, a)| *t -= f * a);
-        };
-        for column in &mut columns[k + 1..] {
-            reflect(&mut column[k..]);
-        }
-        reflect(&mut y[k..]);
-        columns[k][k] = r_kk;
-        diagonal.push(r_kk);
-    }
-    let tolerance = m as f64 * f64::EPSILON * diagonal.first().map_or(0.0, |d| d.abs());
-    if diagonal.iter().any(|d| d.abs() <= tolerance) {
-        return None;
-    }
-    let mut b = vec![0.0; p];
-    for k in (0..p).rev() {
-        let tail: f64 = (k + 1..p).map(|j| columns[j][k] * b[j]).sum();
-        b[k] = (y[k] - tail) / columns[k][k];
-    }
-    let mut solution = vec![0.0; p];
-    for (k, &column) in order.iter().enumerate() {
-        solution[column] = b[k];
-    }
-    Some(solution)
+/// One trait's A, C and E before their SEs, and the rows that entered.
+struct TraitParts {
+    shares: [Quantity; 3],
+    rows: Vec<usize>,
 }
 
-/// Each present column's solved value, in A, C, E order.
-fn unknowns(solution: Option<Vec<f64>>, columns: Columns) -> [Result<f64, Reason>; 3] {
-    let mut values = solution.unwrap_or_default().into_iter();
-    columns.map(|column| column.and_then(|()| values.next().ok_or(Reason::NotIdentified)))
-}
-
-fn trait_fit(rows: &[Row], t: usize, components: Components) -> TraitFit {
-    let rows_in = entered(rows, |r| {
-        r.first_trait == t && r.second_trait == t && r.kind != RowKind::WithinPerson
-    });
+fn trait_fit(
+    problem: &Problem,
+    weighting: Weighting,
+    t: usize,
+    components: Components,
+) -> TraitParts {
+    let rows = problem.rows;
+    let rows_in = entered(rows, weighting, |r| !in_cross(r) && r.first_trait == t);
     let columns = supported(
         rows,
         &rows_in,
@@ -637,27 +1028,42 @@ fn trait_fit(rows: &[Row], t: usize, components: Components) -> TraitFit {
             Err(Reason::NotRequested),
         ],
     );
-    let [a, c, _] = unknowns(solve(rows, &rows_in, &columns), columns);
-    let share = |x: Result<f64, Reason>| match x {
-        Err(Reason::NotRequested) => Ok(0.0),
-        other => other,
+    let [a, c, _] = unknowns(problem.solve(weighting, &rows_in, &columns), columns);
+    let share = |x: &Quantity| match x {
+        Err(Reason::NotRequested) => Ok(Linear::zero(problem.width)),
+        other => other.clone(),
     };
-    let e = share(a).and_then(|a| share(c).map(|c| 1.0 - a - c));
-    TraitFit {
-        a,
-        c,
-        e,
+    let e = share(&a).and_then(|a| {
+        share(&c).map(|c| Linear {
+            value: 1.0 - a.value - c.value,
+            g: a.g.iter().zip(&c.g).map(|(a, c)| -a - c).collect(),
+            noise: a.noise + c.noise,
+        })
+    });
+    TraitParts {
+        shares: [a, c, e],
         rows: rows_in,
     }
+}
+
+/// The cross solve's sA, sC and sE, and rA, rC and rE, before their SEs.
+struct CrossParts {
+    covariances: [Quantity; 3],
+    correlations: [Quantity; 3],
+    rows: Vec<usize>,
 }
 
 /// The cross solve.  sE is in the within-person row alone, so with sC
 /// zero in every relative row the two share that row and neither is
 /// identified; the row is then left out and sA solved from the relatives.
-fn cross_fit(rows: &[Row], traits: &[TraitFit], components: Components) -> CrossFit {
-    let mut rows_in = entered(rows, |r| {
-        r.first_trait != r.second_trait || r.kind == RowKind::WithinPerson
-    });
+fn cross_fit(
+    problem: &Problem,
+    weighting: Weighting,
+    traits: &[&TraitParts],
+    components: Components,
+) -> CrossParts {
+    let rows = problem.rows;
+    let mut rows_in = entered(rows, weighting, in_cross);
     let within_person = rows_in
         .iter()
         .any(|&i| rows[i].kind == RowKind::WithinPerson);
@@ -681,38 +1087,56 @@ fn cross_fit(rows: &[Row], traits: &[TraitFit], components: Components) -> Cross
         rows_in = relatives;
     }
     let columns = supported(rows, &rows_in, columns);
-    let [s_a, s_c, s_e] = unknowns(solve(rows, &rows_in, &columns), columns);
-    let (one, two) = (&traits[0], &traits[1]);
-    CrossFit {
-        s_a,
-        s_c,
-        s_e,
-        r_a: ratio(s_a, one.a, two.a),
-        r_c: ratio(s_c, one.c, two.c),
-        r_e: ratio(s_e, one.e, two.e),
+    let covariances = unknowns(problem.solve(weighting, &rows_in, &columns), columns);
+    let (one, two) = (&traits[0].shares, &traits[1].shares);
+    let correlations = [0, 1, 2].map(|k| ratio(&covariances[k], &one[k], &two[k]));
+    CrossParts {
+        covariances,
+        correlations,
         rows: rows_in,
     }
 }
 
-/// `s / sqrt(x1 x2)`, undefined with the first undefined operand's reason
-/// or when a share is <= 0.
-fn ratio(
-    s: Result<f64, Reason>,
-    x1: Result<f64, Reason>,
-    x2: Result<f64, Reason>,
-) -> Result<f64, Reason> {
-    let (s, x1, x2) = (s?, x1?, x2?);
-    if x1 <= 0.0 || x2 <= 0.0 {
+/// `s / sqrt(x1 x2)` and its gradient, undefined with the first undefined
+/// operand's reason or when a share is <= 0.
+fn ratio(s: &Quantity, x1: &Quantity, x2: &Quantity) -> Quantity {
+    let (s, x1, x2) = (
+        s.as_ref().map_err(|r| *r)?,
+        x1.as_ref().map_err(|r| *r)?,
+        x2.as_ref().map_err(|r| *r)?,
+    );
+    if x1.value <= 0.0 || x2.value <= 0.0 {
         return Err(Reason::NonpositiveComponent);
     }
-    Ok(s / (x1 * x2).sqrt())
+    let root = (x1.value * x2.value).sqrt();
+    let r = s.value / root;
+    let (d1, d2) = (r / (2.0 * x1.value), r / (2.0 * x2.value));
+    let g = (0..s.g.len())
+        .map(|i| s.g[i] / root - d1 * x1.g[i] - d2 * x2.g[i])
+        .collect();
+    Ok(Linear {
+        value: r,
+        g,
+        noise: s.noise / root + d1.abs() * x1.noise + d2.abs() * x2.noise,
+    })
 }
 
-fn either(out: &mut Vec<(&'static str, Value)>, keys: [&'static str; 2], x: Result<f64, Reason>) {
-    let [value, reason] = keys;
-    match x {
-        Ok(v) => out.extend([(value, v.into()), (reason, Value::Null)]),
-        Err(r) => out.extend([(value, Value::Null), (reason, r.name().into())]),
+/// The entries of `x` under `keys`: value, reason, SE, SE reason.  An
+/// undefined value's SE carries its reason.
+fn either(
+    out: &mut Vec<(&'static str, Value)>,
+    keys: [&'static str; 4],
+    x: Result<Solved, Reason>,
+) {
+    let [value, reason, se, se_reason] = keys;
+    let (v, r, s) = match x {
+        Ok(Solved { value, se }) => (Value::Float(value), Value::Null, se),
+        Err(r) => (Value::Null, r.name().into(), Err(r)),
+    };
+    out.extend([(value, v), (reason, r)]);
+    match s {
+        Ok(s) => out.extend([(se, s.into()), (se_reason, Value::Null)]),
+        Err(r) => out.extend([(se, Value::Null), (se_reason, r.name().into())]),
     }
 }
 
@@ -739,6 +1163,7 @@ impl Row {
             ("shared", shared),
             ("value", value),
             ("weight", self.weight.into()),
+            ("variance", self.variance.into()),
             ("used", self.value.is_ok().into()),
             ("reason", reason),
         ])
@@ -764,27 +1189,45 @@ impl AceFit {
             .enumerate()
             .map(|(t, fit)| {
                 let mut out = vec![("trait", (t as u64).into())];
-                either(&mut out, ["A", "A_reason"], fit.a);
-                either(&mut out, ["C", "C_reason"], fit.c);
-                either(&mut out, ["E", "E_reason"], fit.e);
+                either(&mut out, ["A", "A_reason", "A_se", "A_se_reason"], fit.a);
+                either(&mut out, ["C", "C_reason", "C_se", "C_se_reason"], fit.c);
+                either(&mut out, ["E", "E_reason", "E_se", "E_se_reason"], fit.e);
                 out.push(("rows", self.entries(&fit.rows)));
+                out.push(("weights", fit.weights.name().into()));
                 Value::Map(out)
             })
             .collect();
         let cross = self.cross.as_ref().map_or(Value::Null, |fit| {
             let mut out = vec![];
-            either(&mut out, ["sA", "sA_reason"], fit.s_a);
-            either(&mut out, ["sC", "sC_reason"], fit.s_c);
-            either(&mut out, ["sE", "sE_reason"], fit.s_e);
-            for (keys, r) in [
-                (["rA", "rA_reason", "rA_out_of_range"], fit.r_a),
-                (["rC", "rC_reason", "rC_out_of_range"], fit.r_c),
-                (["rE", "rE_reason", "rE_out_of_range"], fit.r_e),
+            for (keys, s) in [
+                (["sA", "sA_reason", "sA_se", "sA_se_reason"], fit.s_a),
+                (["sC", "sC_reason", "sC_se", "sC_se_reason"], fit.s_c),
+                (["sE", "sE_reason", "sE_se", "sE_se_reason"], fit.s_e),
             ] {
-                either(&mut out, [keys[0], keys[1]], r);
-                out.push((keys[2], r.ok().map(|r| r.abs() > 1.0).into()));
+                either(&mut out, keys, s);
+            }
+            for (keys, flag, r) in [
+                (
+                    ["rA", "rA_reason", "rA_se", "rA_se_reason"],
+                    "rA_out_of_range",
+                    fit.r_a,
+                ),
+                (
+                    ["rC", "rC_reason", "rC_se", "rC_se_reason"],
+                    "rC_out_of_range",
+                    fit.r_c,
+                ),
+                (
+                    ["rE", "rE_reason", "rE_se", "rE_se_reason"],
+                    "rE_out_of_range",
+                    fit.r_e,
+                ),
+            ] {
+                either(&mut out, keys, r);
+                out.push((flag, r.ok().map(|r| r.value.abs() > 1.0).into()));
             }
             out.push(("rows", self.entries(&fit.rows)));
+            out.push(("weights", fit.weights.name().into()));
             Value::Map(out)
         });
         let request = &self.request;
@@ -822,11 +1265,20 @@ impl AceFit {
                     ),
                     ("estimator", request.estimator.name().into()),
                     ("estimate", request.estimate.name().into()),
+                    (
+                        "weights",
+                        request.weights.map_or("default", Weights::name).into(),
+                    ),
                 ]),
             ),
             (
                 "method",
-                Value::Map(METHOD.iter().map(|&(k, v)| (k, v.into())).collect()),
+                Value::Map(
+                    method(request)
+                        .iter()
+                        .map(|&(k, v)| (k, v.into()))
+                        .collect(),
+                ),
             ),
         ])
     }
@@ -836,6 +1288,11 @@ impl AceFit {
 mod tests {
     use super::*;
     use Category::{Av, C1, FS, MHS, MO, MZ, PHS};
+
+    /// The fit without a covariance.
+    fn fit(cells: &[AceCell], request: &AceRequest) -> Result<AceFit, Error> {
+        super::fit(cells, request, None)
+    }
 
     fn crude(estimator: &str, value: Result<f64, &str>) -> CrudeEstimate {
         CrudeEstimate {
@@ -880,11 +1337,12 @@ mod tests {
             shared_environment: shared.map(|s| s.iter().map(|c| c.to_string()).collect()),
             estimator: Estimator::Primary,
             estimate: Estimate::Pooled,
+            weights: Some(Weights::Pairs),
         }
     }
 
-    fn close(actual: Result<f64, Reason>, expected: f64, relative: f64) {
-        let actual = actual.unwrap();
+    fn close(actual: Result<Solved, Reason>, expected: f64, relative: f64) {
+        let actual = actual.unwrap().value;
         assert!(
             (actual - expected).abs() <= relative * expected.abs(),
             "{actual} vs {expected}: relative error {:e}",
@@ -892,8 +1350,8 @@ mod tests {
         );
     }
 
-    fn operand_close(actual: Result<f64, Reason>, expected: f64, scale: f64) {
-        let error = (actual.unwrap() - expected).abs() / scale;
+    fn operand_close(actual: Result<Solved, Reason>, expected: f64, scale: f64) {
+        let error = (actual.unwrap().value - expected).abs() / scale;
         assert!(error <= 1e-15, "error {error:e} of the operands' scale");
     }
 
@@ -989,7 +1447,7 @@ mod tests {
         close(refit.a, a2, 1e-12);
         close(refit.c, c2, 1e-12);
         assert!(
-            (refit.c.unwrap() - fit.c.unwrap()).abs() > 1e-3,
+            (refit.c.unwrap().value - fit.c.unwrap().value).abs() > 1e-3,
             "weights do not matter"
         );
     }
@@ -1334,7 +1792,7 @@ mod tests {
         assert_eq!(fit.rows[0].weight, 850);
         close(fit.traits[0].a, 0.7, 1e-15);
         req.categories = None;
-        let fit = super::fit(&cells, &req).unwrap();
+        let fit = self::fit(&cells, &req).unwrap();
         assert_eq!(fit.rows[1].value, Err("no_stratified_form".to_string()));
         assert_eq!(fit.traits[0].rows, [0]);
     }
@@ -1437,6 +1895,10 @@ mod tests {
         }
         assert_eq!(Estimator::parse("tetrachoric"), None);
         assert_eq!(Estimate::parse("both"), None);
+        for weights in [Weights::Pairs, Weights::InverseVariance, Weights::Gls] {
+            assert_eq!(Weights::parse(weights.name()), Some(weights));
+        }
+        assert_eq!(Weights::parse("iv"), None);
     }
 
     #[test]
@@ -1457,6 +1919,733 @@ mod tests {
             panic!("traits is not a list")
         };
         assert_eq!(lookup(&traits[0], "C_reason"), &Value::Str("not_requested"));
-        assert!(matches!(lookup(&tree, "method"), Value::Map(m) if m.len() == METHOD.len()));
+        assert_eq!(lookup(settings, "weights"), &Value::Str("pairs"));
+        assert!(matches!(lookup(&tree, "method"), Value::Map(m) if m.len() == 6));
+    }
+
+    /// Two traits' cells of every kind, values off the model, and the
+    /// within-person cell last.
+    fn noisy_cells() -> Vec<AceCell> {
+        let mut cells = vec![];
+        let mut k = 0u64;
+        for cat in [MZ, FS, MHS, PHS, MO, C1] {
+            let mut traits = vec![(0, 0), (1, 1), (0, 1)];
+            if !cat.symmetric() {
+                traits.push((1, 0));
+            }
+            for t in traits {
+                k += 1;
+                let r = 0.9f64.powi(i32::from(cat.degree()) + 1)
+                    * (0.5 + 0.37 * ((k * 7919 % 13) as f64 / 13.0));
+                cells.push(cell(&[cat], t, r, 100 + 997 * (k * 31 % 17)));
+            }
+        }
+        cells.push(within_person(0.41, 5000));
+        cells
+    }
+
+    #[test]
+    fn pairs_weights_give_the_bits_of_the_fit_before_the_se() {
+        let fit = fit(&noisy_cells(), &request(Components::AC, Some(SHARED))).unwrap();
+        let mut values = vec![];
+        for t in &fit.traits {
+            values.extend([t.a, t.c, t.e]);
+        }
+        let c = fit.cross.unwrap();
+        values.extend([c.s_a, c.s_c, c.s_e, c.r_a, c.r_c, c.r_e]);
+        let bits: Vec<u64> = values.iter().map(|v| v.unwrap().value.to_bits()).collect();
+        assert_eq!(
+            bits,
+            [
+                0x3fdf0738c589ad45,
+                0x3fc5a367023ae3ac,
+                0x3fd62713b958e0e6,
+                0x3fe47cfd305cd9b9,
+                0x3fba2a0ff213ea68,
+                0x3fd07b81a2c151f4,
+                0x3fef38ac2acf9dbc,
+                0x3fabcf1f0ea17eb7,
+                0xbfe3d6e5c9ce308a,
+                0x3ffc04ecf8302dbd,
+                0x3fda721a6e9d5f2e,
+                0xc0009cb5db8ef2d3,
+            ]
+        );
+    }
+
+    /// A positive definite `n x n` covariance, row-major: variances
+    /// `(0.01 (1 + i mod 5))²`, correlations `0.3^|i-j|`.
+    fn positive_definite(n: usize) -> Vec<f64> {
+        let sd = |i: usize| 0.01 * (1 + i % 5) as f64;
+        (0..n * n)
+            .map(|x| {
+                let (i, j) = (x / n, x % n);
+                sd(i) * sd(j) * 0.3f64.powi(i.abs_diff(j) as i32)
+            })
+            .collect()
+    }
+
+    /// A positive definite covariance of `cells` like a result's:
+    /// variances `1 / n`, correlations `0.3^|i-j|`.
+    fn like_a_result(cells: &[AceCell]) -> Vec<f64> {
+        let n = cells.len();
+        let sd = |i: usize| 1.0 / (cells[i].n as f64).sqrt();
+        (0..n * n)
+            .map(|x| {
+                let (i, j) = (x / n, x % n);
+                sd(i) * sd(j) * 0.3f64.powi(i.abs_diff(j) as i32)
+            })
+            .collect()
+    }
+
+    fn with(n: usize, matrix: Vec<f64>) -> Covariance {
+        Covariance::new(n, matrix, None, None).unwrap()
+    }
+
+    fn weighted(weights: Weights, req: &AceRequest) -> AceRequest {
+        AceRequest {
+            weights: Some(weights),
+            ..req.clone()
+        }
+    }
+
+    const WEIGHTS: [Weights; 3] = [Weights::Pairs, Weights::InverseVariance, Weights::Gls];
+
+    fn se(x: Result<Solved, Reason>) -> f64 {
+        x.unwrap().se.unwrap()
+    }
+
+    fn near(actual: f64, expected: f64, relative: f64) {
+        assert!(
+            (actual - expected).abs() <= relative * expected.abs(),
+            "{actual} vs {expected}"
+        );
+    }
+
+    #[test]
+    fn falconer_ses_are_the_closed_forms_under_every_weighting() {
+        let cells = [
+            cell(&[MZ], (0, 0), 0.62, 911),
+            cell(&[FS], (0, 0), 0.35, 5222),
+        ];
+        let (mm, mf, ff) = (0.0021, 0.0004, 0.0009);
+        let covariance = with(2, vec![mm, mf, mf, ff]);
+        let req = request(Components::AC, Some(&["MZ", "FS"]));
+        for weights in WEIGHTS {
+            let fit = super::fit(&cells, &weighted(weights, &req), Some(&covariance)).unwrap();
+            let t = &fit.traits[0];
+            close(t.a, 2.0 * (0.62 - 0.35), 1e-14);
+            near(se(t.a), (4.0 * mm - 8.0 * mf + 4.0 * ff).sqrt(), 1e-13);
+            near(se(t.c), (mm - 4.0 * mf + 4.0 * ff).sqrt(), 1e-13);
+            near(se(t.e), mm.sqrt(), 1e-13);
+            assert_eq!(fit.rows[1].variance, Some(ff));
+        }
+    }
+
+    /// `a⁻¹` of the `m x m` `a` by Gauss-Jordan elimination.
+    fn inverse(a: &[f64], m: usize) -> Vec<f64> {
+        let mut a = a.to_vec();
+        let mut out: Vec<f64> = (0..m * m)
+            .map(|x| if x / m == x % m { 1.0 } else { 0.0 })
+            .collect();
+        for k in 0..m {
+            let p = (k..m)
+                .max_by(|&i, &j| a[i * m + k].abs().total_cmp(&a[j * m + k].abs()))
+                .unwrap();
+            for j in 0..m {
+                a.swap(k * m + j, p * m + j);
+                out.swap(k * m + j, p * m + j);
+            }
+            let d = a[k * m + k];
+            for j in 0..m {
+                a[k * m + j] /= d;
+                out[k * m + j] /= d;
+            }
+            for i in (0..m).filter(|&i| i != k) {
+                let f = a[i * m + k];
+                for j in 0..m {
+                    a[i * m + j] -= f * a[k * m + j];
+                    out[i * m + j] -= f * out[k * m + j];
+                }
+            }
+        }
+        out
+    }
+
+    /// `X_rows`, `y` and `Σ` of the four one-trait rows, and the cells.
+    fn overidentified() -> ([[f64; 2]; 4], [f64; 4], Vec<f64>, Vec<AceCell>) {
+        let x = [[1.0, 1.0], [0.5, 1.0], [0.25, 1.0], [0.25, 0.0]];
+        let y = [0.71, 0.42, 0.27, 0.11];
+        let mut sigma = positive_definite(4);
+        sigma[1] += 0.000_02;
+        sigma[4] += 0.000_02;
+        let cells = [MZ, FS, MHS, PHS]
+            .iter()
+            .zip(y)
+            .map(|(&cat, r)| cell(&[cat], (0, 0), r, 500))
+            .collect();
+        (x, y, sigma, cells)
+    }
+
+    /// `(Xᵀ W X)⁻¹ Xᵀ W` of the four rows, `W` given whole.
+    fn wls_map(x: &[[f64; 2]; 4], w: &[f64]) -> [[f64; 4]; 2] {
+        let mut xtwx = [0.0; 4];
+        let mut xtw = [[0.0; 4]; 2];
+        for a in 0..2 {
+            for j in 0..4 {
+                xtw[a][j] = (0..4).map(|i| x[i][a] * w[i * 4 + j]).sum();
+            }
+            for b in 0..2 {
+                xtwx[a * 2 + b] = (0..4).map(|j| xtw[a][j] * x[j][b]).sum();
+            }
+        }
+        let inv = inverse(&xtwx, 2);
+        let mut map = [[0.0; 4]; 2];
+        for a in 0..2 {
+            for j in 0..4 {
+                map[a][j] = (0..2).map(|b| inv[a * 2 + b] * xtw[b][j]).sum();
+            }
+        }
+        map
+    }
+
+    /// `g Σ hᵀ` over four cells.
+    fn quadratic(g: &[f64], sigma: &[f64], h: &[f64]) -> f64 {
+        (0..4)
+            .map(|i| (0..4).map(|j| g[i] * sigma[i * 4 + j] * h[j]).sum::<f64>())
+            .sum()
+    }
+
+    #[test]
+    fn inverse_variance_is_weighted_least_squares_with_a_sandwich() {
+        let (x, y, sigma, cells) = overidentified();
+        let w: Vec<f64> = (0..16)
+            .map(|k| if k / 4 == k % 4 { 1.0 / sigma[k] } else { 0.0 })
+            .collect();
+        let map = wls_map(&x, &w);
+        let req = weighted(
+            Weights::InverseVariance,
+            &request(Components::AC, Some(SHARED)),
+        );
+        let fit = super::fit(&cells, &req, Some(&with(4, sigma.clone()))).unwrap();
+        let t = &fit.traits[0];
+        let e: Vec<f64> = (0..4).map(|j| -map[0][j] - map[1][j]).collect();
+        for (got, g, constant) in [
+            (t.a, &map[0][..], 0.0),
+            (t.c, &map[1][..], 0.0),
+            (t.e, &e[..], 1.0),
+        ] {
+            let value: f64 = (0..4).map(|j| g[j] * y[j]).sum();
+            near(got.unwrap().value, constant + value, 1e-12);
+            near(se(got), quadratic(g, &sigma, g).sqrt(), 1e-12);
+        }
+        let pairs = self::fit(&cells, &request(Components::AC, Some(SHARED))).unwrap();
+        let by_pairs = pairs.traits[0].a.unwrap().value;
+        assert!(
+            (t.a.unwrap().value - by_pairs).abs() > 1e-4,
+            "weights do not matter"
+        );
+    }
+
+    #[test]
+    fn gls_is_the_generalized_least_squares_fit_and_its_variance() {
+        let (x, y, sigma, cells) = overidentified();
+        let precision = inverse(&sigma, 4);
+        let map = wls_map(&x, &precision);
+        let mut information = [0.0; 4];
+        for a in 0..2 {
+            for b in 0..2 {
+                information[a * 2 + b] = (0..4)
+                    .map(|i| {
+                        (0..4)
+                            .map(|j| x[i][a] * precision[i * 4 + j] * x[j][b])
+                            .sum::<f64>()
+                    })
+                    .sum();
+            }
+        }
+        let variance = inverse(&information, 2);
+        let req = weighted(Weights::Gls, &request(Components::AC, Some(SHARED)));
+        let fit = super::fit(&cells, &req, Some(&with(4, sigma.clone()))).unwrap();
+        let t = &fit.traits[0];
+        for (k, got) in [t.a, t.c].into_iter().enumerate() {
+            near(
+                got.unwrap().value,
+                (0..4).map(|j| map[k][j] * y[j]).sum(),
+                1e-12,
+            );
+            near(se(got), variance[k * 2 + k].sqrt(), 1e-12);
+            near(se(got), quadratic(&map[k], &sigma, &map[k]).sqrt(), 1e-12);
+        }
+        near(se(t.e), variance.iter().sum::<f64>().sqrt(), 1e-12);
+    }
+
+    /// Every value of a fit, by name, with its SE.
+    fn quantities(fit: &AceFit) -> Vec<(String, Result<Solved, Reason>)> {
+        let mut out = vec![];
+        for (t, shares) in fit.traits.iter().enumerate() {
+            for (name, x) in [("A", shares.a), ("C", shares.c), ("E", shares.e)] {
+                out.push((format!("{name}{t}"), x));
+            }
+        }
+        if let Some(c) = &fit.cross {
+            for (name, x) in [
+                ("sA", c.s_a),
+                ("sC", c.s_c),
+                ("sE", c.s_e),
+                ("rA", c.r_a),
+                ("rC", c.r_c),
+                ("rE", c.r_e),
+            ] {
+                out.push((name.to_string(), x));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_se_is_the_finite_difference_gradients_variance() {
+        let cells = noisy_cells();
+        let n = cells.len();
+        let sigma = like_a_result(&cells);
+        let covariance = with(n, sigma.clone());
+        let h = 1e-6;
+        for weights in WEIGHTS {
+            let req = weighted(weights, &request(Components::AC, Some(SHARED)));
+            let at = |cells: &[AceCell]| {
+                quantities(&super::fit(cells, &req, Some(&covariance)).unwrap())
+            };
+            let base = at(&cells);
+            let shifted = |i: usize, by: f64| {
+                let mut moved = cells.clone();
+                let value = moved[i].crude[0].value.as_mut().unwrap();
+                *value += by;
+                at(&moved)
+            };
+            let steps: Vec<_> = (0..n).map(|i| (shifted(i, h), shifted(i, -h))).collect();
+            for (q, (name, x)) in base.iter().enumerate() {
+                let g: Vec<f64> = steps
+                    .iter()
+                    .map(|(up, down)| {
+                        (up[q].1.unwrap().value - down[q].1.unwrap().value) / (2.0 * h)
+                    })
+                    .collect();
+                let variance: f64 = (0..n)
+                    .map(|i| (0..n).map(|j| g[i] * sigma[i * n + j] * g[j]).sum::<f64>())
+                    .sum();
+                let got = se(*x);
+                assert!(
+                    (got - variance.sqrt()).abs() <= 1e-6 * got,
+                    "{weights:?} {name}: {got} vs {}",
+                    variance.sqrt()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_within_person_row_carries_se_and_re() {
+        let cells = noisy_cells();
+        let n = cells.len();
+        let mut sigma = like_a_result(&cells);
+        let base = super::fit(
+            &cells,
+            &request(Components::AC, Some(SHARED)),
+            Some(&with(n, sigma.clone())),
+        )
+        .unwrap();
+        let wp = n - 1;
+        sigma[wp * n + wp] *= 4.0;
+        let wider = super::fit(
+            &cells,
+            &request(Components::AC, Some(SHARED)),
+            Some(&with(n, sigma.clone())),
+        )
+        .unwrap();
+        let (b, w) = (base.cross.unwrap(), wider.cross.unwrap());
+        assert!(se(w.s_e) > se(b.s_e) && se(w.r_e) > se(b.r_e));
+        near(se(w.s_a), se(b.s_a), 1e-9);
+        assert_eq!(base.traits, wider.traits);
+        assert_eq!(wider.rows[wp].variance, Some(sigma[wp * n + wp]));
+        for k in 0..n {
+            sigma[wp * n + k] = f64::NAN;
+            sigma[k * n + wp] = f64::NAN;
+        }
+        let without = super::fit(
+            &cells,
+            &request(Components::AC, Some(SHARED)),
+            Some(&with(n, sigma)),
+        )
+        .unwrap();
+        let cross = without.cross.unwrap();
+        assert_eq!(cross.s_e.unwrap().se, Err(Reason::RowWithoutSe));
+        assert_eq!(cross.r_e.unwrap().se, Err(Reason::RowWithoutSe));
+        assert_eq!(cross.s_a.unwrap().se, b.s_a.unwrap().se);
+    }
+
+    #[test]
+    fn a_categories_subset_reads_its_cells_slots() {
+        let cells = [
+            cell(&[PHS], (0, 0), 0.1, 300),
+            cell(&[MZ], (0, 0), 0.62, 911),
+            cell(&[C1], (0, 0), 0.05, 2000),
+            cell(&[FS], (0, 0), 0.35, 5222),
+        ];
+        let (mm, mf, ff) = (0.0021, 0.0004, 0.0009);
+        let mut sigma = positive_definite(4);
+        for (i, j, v) in [(1, 1, mm), (1, 3, mf), (3, 1, mf), (3, 3, ff)] {
+            sigma[i * 4 + j] = v;
+        }
+        let mut req = request(Components::AC, Some(&["MZ", "FS"]));
+        req.categories = Some(vec!["FS".to_string(), "MZ".to_string()]);
+        for weights in WEIGHTS {
+            let fit = super::fit(
+                &cells,
+                &weighted(weights, &req),
+                Some(&with(4, sigma.clone())),
+            )
+            .unwrap();
+            assert_eq!(fit.rows.len(), 2);
+            let t = &fit.traits[0];
+            near(se(t.a), (4.0 * mm - 8.0 * mf + 4.0 * ff).sqrt(), 1e-13);
+            near(se(t.c), (mm - 4.0 * mf + 4.0 * ff).sqrt(), 1e-13);
+            assert_eq!(fit.rows[0].variance, Some(mm));
+        }
+    }
+
+    #[test]
+    fn the_fit_reads_the_covariance_of_its_form() {
+        let mut cells = vec![cell(&[FS], (0, 0), 0.4, 900)];
+        cells[0].stratified = Some(StratifiedEstimate {
+            value: Ok(0.35),
+            n: 850,
+            n_entries: None,
+        });
+        let covariance =
+            Covariance::new(1, vec![0.01], Some(vec![0.04]), Some(vec![0.09])).unwrap();
+        let req = request(Components::A, None);
+        for (estimator, estimate, sd) in [
+            (Estimator::Primary, Estimate::Pooled, 0.1),
+            (Estimator::Phi, Estimate::Pooled, 0.2),
+            (Estimator::Primary, Estimate::Stratified, 0.3),
+        ] {
+            let req = AceRequest {
+                estimator,
+                estimate,
+                ..req.clone()
+            };
+            let fit = super::fit(&cells, &req, Some(&covariance)).unwrap();
+            near(se(fit.traits[0].a), 2.0 * sd, 1e-15);
+        }
+        let pooled_only = with(1, vec![0.01]);
+        let req = AceRequest {
+            estimate: Estimate::Stratified,
+            ..req
+        };
+        let fit = super::fit(&cells, &req, Some(&pooled_only)).unwrap();
+        assert_eq!(fit.traits[0].a.unwrap().se, Err(Reason::NoCovariance));
+        assert_eq!(fit.rows[0].variance, None);
+        assert_eq!(
+            super::fit(&cells, &weighted(Weights::Gls, &req), Some(&pooled_only))
+                .unwrap_err()
+                .code(),
+            "missing_covariance"
+        );
+    }
+
+    fn falconer() -> (Vec<AceCell>, AceRequest) {
+        (
+            vec![
+                cell(&[MZ], (0, 0), 0.62, 911),
+                cell(&[FS], (0, 0), 0.35, 5222),
+                cell(&[PHS], (0, 0), 0.12, 700),
+            ],
+            request(Components::AC, Some(&["MZ", "FS"])),
+        )
+    }
+
+    #[test]
+    fn without_a_covariance_every_se_is_no_covariance() {
+        let fit = fit(&noisy_cells(), &request(Components::A, Some(SHARED))).unwrap();
+        for (name, x) in quantities(&fit) {
+            match x {
+                Ok(solved) => assert_eq!(solved.se, Err(Reason::NoCovariance), "{name}"),
+                Err(reason) => assert_eq!(reason, Reason::NotRequested, "{name}"),
+            }
+        }
+        assert!(fit.rows.iter().all(|r| r.variance.is_none()));
+        let tree = fit.to_value();
+        let Value::List(traits) = lookup(&tree, "traits") else {
+            panic!("traits is not a list")
+        };
+        assert_eq!(lookup(&traits[0], "A_se"), &Value::Null);
+        assert_eq!(
+            lookup(&traits[0], "A_se_reason"),
+            &Value::Str("no_covariance")
+        );
+        assert_eq!(
+            lookup(&traits[0], "C_se_reason"),
+            &Value::Str("not_requested")
+        );
+        let cross = lookup(&tree, "cross");
+        assert_eq!(lookup(cross, "rC_se_reason"), &Value::Str("not_requested"));
+        let Value::List(rows) = lookup(&tree, "rows") else {
+            panic!("rows is not a list")
+        };
+        assert_eq!(lookup(&rows[0], "variance"), &Value::Null);
+    }
+
+    #[test]
+    fn a_row_without_an_se_reaches_only_what_reads_it() {
+        let (cells, req) = falconer();
+        let nan = f64::NAN;
+        let sigma = vec![
+            0.0021, 0.0004, nan, //
+            0.0004, 0.0009, nan, //
+            nan, nan, nan,
+        ];
+        let covariance = with(3, sigma);
+        let pairs = super::fit(&cells, &req, Some(&covariance)).unwrap();
+        assert_eq!(pairs.traits[0].rows, [0, 1, 2]);
+        let falconer = AceRequest {
+            categories: Some(vec!["MZ".to_string(), "FS".to_string()]),
+            ..req.clone()
+        };
+        let fs_without = with(3, vec![0.0021, nan, 0.0, nan, nan, nan, 0.0, nan, 0.0009]);
+        let t = super::fit(&cells, &falconer, Some(&fs_without))
+            .unwrap()
+            .traits
+            .remove(0);
+        assert_eq!(t.a.unwrap().se, Err(Reason::RowWithoutSe));
+        assert_eq!(t.c.unwrap().se, Err(Reason::RowWithoutSe));
+        near(se(t.e), 0.0021f64.sqrt(), 1e-14);
+        assert_eq!(pairs.rows[2].variance, None);
+        assert_eq!(pairs.traits[0].a.unwrap().se, Err(Reason::RowWithoutSe));
+        for weights in [Weights::InverseVariance, Weights::Gls] {
+            let fit = super::fit(&cells, &weighted(weights, &req), Some(&covariance)).unwrap();
+            assert_eq!(fit.rows[2].value, Err("no_se".to_string()));
+            assert_eq!(fit.traits[0].rows, [0, 1]);
+            near(
+                se(fit.traits[0].a),
+                (4.0 * 0.0021 - 8.0 * 0.0004 + 4.0 * 0.0009f64).sqrt(),
+                1e-13,
+            );
+        }
+    }
+
+    #[test]
+    fn an_indefinite_covariance_gives_negative_variance_or_no_gls() {
+        let (cells, req) = falconer();
+        let req = AceRequest {
+            categories: Some(vec!["MZ".to_string(), "FS".to_string()]),
+            ..req
+        };
+        let sigma = vec![
+            1.0, 1.5, 0.0, //
+            1.5, 1.0, 0.0, //
+            0.0, 0.0, 1.0,
+        ];
+        let covariance = with(3, sigma);
+        let pairs = super::fit(&cells, &req, Some(&covariance)).unwrap();
+        let t = &pairs.traits[0];
+        assert_eq!(t.a.unwrap().se, Err(Reason::NegativeVariance));
+        assert_eq!(t.c.unwrap().se, Err(Reason::NegativeVariance));
+        near(se(t.e), 1.0, 1e-14);
+        let gls = super::fit(&cells, &weighted(Weights::Gls, &req), Some(&covariance)).unwrap();
+        let t = &gls.traits[0];
+        for x in [t.a, t.c, t.e] {
+            assert_eq!(x, Err(Reason::CovarianceNotPositiveDefinite));
+        }
+        let tree = gls.to_value();
+        let Value::List(traits) = lookup(&tree, "traits") else {
+            panic!("traits is not a list")
+        };
+        assert_eq!(
+            lookup(&traits[0], "A_se_reason"),
+            &Value::Str("covariance_not_positive_definite")
+        );
+        let method = lookup(&tree, "method");
+        assert!(matches!(lookup(method, "weights"), Value::Str(text) if text.starts_with("gls")));
+        assert_eq!(
+            lookup(lookup(&tree, "settings"), "weights"),
+            &Value::Str("gls")
+        );
+    }
+
+    #[test]
+    fn weights_by_the_covariance_need_one_of_the_cells() {
+        let (cells, req) = falconer();
+        for weights in [Weights::InverseVariance, Weights::Gls] {
+            let err = super::fit(&cells, &weighted(weights, &req), None).unwrap_err();
+            assert_eq!(err, Error::MissingCovariance { weights });
+            assert_eq!(err.code(), "missing_covariance");
+        }
+        let err = super::fit(&cells, &req, Some(&with(2, vec![1.0, 0.0, 0.0, 1.0]))).unwrap_err();
+        assert_eq!(
+            err,
+            Error::CovarianceShapeMismatch {
+                cells: 3,
+                expected_length: 9,
+                actual_length: 4
+            }
+        );
+        assert_eq!(err.code(), "covariance_shape_mismatch");
+        assert_eq!(
+            Covariance::new(2, vec![1.0; 4], Some(vec![1.0; 3]), None),
+            Err(Error::CovarianceShapeMismatch {
+                cells: 2,
+                expected_length: 4,
+                actual_length: 3
+            })
+        );
+        assert!(Covariance::new(2, vec![1.0; 4], None, Some(vec![2.0; 4])).is_ok());
+    }
+
+    fn default(req: &AceRequest) -> AceRequest {
+        AceRequest {
+            weights: None,
+            ..req.clone()
+        }
+    }
+
+    /// `noisy_cells` with a covariance like a result's whose trait-1 block
+    /// has no Cholesky factor (two of its cells correlate 1.5), and one
+    /// cell of each trait with no SE.
+    fn one_trait_indefinite() -> (Vec<AceCell>, Covariance, [usize; 2]) {
+        let cells = noisy_cells();
+        let n = cells.len();
+        let of = |t: usize| -> Vec<usize> {
+            (0..n)
+                .filter(|&i| cells[i].first_trait == t && cells[i].second_trait == t)
+                .collect()
+        };
+        let (zero, one) = (of(0), of(1));
+        let mut sigma = like_a_result(&cells);
+        let (i, j) = (one[0], one[1]);
+        let product = (sigma[i * n + i] * sigma[j * n + j]).sqrt();
+        sigma[i * n + j] = 1.5 * product;
+        sigma[j * n + i] = 1.5 * product;
+        let without = [zero[3], one[3]];
+        for k in without {
+            for x in 0..n {
+                sigma[k * n + x] = f64::NAN;
+                sigma[x * n + k] = f64::NAN;
+            }
+        }
+        (cells, with(n, sigma), without)
+    }
+
+    #[test]
+    fn the_default_takes_gls_per_fit_and_pairs_where_its_block_has_no_factor() {
+        let (cells, covariance, [no_se_0, no_se_1]) = one_trait_indefinite();
+        let req = request(Components::AC, Some(SHARED));
+        let fit = |w: Option<Weights>| {
+            let req = AceRequest {
+                weights: w,
+                ..req.clone()
+            };
+            super::fit(&cells, &req, Some(&covariance)).unwrap()
+        };
+        let (by_default, gls, pairs) = (
+            fit(None),
+            fit(Some(Weights::Gls)),
+            fit(Some(Weights::Pairs)),
+        );
+        let weights = |f: &AceFit| {
+            let mut out: Vec<Weights> = f.traits.iter().map(|t| t.weights).collect();
+            out.extend(f.cross.as_ref().map(|c| c.weights));
+            out
+        };
+        assert_eq!(
+            weights(&by_default),
+            [Weights::Gls, Weights::Pairs, Weights::Gls]
+        );
+        assert_eq!(weights(&gls), [Weights::Gls; 3]);
+        assert_eq!(by_default.traits[0], gls.traits[0]);
+        assert_eq!(by_default.traits[1], pairs.traits[1]);
+        let t = &gls.traits[1];
+        for x in [t.a, t.c, t.e] {
+            assert_eq!(x, Err(Reason::CovarianceNotPositiveDefinite));
+        }
+        let (d, g) = (
+            by_default.cross.as_ref().unwrap(),
+            gls.cross.as_ref().unwrap(),
+        );
+        assert_eq!([d.s_a, d.s_c, d.s_e], [g.s_a, g.s_c, g.s_e]);
+        assert_eq!(d.rows, g.rows);
+        assert_eq!(d.r_a.unwrap().se, Err(Reason::RowWithoutSe));
+        assert_eq!(g.r_a, Err(Reason::CovarianceNotPositiveDefinite));
+        // The pairs fit takes a row with no SE; the gls fit leaves it out.
+        assert_eq!(by_default.rows[no_se_0].value, Err("no_se".to_string()));
+        assert!(!by_default.traits[0].rows.contains(&no_se_0));
+        assert!(by_default.rows[no_se_1].value.is_ok());
+        assert!(by_default.traits[1].rows.contains(&no_se_1));
+        assert_eq!(
+            by_default.traits[1].a.unwrap().se,
+            Err(Reason::RowWithoutSe)
+        );
+        assert_eq!(gls.rows[no_se_1].value, Err("no_se".to_string()));
+        let tree = by_default.to_value();
+        assert_eq!(
+            lookup(lookup(&tree, "settings"), "weights"),
+            &Value::Str("default")
+        );
+        let Value::List(traits) = lookup(&tree, "traits") else {
+            panic!("traits is not a list")
+        };
+        assert_eq!(lookup(&traits[1], "weights"), &Value::Str("pairs"));
+        assert_eq!(
+            lookup(lookup(&tree, "cross"), "weights"),
+            &Value::Str("gls")
+        );
+        let method = lookup(&tree, "method");
+        assert!(
+            matches!(lookup(method, "weights"), Value::Str(text) if text.starts_with("default"))
+        );
+    }
+
+    #[test]
+    fn the_default_is_pairs_without_the_covariance_read_or_for_phi() {
+        let cells = noisy_cells();
+        let req = request(Components::AC, Some(SHARED));
+        let pairs = fit(&cells, &req).unwrap();
+        let by_default = fit(&cells, &default(&req)).unwrap();
+        assert_eq!(by_default.traits, pairs.traits);
+        assert_eq!(by_default.cross, pairs.cross);
+        assert_eq!(by_default.rows, pairs.rows);
+        let covariance = with(cells.len(), like_a_result(&cells));
+        let phi = AceRequest {
+            estimator: Estimator::Phi,
+            ..default(&req)
+        };
+        let phi_cov = Covariance::new(
+            cells.len(),
+            like_a_result(&cells),
+            Some(like_a_result(&cells)),
+            None,
+        )
+        .unwrap();
+        let fit_phi = super::fit(&cells, &phi, Some(&phi_cov)).unwrap();
+        assert!(fit_phi.traits.iter().all(|t| t.weights == Weights::Pairs));
+        let explicit = AceRequest {
+            weights: Some(Weights::Pairs),
+            ..phi.clone()
+        };
+        assert_eq!(
+            fit_phi.traits,
+            super::fit(&cells, &explicit, Some(&phi_cov))
+                .unwrap()
+                .traits
+        );
+        // A covariance without the phi matrix is not the covariance read.
+        let no_phi = super::fit(&cells, &phi, Some(&covariance)).unwrap();
+        assert!(no_phi.traits.iter().all(|t| t.weights == Weights::Pairs));
+        let gls = super::fit(&cells, &default(&req), Some(&covariance)).unwrap();
+        assert!(gls.traits.iter().all(|t| t.weights == Weights::Gls));
+        let explicit =
+            super::fit(&cells, &weighted(Weights::Gls, &req), Some(&covariance)).unwrap();
+        assert_eq!(gls.traits, explicit.traits);
+        assert_eq!(gls.cross, explicit.cross);
+        assert_eq!(gls.rows, explicit.rows);
     }
 }

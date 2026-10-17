@@ -40,9 +40,12 @@
 .native_regression_parent_offspring <- function(pedigree, trait, stratum, lines, inference) {
   .Call(wrap__regression_parent_offspring, pedigree, trait, stratum, lines, inference)
 }
-.native_relative_pairs_correlation <- function(pedigree, traits, stratum, names, members, memory_budget_bytes, se) {
-  .Call(wrap__relative_pairs_correlation, pedigree, traits, stratum, names, members, memory_budget_bytes, se)
+.native_relative_pairs_correlation <- function(pedigree, traits, stratum, names, members, memory_budget_bytes, se,
+                                              covariance) {
+  .Call(wrap__relative_pairs_correlation, pedigree, traits, stratum, names, members, memory_budget_bytes, se, covariance)
 }
-.native_relative_pairs_ace <- function(cells, categories, components, shared_environment, estimator, estimate) {
-  .Call(wrap__relative_pairs_ace, cells, categories, components, shared_environment, estimator, estimate)
+.native_relative_pairs_ace <- function(cells, categories, components, shared_environment, estimator, estimate, weights,
+                                      covariance) {
+  .Call(wrap__relative_pairs_ace, cells, categories, components, shared_environment, estimator, estimate, weights,
+        covariance)
 }

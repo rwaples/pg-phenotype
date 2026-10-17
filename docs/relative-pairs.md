@@ -9,8 +9,10 @@ additive genetic (A), common environment (C) and unique environment (E)
 shares and, with two traits, the cross-trait correlations rA, rC and rE.
 This page describes what both compute and what they return.  The reasons
 behind the design are in [ADR 0009](adr/0009-relative-pair-correlation.md),
-[ADR 0012](adr/0012-relative-pair-strata-two-traits-and-the-ace-fit.md) and,
-for the SE, [ADR 0013](adr/0013-relative-pair-se-clusters-by-common-ancestor.md).
+[ADR 0012](adr/0012-relative-pair-strata-two-traits-and-the-ace-fit.md),
+for the SE [ADR 0013](adr/0013-relative-pair-se-clusters-by-common-ancestor.md),
+and for the covariance, the Within-Person SE and the ACE Fit's SE and
+weights [ADR 0014](adr/0014-ace-fit-se-from-the-cells-covariance.md).
 The comparison with simACE is in
 [the gate report](gates/relative-pairs/README.md).
 
@@ -27,22 +29,25 @@ res = relative_pairs.correlation(
     categories=["MZ", "FS", "MHS", "PHS", {"PO": ["MO", "FO"]}, "1C"],
     stratum=generation,  # None by default
     se=True,  # False by default
+    covariance=True,  # False by default; needs se=True
 )
 fs = res.cell("FS")  # trait 0 in both members
 fs.primary.value, fs.primary.se, fs.n, fs.stratified.estimate.value, fs.strata[3].n
 res.cell("FS", first_trait=0, second_trait=1).n_entries
-res.within_person.primary.value
+res.within_person.primary.value, res.within_person.primary.se
+res.covariance.stratified  # (n, n): the cells in order, then within_person
 
-fit = relative_pairs.ace(res, shared_environment=["MZ", "FS", "MHS"])
-fit.traits[0].A, fit.traits[0].C, fit.traits[0].E
-fit.cross.rA, fit.cross.rC, fit.cross.rE
+fit = relative_pairs.ace(res, shared_environment=["MZ", "FS", "MHS"])  # gls per solve: the result has the covariance
+fit.traits[0].A, fit.traits[0].A_se, fit.traits[0].C, fit.traits[0].E
+fit.cross.rA, fit.cross.rA_se, fit.cross.rC, fit.cross.rE
+fit.traits[0].weights, fit.cross.weights  # "gls", or "pairs" where gls has no Cholesky factor
 ```
 
 ```r
 ped <- pedigree(ped_df)
 res <- relative_pairs_correlation(ped, list(trait(ped_df$liability1), trait(ped_df$liability2)),
                                   categories = list("MZ", "FS", "MHS", "PHS", PO = c("MO", "FO"), "1C"),
-                                  stratum = ped_df$generation, se = TRUE)
+                                  stratum = ped_df$generation, se = TRUE, covariance = TRUE)
 fit <- relative_pairs_ace(res, shared_environment = c("MZ", "FS", "MHS"))
 ```
 
@@ -52,8 +57,9 @@ fit <- relative_pairs_ace(res, shared_environment = c("MZ", "FS", "MHS"))
 | `traits` | A continuous or binary `Trait` on the pedigree's rows, or a sequence of one or two of one kind | required |
 | `categories` | The entries, in order: Relationship Category codes (`"FS"`, `"MO"`, `"1C"`) and mappings of a Category Group's name to its codes (`{"PO": ["MO", "FO"]}`; R: a named list element) | `None`: every category up to degree 3 |
 | `stratum` | One integer label per row (a generation, a birth cohort), NA where unknown | `None` (no strata) |
-| `memory_budget_bytes` | The bound on the engine's accumulators, with two traits the within-person accumulator, and with `se` the per-cluster sums | 2^30 (1 GiB) |
+| `memory_budget_bytes` | The bound on the engine's accumulators, with two traits the within-person accumulator, with `se` the per-cluster sums, and with `covariance` the per-key sums, the matrices and the kinship kernel | 2^30 (1 GiB) |
 | `se` | Whether every estimate gets its cluster sandwich SE; see [SE](#se) | `False` |
+| `covariance` | With `se`, whether the result carries the covariance of the estimates `ace` reads, and with two traits the Within-Person SE; see [Covariance](#covariance) | `False` |
 
 The thread count is the package budget (`configure_threads`, or
 `PG_PHENOTYPE_THREADS`).  Traits and strata are matched to the pedigree's
@@ -223,16 +229,84 @@ the influence of its stratum-standardised Pearson or its Polychoric Fit.
 | `boundary` | The tetrachoric fit stopped at a bound |
 | `sandwich_undefined` | The two-step fit's Hessian is not negative definite, or the meat is not a number |
 | `degenerate_meat` | The meat is zero to within rounding: over n entries, at most max(1024, 4 sqrt(n)) eps of its scale, its three sums of squares added as if every entry had the influence 1/n.  A cell whose pairs share one MRCA, or whose estimate is ±1, has a meat of zero |
-| `negative_meat` | The inclusion-exclusion meat is negative |
-| `within_person` | The within-person cell, which has no cluster design |
+| `negative_meat` | The inclusion-exclusion meat is negative, or a within-person estimate's Kinship Kernel is (see [Within-Person SE](#within-person-se)) |
+| `within_person` | A within-person estimate under `se=True` alone.  Its SE is the kinship kernel, which only `covariance=True` computes |
 
 The SE is computed in the same pass over the pedigree as the cells, from
 exact per-cluster sums kept beside the engine's.  These cost memory, held
 to `memory_budget_bytes`, and time.  On a 120k-row pedigree the call
 takes 1.5-1.6 times as long with one trait and 2.4-3.7 times with two
 traits and generation strata at one thread, and 1.6-1.8 and 2.1-3.3 times
-at eight.  Without `se` the call does neither.  The SEs do not depend on the thread count.  Near the budget
-edge, whether the call raises `memory_budget_exceeded` can.
+at eight.  Without `se` the call does neither.  The SEs do not depend on
+the thread count.  Near the budget edge, whether the call raises
+`memory_budget_exceeded` can.
+
+## Covariance
+
+The ACE Fit pools many cells, and those cells share people and MRCAs
+across categories, so its SE needs the covariance between the cells'
+estimates.  `covariance=True` (with `se=True`; alone it raises
+`ValueError`) adds `res.covariance`, a frozen `CellCovariance` with one
+matrix per form `ace` reads:
+
+| Field | Estimates | Present |
+|---|---|---|
+| `pooled` | Each cell's pooled primary estimate, `crude[0]` | always |
+| `phi` | Each cell's pooled phi | binary traits |
+| `stratified` | Each cell's `stratified` estimate | with `stratum` |
+
+Each matrix is a read-only `(n, n)` NumPy array (R: a matrix with
+dimnames such as `"FS:1:2"` and `"within_person:1:2"`).  Rows and columns
+are `res.cells` in order, then `within_person` with two traits, so n is
+`len(res.cells)`, plus 1 with two traits.  Entry `(j, k)` is
+`Cov(r_j, r_k)`: the SE's three sums joined across the two estimates, so
+two entries count once when they share an MRCA or a member, whichever
+cells they are in.  A within-person row and a pair count together when
+the row is one of the pair's members.  Stratum cells and blocks across
+forms are left out, because one fit reads one form.
+
+The diagonal is each estimate's meat: `sqrt(cov[j, j])` equals that
+estimate's `se` bit for bit.  The row and column of an estimate with no SE
+are NaN, its diagonal included.
+
+The matrices do not depend on the thread count or on how the sweeps were
+batched.  Their sums come from the SE's sweeps and are held until the end
+of the call.  They count against `memory_budget_bytes`: an estimate of
+them that does not fit raises `memory_budget_exceeded` with operation
+`relative_pairs_covariance`, after the pass and before the sweeps.  On the
+120k-row pedigree above, `covariance=True` adds 3-6% to the `se=True`
+call with one trait and 20-35% with two traits and generation strata, the
+Within-Person SE included.  With two traits and `categories=["MZ"]` it
+takes 1.4-2.3 times the `se=True` call, since the kernel traverses every
+degree-2 category.  `settings` reports `covariance`.
+
+### Within-Person SE
+
+With two traits and `covariance=True`, every within-person estimate,
+pooled, stratum and `stratified`, gets an SE.  Each row is one entry, its
+own pair.  Rows that are relatives are not independent, so the meat is a
+**Kinship Kernel**:
+
+```text
+meat = sum over rows i of psi_i^2 + 2 x sum over relative pairs (a, b) of psi_a psi_b
+```
+
+The pairs are every relative pair of degree at most 2 whose members are
+both rows of the estimate: MZ, MO, FO, FS, MHS, PHS, GP and Av.  The pass
+traverses these categories whether `categories` asks for them or not, and
+the requested cells do not change.  So the SE does not depend on the
+request.  Continuous influences are quantized to integers before the pass
+and their products summed exactly, so the SE does not depend on the
+thread count.
+
+The kernel is not positive semidefinite: a grandmother whose grandchildren
+are in different sibships can give a negative meat, reported as
+`negative_meat`.  Its degenerate test uses the scale (n + 2P) / n^2 over
+the estimate's n rows and P kernel pairs.  On 600 simACE reps
+(`docs/gates/relative-pairs-ace-se/`) SD(r̂)/SE is 0.88-1.07 and coverage
+0.89-0.98, and no within-person estimate lost its SE.  Under `se=True`
+alone the within-person estimates have no SE (`within_person`): the
+kernel would cost the `se=True` call more than 5%.
 
 ## Result
 
@@ -244,8 +318,9 @@ values come as nested lists with the same names, `NULL` where Python has
 |---|---|
 | `cells` | Each entry's cells in request order, each entry's in the order above |
 | `within_person` | With two traits, the within-person `Cell`; `None` with one |
-| `settings` | `categories` (the entries' names), `trait_kind`, `memory_budget_bytes`, `threads`, `se` (whether the SE was asked for), `quantization_exponents`, `quantization_steps` (both `None` for binary traits) |
-| `method` | `entry`, `traits`, `within_person`, `estimators`, `quantization`, `strata`, `se`: the method in words |
+| `covariance` | With `covariance=True`, the `CellCovariance`; see [Covariance](#covariance). `None` without |
+| `settings` | `categories` (the entries' names), `trait_kind`, `memory_budget_bytes`, `threads`, `se` (whether the SE was asked for), `covariance` (whether the covariance was), `quantization_exponents`, `quantization_steps` (both `None` for binary traits) |
+| `method` | `entry`, `traits`, `within_person`, `estimators`, `quantization`, `strata`, `se`, `covariance`: the method in words |
 | `metadata` | `pg_phenotype_version`, `pedigree_graph_core_rev` |
 
 | `Cell` field | Contents |
@@ -292,14 +367,8 @@ rA = sA / sqrt(A_1 A_2)    rC = sC / sqrt(C_1 C_2)    rE = sE / sqrt(E_1 E_2)
 Each trait's unknowns are the weighted least-squares solution over its
 same-trait cells.  The cross-trait unknowns are solved over the cross-trait
 cells (a directed entry's (0, 1) and (1, 0) both) and the within-person
-cell.  A row's weight counts what is behind the value it reads, the pooled
-cell or `Stratified`.  A same-trait row weighs its pairs, `n`, and the
-within-person row its rows, `n`.  A cross-trait row weighs its complete
-orientations, so each counts once: a symmetric cell's `n_entries`, a
-directed cell's `n`, since each of its (0, 1) and (1, 0) cells holds one
-orientation of a pair.  A directed pair complete both ways then weighs as
-much in the cross solve as a symmetric one.  Values are unconstrained.
-The ACE Fit has no SE yet (issue #19).
+cell.  Values are unconstrained.  The weights are one of three; see
+[Weights](#weights).
 
 A component that no row informs does not take the others with it.  When
 no same-trait row that entered is a Shared-Environment Category's, C is
@@ -320,17 +389,97 @@ other design with fewer independent rows than unknowns gives
 | `shared_environment` | The Shared-Environment Categories' codes; required with C | `None` |
 | `estimator` | `"primary"` (Pearson or tetrachoric) or `"phi"` | `"primary"` |
 | `estimate` | `"stratified"` or `"pooled"` | `None`: stratified when the result has strata, else pooled |
+| `weights` | `"pairs"`, `"inverse_variance"` or `"gls"`; see [Weights](#weights) | `None`: `"pairs"` for phi or without the covariance of the estimate read; else `"gls"` per solve, `"pairs"` for a solve whose covariance has no Cholesky factor |
 
 The library never assumes which categories share C.  Under simACE's rule,
 where the household follows the mother, they are MZ, FS and MHS, and PHS
 is not.  A cell without a stratified form leaves a stratified fit with the
 reason `no_stratified_form`.
 
+### Weights
+
+| `weights` | A row's weight | Needs |
+|---|---|---|
+| `"pairs"` | What is behind the value it reads, the pooled cell or `Stratified`: a same-trait row's pairs, `n`; the within-person row's rows, `n`; a cross-trait row's complete orientations, each once (a symmetric cell's `n_entries`, a directed cell's `n`) | nothing |
+| `"inverse_variance"` | `1 / Var(r_k)`, the covariance's diagonal | the covariance of the estimate read |
+| `"gls"` | The inverse of the covariance of the rows that entered, through its Cholesky factor | the covariance of the estimate read |
+
+Under `"pairs"` a directed pair complete both ways weighs as much in the
+cross solve as a symmetric one, since each of its (0, 1) and (1, 0) cells
+holds one orientation.  Under `"inverse_variance"` and `"gls"` a row whose
+estimate has no SE cannot be weighted, so it leaves the fit with the row
+reason `no_se`.  `weights="gls"` asked for refuses a covariance block with
+no Cholesky factor: the solve's values and SEs are
+`covariance_not_positive_definite`, with no fallback.
+`"inverse_variance"` or `"gls"` without the covariance of the estimate
+read raises `missing_covariance`.
+
+Under `"pairs"` a row whose estimate has no SE still enters, so every value
+that reads it gets the SE reason `row_without_se`.  The row's variance is
+part of the value's, and it is unknown.  This happens with a tiny cell and
+with a tetrachoric fit at its boundary, as a small MZ cell's often is.  To
+get those SEs, leave the category out with `categories=`, or use
+`"inverse_variance"` or `"gls"`, which leave the row out (`no_se`).  Phi
+meets this most, since its default is `"pairs"`.
+
+The default, `weights=None`, is resolved in the core, one solve at a time.
+It is `"pairs"` for phi and for a result without the covariance of the
+estimate read; a result without `covariance=True` fits exactly as in
+v0.4.0.  Otherwise each trait's solve and the cross solve take `"gls"`
+when the covariance of the rows that entered has a Cholesky factor, and
+`"pairs"` when it has none, that solve alone.  Small pedigrees often lack
+one: on `tests.pedigrees.random_pedigree(3, n_founders=40)` to `1000` with
+two continuous traits, a trait's block has a smallest eigenvalue of -0.007
+to -0.042.  Each `TraitShares` and the `CrossShares` record the weighting
+their solve used in `weights`.  `settings["weights"]` records the request:
+the name given, or `"default"`.
+
+Guidance, from 600 simACE reps
+([gate report](gates/relative-pairs-ace-se/README.md)):
+
+- Continuous traits: `"gls"`.  Its spread is 0.78-0.85 of `"pairs"`'s for
+  A, E, sA, rA, sE and rE at equal or better calibration.
+- Tetrachoric: `"gls"` gains little (0.90-0.97 for A, sA and rA, about 1
+  for C and E), and its SD/SE runs higher than under `"pairs"` (median
+  up to 1.17 against 1.05).  It keeps an SE where `"pairs"` loses it: a
+  boundary MZ tetrachoric has no SE, so under `"pairs"` every value that
+  reads it gets `row_without_se`, while `"gls"` leaves the cell out.
+- Phi: `"pairs"`.  At prevalence 0.02 `"inverse_variance"` and `"gls"`
+  gave SD/SE of 1.54-6.06 for A, C and E and coverage down to 0.01.
+- A covariance block that is not positive definite: `"pairs"`, which the
+  default takes for that solve.
+
+### The fit's SE
+
+With the result's covariance, every value has an SE.  With the weights
+fixed, each solve is linear in the cells it reads, `theta = G r`, so a
+value's SE is `sqrt(g Sigma g')`: g its row of G and Sigma the cells'
+covariance of the estimate read.  E = 1 - A - C and the cross-trait
+correlations take the delta method through the trait and cross solves
+together, so their covariance enters rA, rC and rE.  The sum runs over
+g's support, the entries above the solve's rounding bound, so a row whose
+coefficient is zero does not reach the SE.  The weights are treated as
+fixed: GLS's SE does not count the noise in its estimated weights.
+
+Without the covariance of the estimate read, every SE is `None` with
+`no_covariance` and the values stand.  `AceRow.variance` is the row's
+`Sigma_kk`.
+
+On 600 simACE reps C, sC, sE and rE calibrate under every weighting:
+median SD/SE 0.89-1.03, coverage 0.96-0.98.  Continuous A, E, sA and rA
+spread 7-21% more than their SE under every weighting (coverage
+0.89-0.94).  Against each rep's realized truth their SE is not too small;
+the realized truth itself varies across reps by 0.4-1.1 SE.  That fits a
+rep-level common shock, such as the realized genetic variance, which no
+within-sample SE covers.  The mechanism is unverified, and E2 is short
+against its realized truth too.  The SE describes the error around the
+sample's realized truth; widen it for the spread across populations.
+
 ### Recipes
 
-A call that identifies the model exactly is a closed form.  `r` is the
-value the fit reads: by default the stratified fit's when the result has
-strata.
+A call that identifies the model exactly is a closed form, under any
+weights.  `r` is the value the fit reads: by default the stratified fit's
+when the result has strata.
 
 | Estimator | Call | Gives |
 |---|---|---|
@@ -341,7 +490,7 @@ strata.
 | one category | `ace(res, categories=[code], components="A")` | `A = r / (2 phi)` |
 
 Two half-sib cells, `categories=["MHS", "PHS"], components="A"`, give 4
-times their pair-weighted mean.  Under household by mother MHS also carries
+times their pair-weighted mean under `"pairs"` weights.  Under household by mother MHS also carries
 C.  The parent-offspring regression slope is
 `pg_phenotype.regression.parent_offspring`'s.
 
@@ -361,15 +510,19 @@ shares.  Phi with the stratified form raises `no_stratified_form`.
 | `traits` | One `TraitShares` per trait |
 | `cross` | With two traits, `CrossShares`; `None` with one |
 | `rows` | One `AceRow` per cell considered, in the result's order, the within-person cell last |
-| `settings` | `categories`, `components`, `shared_environment`, `estimator`, `estimate` (resolved) |
+| `settings` | `categories`, `components`, `shared_environment`, `estimator`, `estimate` as resolved, and `weights` as asked (`"default"` for `None`) |
 | `method` | `model`, `weights`, `solve`, `E`, `cross`, `se`: the method in words |
 | `metadata` | `pg_phenotype_version`, `pedigree_graph_core_rev` |
 
 | Type | Fields |
 |---|---|
-| `TraitShares` | `trait`, `A`, `C`, `E`, each with its `_reason`, and `rows` (the entries that entered) |
-| `CrossShares` | `sA`, `sC`, `sE`, `rA`, `rC`, `rE`, each with its `_reason`; `rA_out_of_range`, `rC_out_of_range`, `rE_out_of_range` (`abs(r) > 1`); `rows` |
-| `AceRow` | `entry`, `first_trait`, `second_trait`, `within_person`, `kinship`, `shared`, `value`, `weight`, `used`, `reason` |
+| `TraitShares` | `trait`, `A`, `C`, `E`, each with its `_reason`, `_se` and `_se_reason`; `rows` (the entries that entered); `weights` (the weighting its solve used) |
+| `CrossShares` | `sA`, `sC`, `sE`, `rA`, `rC`, `rE`, each with its `_reason`, `_se` and `_se_reason`; `rA_out_of_range`, `rC_out_of_range`, `rE_out_of_range` (`abs(r) > 1`); `rows`; `weights` |
+| `AceRow` | `entry`, `first_trait`, `second_trait`, `within_person`, `kinship`, `shared`, `value`, `weight`, `used`, `reason`, `variance` (`Sigma_kk`; `None` without the covariance or an SE) |
+
+Fields added since v0.4.0 (`covariance` on the result, every `_se` and
+`_se_reason`, `weights` and `variance`) come last with a `None` default,
+so positional construction from v0.4.0 still works.
 
 ## Reasons
 
@@ -384,10 +537,15 @@ A value that is `None` comes with one of these reasons.
 | `not_requested` | share | The component is not in `components` |
 | `not_identified` | share | The rows that entered do not determine it: no row informs it (C without a shared row; sC and sE without a shared cross-trait row), or the solve has fewer independent rows than unknowns. `sE` and `rE` need the within-person cell |
 | `nonpositive_component` | `rA`, `rC`, `rE` | The component is at most 0 in a trait |
+| `no_se` | `AceRow` | In a solve under `"inverse_variance"` or `"gls"`, the estimate has no SE, so the row cannot be weighted |
+| `covariance_not_positive_definite` | share, SE | `weights="gls"` asked for, and the covariance of the rows that entered the solve has no Cholesky factor |
+| `no_covariance` | SE | The result carries no covariance of the estimate read |
+| `row_without_se` | SE | Under `"pairs"`, the value reads a row whose estimate has no SE; see [Weights](#weights) |
+| `negative_variance` | SE | `g Sigma g'` is negative: the covariance is not positive semidefinite in the value's direction |
 
 An `AceRow` whose value is undefined carries the estimate's own reason and
-does not enter the fit.  An estimate's `se_reason` is listed under
-[SE](#se).
+does not enter the fit.  An SE whose value is undefined repeats the
+value's reason.  An estimate's `se_reason` is listed under [SE](#se).
 
 ## Errors
 
@@ -410,30 +568,36 @@ traits in order, then `stratum`, then `categories`, then the budget.
 | `mixed_category_group` | `ValidationError` | A group mixing symmetric and directed categories, or directed roles |
 | `insufficient_precision` | `ValidationError` | A continuous trait's quantization step above 2^-20 of its spread |
 | `parameter_out_of_range` | `ParameterError` | `memory_budget_bytes` below 1 |
-| `memory_budget_exceeded` | `ResourceError` | The accumulators, or with `se` the per-cluster sums (operation `relative_pairs_se`), do not fit the budget |
-| `allocation_failed` | `ResourceError` | With `se`, the allocator refused the per-cluster sums |
+| `memory_budget_exceeded` | `ResourceError` | The accumulators, or with `se` the per-cluster sums (operation `relative_pairs_se`), or with `covariance` the per-key sums, the matrices or the kinship kernel (operation `relative_pairs_covariance`), do not fit the budget |
+| `allocation_failed` | `ResourceError` | With `se` or `covariance`, the allocator refused the sums |
 | `unknown_entry` | `ValidationError` | An `ace` `categories` name that is no entry of the result |
 | `mixed_kinship` | `ValidationError` | A group fitted whose categories differ in degree |
 | `mixed_shared_environment` | `ValidationError` | A group fitted with categories both in and out of `shared_environment` |
 | `missing_shared_environment` | `ValueError` | C fitted without `shared_environment` |
 | `no_stratified_form` | `ValueError` | The stratified form with phi, or of a result no cell of which has one |
 | `missing_estimator` | `ValueError` | Phi asked of a continuous cell |
+| `missing_covariance` | `ValueError` | `weights` `"inverse_variance"` or `"gls"` without the result's covariance of the estimate read |
+| `covariance_shape_mismatch` | `ValidationError` | The result's covariance is not over its cells |
 
 A Python `ValueError` carries the message alone.  R raises these as
 `pgphenotype_usage_error` with the code.  `ace` also raises `ValueError`
-for a `components`, `estimator` or `estimate` that is not one of its
-values.
+for a `components`, `estimator`, `estimate` or `weights` that is not one
+of its values, and `correlation` for `covariance=True` without
+`se=True`.
 
 ## Caveats
 
 - The SE is a Wald SE: no CI is reported, and in a sparse binary cell (under
   about one expected concordant pair) the Wald interval fails under every
   cluster design ([ADR 0013](adr/0013-relative-pair-se-clusters-by-common-ancestor.md)).
-  The ACE Fit has no SE yet (#19).
+- The ACE Fit's continuous A, E, sA and rA SEs are 7-21% short of the
+  spread across simACE reps, though calibrated against each rep's realized
+  truth ([ADR 0014](adr/0014-ace-fit-se-from-the-cells-covariance.md)).
+  Its SEs treat the weights as fixed.
 - The ACE model assumes no assortative mating, no dominance, and C shared
   in full by the declared categories and not at all by the others.
-- Count weights let a large cell dominate the fit, and the fit
-  reports no residual or goodness of fit.
+- Under `"pairs"` a large cell dominates the fit.  The fit reports no
+  residual or goodness of fit.
 - The latent estimator assumes a bivariate-normal liability.  A censored
   age-dependent diagnosis counts a relative not yet diagnosed as
   unaffected, which attenuates the tetrachoric.

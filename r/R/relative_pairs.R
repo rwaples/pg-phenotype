@@ -56,18 +56,43 @@
 #'   epsilons of its scale over n entries, as when a cell's pairs share one
 #'   MRCA or its estimate is +-1),
 #'   `"negative_meat"` (the meat is negative) or `"within_person"` (the
-#'   Within-Person cell has no cluster design).  The SE comes from the same
+#'   Within-Person SE comes with the covariance).  The SE comes from the same
 #'   pass over the pedigree as the cells, costs 1.5 to 1.8 times the call's
 #'   time with one trait and 2.1 to 3.7 times with two traits and strata,
 #'   and does not depend on the thread count.
+#' @param covariance With `se = TRUE`, `TRUE` also gives `covariance`: the
+#'   covariance of the estimates [relative_pairs_ace()] reads (ADR 0014).
+#'   Its sums come from the SE's sweeps, joined across cells, so two pairs'
+#'   entries count together when the pairs share an MRCA or a member,
+#'   whichever cells they are in; they do not depend on the thread count and
+#'   count against `memory_budget_bytes`.  They add 3 to 6% to the SE's time
+#'   with one trait and 20 to 35% with two traits and strata, the
+#'   within-person kernel's included.  With two
+#'   traits it also gives every within-person estimate its SE: each row is an
+#'   entry, and the meat is its rows' squared influences plus twice their
+#'   products over every relative pair of degree at most 2 (MZ, MO, FO, FS,
+#'   MHS, PHS, GP, Av) between its rows, a kinship kernel that can come out
+#'   negative (`"negative_meat"`).  The pass traverses those categories
+#'   whether `categories` asks for them or not, and the cells stay as they
+#'   are: two traits' covariance for MZ alone takes 1.4 to 2.3 times the
+#'   SE's time.  `TRUE` without `se = TRUE` is an error.
 #' @return An object of class `pgphenotype_relative_pairs`: a list with
 #'   `cells` (each entry's, in request order: one with one trait; with two,
 #'   a symmetric entry's trait 1 x 1, 2 x 2, 1 x 2 and a directed entry's
 #'   1 x 1, 1 x 2, 2 x 1, 2 x 2), `within_person` (with two traits, a cell
 #'   over the rows; `NULL` with one), `settings` (`se`, whether the SE was
-#'   asked for, and with continuous traits' `quantization_exponents` and
-#'   `quantization_steps`, one per trait),
-#'   `method` and `metadata`.  Each cell holds `category` (the code, the
+#'   asked for, `covariance`, whether the covariance was, and with
+#'   continuous traits' `quantization_exponents` and `quantization_steps`,
+#'   one per trait), `covariance` (with `covariance = TRUE`; else `NULL`),
+#'   `method` and `metadata`.  `covariance` holds `pooled` (each cell's
+#'   primary estimate in `crude`), `phi` (binary traits; else `NULL`) and
+#'   `stratified` (with `stratum`; else `NULL`): square matrices over the
+#'   cells in order and then, with two traits, `within_person`, named
+#'   `"category:first_trait:second_trait"` (`"FS:1:2"`,
+#'   `"within_person:1:2"`).  Entry `[j, k]` is the covariance of the two
+#'   cells' estimates; the diagonal is each SE squared, and the row and
+#'   column of an estimate with no SE are `NaN`.  A within-person row and a
+#'   pair count together when the row is one of the pair's members.  Each cell holds `category` (the code, the
 #'   group's name, or `"within_person"`), `members`, `symmetric`, `roles`
 #'   (`NULL` when symmetric), `first_trait` and `second_trait` (the traits,
 #'   counted from 1, read in the first member and the second), `n`
@@ -111,21 +136,37 @@
 #' r <- relative_pairs_correlation(ped, list(x, y), categories = c("FS", "MO"))
 #' r$within_person
 #' relative_pairs_correlation(ped, x, categories = c("FO", "FS"), se = TRUE)
+#' relative_pairs_correlation(ped, x, categories = c("FO", "FS"), se = TRUE, covariance = TRUE)$covariance
 #' @export
 relative_pairs_correlation <- function(pedigree, traits, categories = NULL, stratum = NULL,
-                                       memory_budget_bytes = 2^30, se = FALSE) {
+                                       memory_budget_bytes = 2^30, se = FALSE, covariance = FALSE) {
   call <- sys.call()
   pedigree <- .pgp_pedigree_arg(pedigree, call)
   traits <- .pgp_trait_list(traits, call)
   entries <- .pgp_category_entries(categories, call)
   budget <- .pgp_number(memory_budget_bytes, "memory_budget_bytes", call)
   se <- .pgp_flag(se, "se", call)
+  covariance <- .pgp_flag(covariance, "covariance", call)
+  if (covariance && !se) .pgp_usage("`covariance = TRUE` needs `se = TRUE`", call)
   raw <- .pgp_call(
-    .native_relative_pairs_correlation(pedigree, traits, stratum, entries$names, entries$members, budget, se), call
+    .native_relative_pairs_correlation(pedigree, traits, stratum, entries$names, entries$members, budget, se,
+                                       covariance),
+    call
   )
   raw$cells <- lapply(raw$cells, .pgp_traits_from_one)
   if (!is.null(raw$within_person)) raw$within_person <- .pgp_traits_from_one(raw$within_person)
+  if (!is.null(raw$covariance)) raw$covariance <- .pgp_covariance(raw)
   structure(raw, class = "pgphenotype_relative_pairs")
+}
+
+# The covariance's row-major matrices as named R matrices, one per form.
+.pgp_covariance <- function(raw) {
+  cells <- c(raw$cells, if (!is.null(raw$within_person)) list(raw$within_person))
+  labels <- vapply(cells, function(cell) sprintf("%s:%d:%d", cell$category, cell$first_trait, cell$second_trait), "")
+  n <- raw$covariance$n
+  square <- function(x) if (!is.null(x)) matrix(x, n, n, byrow = TRUE, dimnames = list(labels, labels))
+  list(pooled = square(raw$covariance$pooled), phi = square(raw$covariance$phi),
+       stratified = square(raw$covariance$stratified))
 }
 
 # A cell's trait indices counted from 1, as R indexes `traits`.
@@ -200,12 +241,12 @@ print.pgphenotype_relative_pairs <- function(x, ...) {
 #' `r = 2 phi A_t + s C_t`, `phi = 2^-(degree+1)` the nominal kinship of its
 #' categories and `s` 1 for a Shared-Environment Category, else 0; a Category
 #' Group's members must share both.  Each trait's components are the weighted
-#' least-squares solution over its same-trait cells, each weighted by the
-#' unordered pairs that entered the estimate read (the pooled cell's `n`, or
-#' its `stratified$n`), with `E = 1 - A - C`.  A component not requested is
+#' least-squares solution over its same-trait cells, under `"pairs"` weights
+#' each weighted by the unordered pairs that entered the estimate read (the
+#' pooled cell's `n`, or its `stratified$n`), with `E = 1 - A - C`.  A component not requested is
 #' fixed at 0.  With two traits the cross-trait cells give
 #' `r12 = 2 phi sA + s sC` and the within-person cell `r_wp = sA + sC + sE`,
-#' solved together, a cross-trait cell weighted by its complete orientations so
+#' solved together, under `"pairs"` a cross-trait cell weighted by its complete orientations so
 #' each counts once (a symmetric cell's `n_entries` or `stratified$n_entries`,
 #' a directed cell's `n`) and the within-person cell by its `n`; then `rA = sA / sqrt(A_1 A_2)`, `rC` and `rE` alike.
 #' Values are as solved, unconstrained: a correlation is `NULL` with
@@ -215,7 +256,40 @@ print.pgphenotype_relative_pairs <- function(x, ...) {
 #' without a shared cell, C is `not_identified` and A is solved alone; without
 #' a shared cross-trait cell, sC and sE meet only in the within-person cell,
 #' which is left out, and sA is solved alone.  Otherwise fewer independent
-#' cells than unknowns gives `not_identified`.  There is no SE.
+#' cells than unknowns gives `not_identified`.
+#'
+#' With `result`'s covariance (`relative_pairs_correlation(..., se = TRUE,
+#' covariance = TRUE)`), each value has an SE (ADR 0014).  Each solve is
+#' linear in the cells it reads, `theta = G r`, so a value's SE is
+#' `sqrt(g Sigma g')`, `g` its row of `G` and `Sigma` the cells' covariance of
+#' the estimate read; `E` and the cross-trait correlations take the delta
+#' method through the trait and cross solves together.  Weights are treated
+#' as fixed.  Without the covariance every SE is `NULL` with `no_covariance`.
+#' A covariance that is not positive semidefinite in a value's direction gives
+#' `negative_variance`.
+#'
+#' Under `"pairs"` weights a cell with no SE (a tiny cell, or a tetrachoric
+#' fit at its boundary, as a small MZ cell's often is) still enters, so every
+#' value that reads it has `row_without_se`: that cell's variance is part of
+#' the value's, and it is unknown.  To get those SEs, leave the cell out with
+#' `categories`, or use `"inverse_variance"` or `"gls"`, which leave it out
+#' (row reason `no_se`).  Phi meets this most, since its default is
+#' `"pairs"`.
+#'
+#' `weights = "inverse_variance"` weighs each cell by `1 / Var(r)` and
+#' `"gls"` by the inverse of the entered cells' covariance; both need the
+#' covariance (`missing_covariance`) and leave out a cell with no SE.
+#' `"gls"` asked for refuses a covariance with no Cholesky factor: the
+#' solve's values and SEs are `covariance_not_positive_definite`.  The
+#' default (`NULL`) is `"pairs"` for phi, whose `"inverse_variance"` and
+#' `"gls"` fits are unreliable at low prevalence, and for a result without the
+#' covariance of the estimate read, which then fits exactly as before the
+#' covariance existed.  Otherwise the default fits each trait's solve and the
+#' cross solve apart: `"gls"` when that solve's entered cells' covariance has
+#' a Cholesky factor, else `"pairs"` for that solve alone, as small
+#' pedigrees' covariances often lack one.  Each trait and `cross` record the
+#' weighting their solve used in `weights`; `settings$weights` records the
+#' request, `"default"` for `NULL`.
 #'
 #' The binary primary estimate, the tetrachoric, is on the liability scale, so
 #' the shares are too, with no Dempster-Lerner step; `estimator = "phi",
@@ -241,17 +315,25 @@ print.pgphenotype_relative_pairs <- function(x, ...) {
 #' @param estimate `"stratified"` reads each cell's stratified fit, `"pooled"`
 #'   its pooled estimate; `NULL` is `"stratified"` when `result` has strata,
 #'   else `"pooled"`.
+#' @param weights `"pairs"` (each cell's count of what entered it),
+#'   `"inverse_variance"` or `"gls"`; `NULL` is the default: `"pairs"` for phi
+#'   or without the covariance of the estimate read, else `"gls"` per solve,
+#'   `"pairs"` for a solve whose covariance has no Cholesky factor.
 #' @return An object of class `pgphenotype_ace`: a list with `traits` (per
 #'   trait, its `trait` counted from 1, `A`, `C` and `E`, each with a
-#'   `_reason`, `NULL` unless the value is, `not_requested` or
-#'   `not_identified`, and `rows`, the entries that entered), `cross` (with two
-#'   traits: `sA`, `sC`, `sE`, `rA`, `rC`, `rE` with their `_reason`, each
-#'   correlation's `_out_of_range`, and `rows`; `NULL` with one trait), `rows`
-#'   (every cell considered: `entry`, `first_trait` and `second_trait` counted
-#'   from 1, `within_person`, `kinship`, `shared`, the `value` read, its
-#'   `weight` (a symmetric cross-trait cell's `n_entries`, else its `n`),
-#'   `used` and the `reason` it did not enter), `settings` (the request,
-#'   `estimate` resolved), `method` and `metadata`.
+#'   `_reason`, `NULL` unless the value is, `not_requested`, `not_identified`
+#'   or `covariance_not_positive_definite`, its SE `_se` and the SE's
+#'   `_se_reason`, `rows`, the entries that entered, and `weights`, the
+#'   weighting its solve used), `cross` (with two traits: `sA`, `sC`, `sE`,
+#'   `rA`, `rC`, `rE` with their `_reason`, `_se` and `_se_reason`, each
+#'   correlation's `_out_of_range`, `rows` and `weights`; `NULL` with one
+#'   trait), `rows` (every cell considered: `entry`, `first_trait` and
+#'   `second_trait` counted from 1, `within_person`, `kinship`, `shared`, the
+#'   `value` read, its `weight` (a symmetric cross-trait cell's `n_entries`,
+#'   else its `n`), its `variance` from the covariance, `used` and the
+#'   `reason` it did not enter), `settings` (the request, `estimate`
+#'   resolved, and `weights` as asked, `"default"` for `NULL`),
+#'   `method` and `metadata`.
 #' @examples
 #' ped <- data.frame(
 #'   id = 1:9,
@@ -263,7 +345,8 @@ print.pgphenotype_relative_pairs <- function(x, ...) {
 #' relative_pairs_ace(r, categories = "FS", components = "A")
 #' @export
 relative_pairs_ace <- function(result, categories = NULL, components = c("A", "C"),
-                               shared_environment = NULL, estimator = "primary", estimate = NULL) {
+                               shared_environment = NULL, estimator = "primary", estimate = NULL,
+                               weights = NULL) {
   call <- sys.call()
   if (!inherits(result, "pgphenotype_relative_pairs")) {
     .pgp_usage("`result` must come from relative_pairs_correlation()", call)
@@ -291,12 +374,19 @@ relative_pairs_ace <- function(result, categories = NULL, components = c("A", "C
     estimate <- if (any(vapply(result$cells, function(cell) !is.null(cell$stratified), TRUE))) "stratified" else "pooled"
   }
   estimate <- one_of(estimate, c("stratified", "pooled"), "estimate")
+  if (!is.null(weights)) weights <- one_of(weights, c("pairs", "inverse_variance", "gls"), "weights")
   cells <- lapply(result$cells, .pgp_ace_cell, within_person = FALSE)
   if (!is.null(result$within_person)) {
     cells <- c(cells, list(.pgp_ace_cell(result$within_person, within_person = TRUE)))
   }
+  # Row-major, as the core reads a covariance.
+  flat <- function(m) if (!is.null(m)) as.double(t(m))
+  covariance <- result$covariance
+  if (!is.null(covariance)) covariance <- list(flat(covariance$pooled), flat(covariance$phi), flat(covariance$stratified))
   raw <- .pgp_call(
-    .native_relative_pairs_ace(cells, categories, components, shared_environment, estimator, estimate), call
+    .native_relative_pairs_ace(cells, categories, components, shared_environment, estimator, estimate, weights,
+                               covariance),
+    call
   )
   raw$traits <- lapply(raw$traits, function(t) {
     t$trait <- t$trait + 1L
@@ -334,22 +424,26 @@ print.pgphenotype_ace <- function(x, ...) {
   cat("<pgphenotype_ace>\n")
   show <- function(fit, key) {
     value <- fit[[key]]
-    if (is.null(value)) paste(key, "undefined:", fit[[paste0(key, "_reason")]]) else sprintf("%s %.4f", key, value)
+    if (is.null(value)) return(paste(key, "undefined:", fit[[paste0(key, "_reason")]]))
+    se <- fit[[paste0(key, "_se")]]
+    if (is.null(se)) sprintf("%s %.4f", key, value) else sprintf("%s %.4f (SE %.4f)", key, value, se)
   }
   entries <- function(rows) if (length(rows) == 0L) "none" else paste(unlist(rows), collapse = ", ")
   for (t in x$traits) {
-    cat(sprintf("  trait %d: %s; from %s\n", t$trait,
-                paste(vapply(c("A", "C", "E"), function(k) show(t, k), ""), collapse = ", "), entries(t$rows)))
+    cat(sprintf("  trait %d: %s; from %s; %s weights\n", t$trait,
+                paste(vapply(c("A", "C", "E"), function(k) show(t, k), ""), collapse = ", "), entries(t$rows),
+                t$weights))
   }
   if (!is.null(x$cross)) {
     flagged <- function(k) {
       out <- show(x$cross, k)
       if (isTRUE(x$cross[[paste0(k, "_out_of_range")]])) paste(out, "(out of range)") else out
     }
-    cat(sprintf("  cross: %s; from %s\n",
+    cat(sprintf("  cross: %s; from %s; %s weights\n",
                 paste(vapply(c("sA", "sC", "sE", "rA", "rC", "rE"), flagged, ""), collapse = ", "),
-                entries(x$cross$rows)))
+                entries(x$cross$rows), x$cross$weights))
   }
-  cat(sprintf("  %s estimator, %s estimate\n", x$settings$estimator, x$settings$estimate))
+  cat(sprintf("  %s estimator, %s estimate, %s weights asked\n", x$settings$estimator, x$settings$estimate,
+              x$settings$weights))
   invisible(x)
 }

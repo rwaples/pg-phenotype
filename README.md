@@ -11,7 +11,7 @@ core; each method is a module on top.
 | Assortative mating: the Mate Correlation of one or two traits, ported from pedsum #13 | `pg_phenotype.assortative` | available |
 | Correlation estimators on their own: the tetrachoric correlation of a 2 x 2 table | `pg_phenotype.correlation` | available |
 | Parent-offspring regression: midparent, mother and father, with a Mate Network sandwich SE | `pg_phenotype.regression` | available |
-| Relative-Pair Correlation: one or two traits' correlation between relatives per relationship category and stratum, with an opt-in cluster SE, and the ACE Fit of A, C, E and rA, rC, rE from it | `pg_phenotype.relative_pairs` | available |
+| Relative-Pair Correlation: one or two traits' correlation between relatives per relationship category and stratum, with an opt-in cluster SE and covariance between cells, and the ACE Fit of A, C, E and rA, rC, rE from it, with SEs and GLS weights | `pg_phenotype.relative_pairs` | available |
 
 ## Python
 
@@ -137,6 +137,12 @@ both = relative_pairs.correlation(ped, traits=[pgp.Trait(liab1), pgp.Trait(liab2
 both.cell("FS", first_trait=0, second_trait=1).stratified.estimate.value  # cross-trait, within generations
 fit = relative_pairs.ace(both, shared_environment=["MZ", "FS", "MHS"])
 fit.traits[0].A, fit.traits[0].C, fit.traits[0].E, fit.cross.rA
+
+cov = relative_pairs.correlation(
+    ped, traits=[pgp.Trait(liab1), pgp.Trait(liab2)], stratum=generation, se=True, covariance=True
+)
+fit = relative_pairs.ace(cov, shared_environment=["MZ", "FS", "MHS"])  # GLS per solve by default here
+fit.traits[0].A, fit.traits[0].A_se, fit.cross.rA, fit.cross.rA_se
 ```
 
 One cell per category code or named Category Group (default: every
@@ -164,6 +170,13 @@ two traits add rA, rC and rE.  The closed forms, such as Falconer's
 `2 (r_MZ - r_FS)`, are calls that identify the model exactly
 ([reference](docs/relative-pairs.md),
 [ADR 0012](docs/adr/0012-relative-pair-strata-two-traits-and-the-ace-fit.md)).
+`covariance=True` (with `se=True`) adds the covariance between the cells'
+estimates and, with two traits, the within-person SE by a kinship kernel.
+From it `ace` reports an SE for every value and, by default for the
+primary estimator, weights each solve by GLS, or by pair counts where that
+solve's covariance has no Cholesky factor; without it `ace` fits by pair
+counts and reports no SE
+([ADR 0014](docs/adr/0014-ace-fit-se-from-the-cells-covariance.md)).
 
 ## Rows and alignment
 

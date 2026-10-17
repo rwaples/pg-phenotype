@@ -203,6 +203,33 @@ Category; with two traits, also the cross-trait genetic, common-environment
 and unique-environment correlations rA, rC, rE.
 _Avoid_: Falconer estimate (a special case), heritability regression
 
+**Cell Covariance**:
+The covariance between the estimates of a Relative-Pair Correlation's
+cells, one matrix per form the ACE Fit reads (pooled, phi, stratified).
+Two pairs count together when they share an MRCA or a member, whichever
+cells they are in; a person's within-person entry and a pair count together
+when the person is one of the pair's members.  Its diagonal is each
+estimate's SE squared.
+_Avoid_: cross-cell SE, Sigma (in prose)
+
+**Kinship Kernel**:
+The Within-Person Cross-Trait Correlation's SE design.  Each person is one
+entry, and every two people related at degree 2 or closer (MZ, MO, FO, FS,
+MHS, PHS, GP, Av) add the product of their influences, whichever categories
+were requested.  It is not a partition into clusters, and its meat can come
+out negative.
+_Avoid_: kinship cluster, relatedness cluster
+
+**Weights** (of the ACE Fit):
+How the ACE Fit weighs the cells it solves over: **pairs** (what entered
+each cell, counted once), **inverse variance** (each cell by 1 over its
+variance) or **GLS** (the inverse of the Cell Covariance of the cells that
+entered).  The default is chosen per solve: GLS for the primary estimator
+when the result carries the Cell Covariance of the form read and the
+entered cells' block has a Cholesky factor, else pairs.  Each solve
+records the weights it used.
+_Avoid_: count weights (say pairs), precision weights
+
 **Concordance**:
 A symmetric category's binary Relative Pairs counted unordered: both
 unaffected, discordant, both affected.  A directed category counts its
