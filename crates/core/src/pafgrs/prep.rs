@@ -23,7 +23,7 @@ use crate::error::{Error, Position};
 use crate::lineage::Terminals;
 use crate::pedigree::{checked_rows, Pedigree as Validated, PedigreeArg};
 use pedigree_graph_core::kinship::ancestry::AncestorSignatures;
-use pedigree_graph_core::kinship::pairwise::Walker;
+use pedigree_graph_core::kinship::pairwise::{KinshipRows, Walker};
 use pedigree_graph_core::kinship::KinshipPedigree;
 use pedigree_graph_core::relationships::{
     pair_blocks, CategorySet, Execution, MaxDegree, Progress, Receiver,
@@ -429,6 +429,7 @@ fn walk_chunks(
     }
     let n_chunks = bounds.len() - 1;
     let signatures = AncestorSignatures::build(&kped)?;
+    let rows = KinshipRows::new(&kped)?;
     let terminals = Terminals::build(kped.mother(), kped.father(), kped.twin(), kped.depth());
     let rec = Recurrence {
         mother: kped.mother(),
@@ -452,7 +453,7 @@ fn walk_chunks(
             // A walker is reused across chunks until its memo outgrows the cap.
             let w = match walker.take() {
                 Some(w) if w.memo().entries() <= MEMO_CAP => walker.insert(w),
-                _ => walker.insert(Walker::new(kped, &signatures)?),
+                _ => walker.insert(Walker::new(&rows, &signatures)?),
             };
             let mut builder = ChunkBuilder::new(w, rec, &mut pos, walk);
             let result = groups[bounds[c]..bounds[c + 1]]

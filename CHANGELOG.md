@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- pedigree-graph-core moves to the release with the shared `KinshipRows`
+  and family-ordered pair reduction (issue #24): PA-FGRS `prepare` builds
+  one `KinshipRows` beside its `AncestorSignatures` and every worker's
+  walker reads it.  Relative-Pair Correlations without the SE get the
+  engine's sib reuse: on simACE's 2M-row `bench_scale` pedigree, median of
+  5, one thread, 8.15 s to 7.24 s, and 20.4 s to 13.4 s with the rows
+  shuffled.  Results are identical.
+
 - `relative_pairs.correlation(..., se=True)` (R: `se = TRUE`) gives every
   Relative-Pair Correlation estimate a cluster sandwich SE (issue #18;
   ADR 0013): pooled, stratum and stratified cells, Pearson, tetrachoric
