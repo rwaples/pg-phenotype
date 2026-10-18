@@ -22,15 +22,17 @@ use super::triangle::Triangle;
 use crate::error::{Error, Position};
 use crate::lineage::Terminals;
 use crate::pedigree::{checked_rows, Pedigree as Validated, PedigreeArg};
+use pedigree_graph_core::error::Error as PgError;
 use pedigree_graph_core::kinship::ancestry::AncestorSignatures;
 use pedigree_graph_core::kinship::pairwise::{KinshipRows, Walker};
 use pedigree_graph_core::kinship::KinshipPedigree;
 use pedigree_graph_core::relationships::{
-    pair_blocks, CategorySet, Execution, MaxDegree, Progress, Receiver,
+    reduce_pairs_in, Category, CategorySet, MaxDegree, Progress, Reducer, RowOrder, Symmetric,
 };
 use pedigree_graph_core::topology;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -326,26 +328,89 @@ impl Candidates {
     }
 }
 
+/// The operation a refused candidate buffer names.
+const CANDIDATES: &str = "pafgrs_candidates";
+
+/// Every pair with a proband in it, once, as the chunks each lane filled:
+/// a merge moves chunks and never copies a pair.
+struct PairChunks<'a> {
+    /// Proband index of each row, else `u32::MAX`.
+    slot: &'a [u32],
+}
+
+struct PairLane {
+    chunks: Vec<Vec<(u32, u32)>>,
+    /// Pairs held when the allocator refused a chunk's growth.
+    refused: Option<usize>,
+}
+
+impl Reducer for PairChunks<'_> {
+    type Lane = PairLane;
+
+    fn lane(&self) -> Result<PairLane, PgError> {
+        Ok(PairLane {
+            chunks: vec![Vec::new()],
+            refused: None,
+        })
+    }
+
+    #[inline]
+    fn reduce(&self, lane: &mut PairLane, _: Category, first: u32, second: u32) {
+        if lane.refused.is_some()
+            || (self.slot[first as usize] == u32::MAX && self.slot[second as usize] == u32::MAX)
+        {
+            return;
+        }
+        let own = &mut lane.chunks[0];
+        if own.len() == own.capacity() && own.try_reserve(own.len().max(1 << 12)).is_err() {
+            lane.refused = Some(own.len());
+            return;
+        }
+        own.push((first, second));
+    }
+
+    fn merge(&self, into: &mut PairLane, from: PairLane) {
+        into.chunks.extend(from.chunks);
+        into.refused = into.refused.or(from.refused);
+    }
+}
+
+/// Built from the engine's pairs in family order, so each full sib reuses
+/// its predecessor's sets: the lists are sorted after, so pair order does
+/// not reach them.
 fn candidates(built: &Validated, probands: &[u32], ndegree: u8) -> Result<Candidates, Error> {
     let ped = built.relationships()?;
-    let blocks = pair_blocks(
-        &ped,
-        MaxDegree::try_new(ndegree)?,
-        CategorySet::up_to_degree(ndegree),
-        Receiver::Graph,
-        Execution::Speed,
-        &Progress::default(),
-    )?;
     let mut slot = vec![u32::MAX; built.len()];
     for (i, &row) in probands.iter().enumerate() {
         slot[row as usize] = i as u32;
     }
+    let lanes = NonZeroUsize::new(rayon::current_num_threads()).unwrap_or(NonZeroUsize::MIN);
+    let reduced = reduce_pairs_in(
+        &ped,
+        MaxDegree::try_new(ndegree)?,
+        CategorySet::up_to_degree(ndegree),
+        None,
+        Symmetric::Canonical,
+        lanes,
+        &PairChunks { slot: &slot },
+        &Progress::default(),
+        RowOrder::Families,
+    )?;
+    let blocks = reduced.lane;
+    if let Some(held) = blocks.refused {
+        return Err(PgError::AllocationFailed {
+            operation: CANDIDATES,
+            requested_elements: 2 * (held + 1),
+            dtype: "uint32",
+        }
+        .into());
+    }
     let pairs = || {
         blocks
-            .0
+            .chunks
             .iter()
-            .flat_map(|b| b.first.iter().zip(&b.second))
-            .flat_map(|(&a, &b)| [(a as usize, b as u32), (b as usize, a as u32)])
+            .flatten()
+            .flat_map(|&(a, b)| [(a as usize, b), (b as usize, a)])
             .filter(|&(p, _)| slot[p] != u32::MAX)
     };
     let mut start = vec![0usize; probands.len() + 1];
@@ -499,6 +564,8 @@ struct ChunkBuilder<'w, 'a, 'p> {
     /// Dense kinship among the union, `d * d`, diagonal included.
     local: Vec<f32>,
     kept: Vec<u32>,
+    /// Each union member's twin row, by union position.
+    twins: Vec<i32>,
 }
 
 impl<'w, 'a, 'p> ChunkBuilder<'w, 'a, 'p> {
@@ -524,6 +591,7 @@ impl<'w, 'a, 'p> ChunkBuilder<'w, 'a, 'p> {
             order: Vec::new(),
             local: Vec::new(),
             kept: Vec::new(),
+            twins: Vec::new(),
         }
     }
 
@@ -561,7 +629,24 @@ impl<'w, 'a, 'p> ChunkBuilder<'w, 'a, 'p> {
         result
     }
 
+    /// Each union member's twin is read once into `twins`, and a parent in
+    /// the union is read straight from its row of the local matrix: the
+    /// inner loop touches no per-row column of the whole pedigree.
     fn fill_local(&mut self, rec: Recurrence<'a>, order: &[u32]) -> Result<(), Error> {
+        let mut twins = std::mem::take(&mut self.twins);
+        twins.clear();
+        twins.extend(self.union.iter().map(|&row| rec.twin[row as usize]));
+        let result = self.fill_ranked(rec, order, &twins);
+        self.twins = twins;
+        result
+    }
+
+    fn fill_ranked(
+        &mut self,
+        rec: Recurrence<'a>,
+        order: &[u32],
+        twins: &[i32],
+    ) -> Result<(), Error> {
         let d = self.union.len();
         for (rank, &jb) in order.iter().enumerate() {
             let jb = jb as usize;
@@ -573,21 +658,40 @@ impl<'w, 'a, 'p> ChunkBuilder<'w, 'a, 'p> {
                 0.5f32 * (1.0f32 + self.operand(m, f as u32)?)
             };
             self.local[jb * d + jb] = diag;
+            // Each parent's union position, `u32::MAX` when it is missing
+            // or outside the union.
+            let at = |parent: i32| {
+                if parent < 0 {
+                    u32::MAX
+                } else {
+                    self.pos[parent as usize]
+                }
+            };
+            let (jm, jf) = (at(m), at(f));
             // A parent outside the union would send each operand to the
             // fallback; one exact test on `b`, whose terminals are its
             // parents' together, settles most such pairs first.
-            let local = |parent: i32| parent < 0 || self.pos[parent as usize] != u32::MAX;
-            let outside = !(local(m) && local(f));
+            let outside = (m >= 0 && jm == u32::MAX) || (f >= 0 && jf == u32::MAX);
+            let twin = rec.twin[b];
             for &ja in &order[..rank] {
                 let ja = ja as usize;
                 let a = self.union[ja];
-                let value = if rec.twin[b] == a as i32 || rec.twin[a as usize] == b as i32 {
+                let value = if twin == a as i32 || twins[ja] == b as i32 {
                     diag
                 } else if (m < 0 && f < 0) || (outside && rec.terminals.disjoint(a, b as u32)) {
                     0.0
                 } else {
-                    let vm = if m < 0 { 0.0 } else { self.operand(m, a)? };
-                    let vf = if f < 0 { 0.0 } else { self.operand(f, a)? };
+                    let mut parent = |p: i32, jp: u32| -> Result<f32, Error> {
+                        Ok(if p < 0 {
+                            0.0
+                        } else if jp != u32::MAX {
+                            self.local[jp as usize * d + ja]
+                        } else {
+                            self.operand(p, a)?
+                        })
+                    };
+                    let vm = parent(m, jm)?;
+                    let vf = parent(f, jf)?;
                     0.5f32 * (vm + vf)
                 };
                 self.local[ja * d + jb] = value;

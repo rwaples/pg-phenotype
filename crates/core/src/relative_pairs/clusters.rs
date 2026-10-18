@@ -28,8 +28,9 @@ use super::{Members, Request};
 use crate::error::Error;
 use pedigree_graph_core::error::Error as PgError;
 use pedigree_graph_core::relationships::{
-    self, reduce_pairs, Category, CategorySet, CellReducer, MaxDegree, MomentsPlan, MomentsShape,
-    MomentsTable, Product, Progress, Reducer, Side, Symmetric, N_CATEGORIES,
+    self, reduce_pairs_in, Category, CategorySet, CellReducer, MaxDegree, MomentsPlan,
+    MomentsShape, MomentsTable, Product, Progress, Reducer, RowOrder, Side, Symmetric,
+    N_CATEGORIES,
 };
 use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
@@ -474,12 +475,12 @@ pub(super) struct Store<'a, const K: usize> {
 
 impl<'a> Pass<'a> {
     /// `relationship_moments` for `Receiver::Graph` (`input.check`, the
-    /// engine plan, `CellReducer::new`, `reduce_pairs` with `view = None`
-    /// and `Symmetric::Both`, `CellReducer::finish`), its table identical,
-    /// with the store riding the same lanes.  `reserve` is the bytes kept
-    /// back for after the pass ([`Plan`]).  With `kernel` the pass also
-    /// traverses the kernel's categories `union` lacks, for its sums alone,
-    /// and `max_degree` covers them.
+    /// engine plan, `CellReducer::new`, `reduce_pairs_in` in family order
+    /// with `view = None` and `Symmetric::Both`, `CellReducer::finish`), its
+    /// table identical, with the store riding the same lanes.  `reserve` is
+    /// the bytes kept back for after the pass ([`Plan`]).  With `kernel` the
+    /// pass also traverses the kernel's categories `union` lacks, for its
+    /// sums alone, and `max_degree` covers them.
     ///
     /// # Errors
     ///
@@ -563,7 +564,10 @@ impl<'a> Pass<'a> {
             max_rows: plan.max_rows,
             kernel,
         };
-        let reduced = reduce_pairs(
+        // The store and the kernel are integer sums and the runs are sorted
+        // after the pass, so the lane does not depend on pair order, and
+        // family order lets each full sib reuse its predecessor's sets.
+        let reduced = reduce_pairs_in(
             ped,
             max_degree,
             traversal,
@@ -572,6 +576,7 @@ impl<'a> Pass<'a> {
             plan.engine.lanes,
             &keyed,
             &Progress::default(),
+            RowOrder::Families,
         )?;
         let KeyedLane {
             cells,
