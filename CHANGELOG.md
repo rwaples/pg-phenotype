@@ -2,10 +2,12 @@
 
 ## Unreleased
 
-- pedigree-graph-core moves to the release with the shared `KinshipRows`
-  and family-ordered pair reduction (issue #24): PA-FGRS `prepare` builds
-  one `KinshipRows` beside its `AncestorSignatures` and every worker's
-  walker reads it.  Relative-Pair Correlations without the SE get the
+- pedigree-graph-core is pinned to an unreleased pedigree-graph commit
+  (e2e5d91, the `pgp-pg-speedups` branch) with the shared `KinshipRows`
+  and family-ordered pair reduction; re-pin to the release tag that
+  carries it before a pg-phenotype release (issue #24).  PA-FGRS
+  `prepare` builds one `KinshipRows` beside its `AncestorSignatures` and
+  every worker's walker reads it.  Relative-Pair Correlations without the SE get the
   engine's sib reuse: on simACE's 2M-row `bench_scale` pedigree, median of
   5, one thread, 8.15 s to 7.24 s, and 20.4 s to 13.4 s with the rows
   shuffled.  Results are identical.

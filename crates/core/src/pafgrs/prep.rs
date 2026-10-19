@@ -331,17 +331,31 @@ impl Candidates {
 /// The operation a refused candidate buffer names.
 const CANDIDATES: &str = "pafgrs_candidates";
 
-/// Every pair with a proband in it, once, as the chunks each lane filled:
-/// a merge moves chunks and never copies a pair.
+/// Pairs per chunk, 512 KiB.
+const CHUNK_PAIRS: usize = 1 << 16;
+
+/// Every pair with a proband in it, once, in fixed-size chunks: a full
+/// chunk is set aside and a new one started, so no pair is ever copied
+/// and a lane holds at most one chunk of slack.
 struct PairChunks<'a> {
     /// Proband index of each row, else `u32::MAX`.
     slot: &'a [u32],
 }
 
 struct PairLane {
-    chunks: Vec<Vec<(u32, u32)>>,
-    /// Pairs held when the allocator refused a chunk's growth.
-    refused: Option<usize>,
+    /// The chunk the lane is filling.
+    own: Vec<(u32, u32)>,
+    /// Full chunks, and every chunk of the lanes merged into this one.
+    full: Vec<Vec<(u32, u32)>>,
+    /// Set instead of failing inside `reduce` when the allocator refused
+    /// a new chunk.
+    refused: bool,
+}
+
+impl PairLane {
+    fn chunks(&self) -> impl Iterator<Item = &(u32, u32)> {
+        self.full.iter().flatten().chain(&self.own)
+    }
 }
 
 impl Reducer for PairChunks<'_> {
@@ -349,29 +363,37 @@ impl Reducer for PairChunks<'_> {
 
     fn lane(&self) -> Result<PairLane, PgError> {
         Ok(PairLane {
-            chunks: vec![Vec::new()],
-            refused: None,
+            own: Vec::new(),
+            full: Vec::new(),
+            refused: false,
         })
     }
 
     #[inline]
     fn reduce(&self, lane: &mut PairLane, _: Category, first: u32, second: u32) {
-        if lane.refused.is_some()
+        if lane.refused
             || (self.slot[first as usize] == u32::MAX && self.slot[second as usize] == u32::MAX)
         {
             return;
         }
-        let own = &mut lane.chunks[0];
-        if own.len() == own.capacity() && own.try_reserve(own.len().max(1 << 12)).is_err() {
-            lane.refused = Some(own.len());
-            return;
+        if lane.own.len() == lane.own.capacity() {
+            let mut next = Vec::new();
+            if next.try_reserve_exact(CHUNK_PAIRS).is_err() || lane.full.try_reserve(1).is_err() {
+                lane.refused = true;
+                return;
+            }
+            let done = std::mem::replace(&mut lane.own, next);
+            if !done.is_empty() {
+                lane.full.push(done);
+            }
         }
-        own.push((first, second));
+        lane.own.push((first, second));
     }
 
     fn merge(&self, into: &mut PairLane, from: PairLane) {
-        into.chunks.extend(from.chunks);
-        into.refused = into.refused.or(from.refused);
+        into.full.push(from.own);
+        into.full.extend(from.full);
+        into.refused |= from.refused;
     }
 }
 
@@ -396,20 +418,18 @@ fn candidates(built: &Validated, probands: &[u32], ndegree: u8) -> Result<Candid
         &Progress::default(),
         RowOrder::Families,
     )?;
+    let refused = |elements| PgError::AllocationFailed {
+        operation: CANDIDATES,
+        requested_elements: elements,
+        dtype: "uint32",
+    };
     let blocks = reduced.lane;
-    if let Some(held) = blocks.refused {
-        return Err(PgError::AllocationFailed {
-            operation: CANDIDATES,
-            requested_elements: 2 * (held + 1),
-            dtype: "uint32",
-        }
-        .into());
+    if blocks.refused {
+        return Err(refused(2 * CHUNK_PAIRS).into());
     }
     let pairs = || {
         blocks
-            .chunks
-            .iter()
-            .flatten()
+            .chunks()
             .flat_map(|&(a, b)| [(a as usize, b), (b as usize, a)])
             .filter(|&(p, _)| slot[p] != u32::MAX)
     };
@@ -420,7 +440,12 @@ fn candidates(built: &Validated, probands: &[u32], ndegree: u8) -> Result<Candid
     for i in 0..probands.len() {
         start[i + 1] += start[i];
     }
-    let mut rows = vec![0u32; start[probands.len()]];
+    let total = start[probands.len()];
+    let mut rows = Vec::new();
+    if rows.try_reserve_exact(total).is_err() {
+        return Err(refused(total).into());
+    }
+    rows.resize(total, 0u32);
     let mut fill = start[..probands.len()].to_vec();
     for (p, r) in pairs() {
         let i = slot[p] as usize;
@@ -622,26 +647,22 @@ impl<'w, 'a, 'p> ChunkBuilder<'w, 'a, 'p> {
         order.extend(0..d as u32);
         let union = &self.union;
         order.sort_unstable_by_key(|&j| (rec.depth[union[j as usize] as usize], union[j as usize]));
-        self.local.clear();
-        self.local.resize(d * d, 0.0);
-        let result = self.fill_local(rec, &order);
-        self.order = order;
-        result
-    }
-
-    /// Each union member's twin is read once into `twins`, and a parent in
-    /// the union is read straight from its row of the local matrix: the
-    /// inner loop touches no per-row column of the whole pedigree.
-    fn fill_local(&mut self, rec: Recurrence<'a>, order: &[u32]) -> Result<(), Error> {
         let mut twins = std::mem::take(&mut self.twins);
         twins.clear();
-        twins.extend(self.union.iter().map(|&row| rec.twin[row as usize]));
-        let result = self.fill_ranked(rec, order, &twins);
+        twins.extend(union.iter().map(|&row| rec.twin[row as usize]));
+        self.local.clear();
+        self.local.resize(d * d, 0.0);
+        let result = self.fill_local(rec, &order, &twins);
+        self.order = order;
         self.twins = twins;
         result
     }
 
-    fn fill_ranked(
+    /// Each union member's twin comes from `twins`, read once per group, and
+    /// a parent in the union is read straight from its row of the local
+    /// matrix: the inner loop touches no per-row column of the whole
+    /// pedigree.
+    fn fill_local(
         &mut self,
         rec: Recurrence<'a>,
         order: &[u32],
