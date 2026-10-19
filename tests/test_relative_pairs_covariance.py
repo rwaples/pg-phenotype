@@ -195,11 +195,14 @@ def test_the_cross_meat_is_its_definition_and_on_the_diagonal_the_se_meat():
     for u in units:
         first, second = u.members
         own = meats(u.psi, first, second, u.mrca, u.mrca)["mrca_person"]
-        assert abs(cross_meat(u, u) - own) <= 1e-12 * abs(own)
+        # A cell whose pairs share one MRCA has a meat of zero up to rounding: bound the
+        # error by the influences' scale, not only the meat's.
+        assert abs(cross_meat(u, u) - own) <= 1e-12 * (abs(own) + np.abs(u.psi).sum() ** 2)
     within = Units(units[0].psi, (units[0].members[0],), None)
     ref = brute_cross(within, units[1])
     assert ref != 0.0
-    assert abs(cross_meat(within, units[1]) - ref) <= 1e-12 * abs(ref)
+    scale = np.abs(within.psi).sum() * np.abs(units[1].psi).sum()
+    assert abs(cross_meat(within, units[1]) - ref) <= 1e-12 * (abs(ref) + scale)
 
 
 def _without_se(cell: rp.Cell | None) -> rp.Cell | None:
