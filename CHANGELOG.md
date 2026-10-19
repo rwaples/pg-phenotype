@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.5.0
 
 - pedigree-graph-core is pinned at pedigree-graph's v0.13.0 tag, with
   the shared `KinshipRows` and family-ordered pair reduction (issue #24),
