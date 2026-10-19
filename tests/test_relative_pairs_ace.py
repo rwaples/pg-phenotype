@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import replace
 
 import numpy as np
@@ -327,6 +328,8 @@ def test_core_usage_errors_are_value_errors(one):
 
 
 # The fit's values before it had an SE, as float.hex: pairs weights keep their bits.
+# Recorded on Linux; another platform's libm can move the tetrachoric cells by an
+# ulp, so elsewhere the values only have to agree to rounding.
 _BEFORE_THE_SE = {
     "one_ac": [
         "0x1.129fc507197cdp-1",
@@ -412,7 +415,12 @@ def test_without_a_covariance_the_default_keeps_the_values_of_the_fit_before_the
         assert set(_weights(fit)) == {"pairs"}, name
         assert _solves(fit) == _solves(rp.ace(res, weights="pairs", **kwargs)), name
         values = _values(fit)
-        assert [None if v is None else v.hex() for v, _, _ in values.values()] == _BEFORE_THE_SE[name], name
+        got = [None if v is None else v.hex() for v, _, _ in values.values()]
+        if sys.platform == "linux":
+            assert got == _BEFORE_THE_SE[name], name
+        else:
+            expected = [None if h is None else float.fromhex(h) for h in _BEFORE_THE_SE[name]]
+            assert [None if h is None else float.fromhex(h) for h in got] == pytest.approx(expected, rel=1e-12), name
         assert all(reason == "no_covariance" for value, _, reason in values.values() if value is not None)
 
 
