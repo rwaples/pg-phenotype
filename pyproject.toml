@@ -31,7 +31,7 @@ test = [
     # tests/oracle: the NumPy reference cores (scipy for their normal tails)
     # and pedigree-graph's Python pair_kinship as the kinship oracle.
     "scipy>=1.14,<2",
-    "pedigree-graph>=0.12.2,<0.13",
+    "pedigree-graph>=0.12.2,<0.14",
     "pytest>=9,<10",
     "pytest-xdist>=3.8,<4",
     "ruff>=0.17,<0.18",

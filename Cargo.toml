@@ -12,9 +12,8 @@ repository = "https://github.com/rwaples/pg-phenotype"
 
 [workspace.dependencies]
 # Re-pinned on purpose only (ADR 0001): pg-core is unpublished until 1.0.
-# This rev is pedigree-graph's pgp-pg-speedups branch (e2e5d91, KinshipRows and
-# reduce_pairs_in); re-pin to the release tag that carries it (issue #24).
-pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "e2e5d91a8a4e6ad507183ff8370ae0aad1b063c3" }
+# This rev is pedigree-graph's v0.13.0 tag.
+pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "0a79c4e72f124c78144be2ad7074a9ba3558ba90" }
 rayon = "1.10"
 rustc-hash = "2.1"
 

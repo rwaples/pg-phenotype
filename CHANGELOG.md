@@ -2,10 +2,9 @@
 
 ## Unreleased
 
-- pedigree-graph-core is pinned to an unreleased pedigree-graph commit
-  (e2e5d91, the `pgp-pg-speedups` branch) with the shared `KinshipRows`
-  and family-ordered pair reduction; re-pin to the release tag that
-  carries it before a pg-phenotype release (issue #24).  PA-FGRS
+- pedigree-graph-core is pinned at pedigree-graph's v0.13.0 tag, with
+  the shared `KinshipRows` and family-ordered pair reduction (issue #24),
+  and the Python dependency takes `pedigree-graph<0.14`.  PA-FGRS
   `prepare` builds one `KinshipRows` beside its `AncestorSignatures` and
   every worker's walker reads it.  Relative-Pair Correlations without the SE get the
   engine's sib reuse: on simACE's 2M-row `bench_scale` pedigree, median of
