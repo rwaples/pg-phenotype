@@ -22,15 +22,17 @@ use super::triangle::Triangle;
 use crate::error::{Error, Position};
 use crate::lineage::Terminals;
 use crate::pedigree::{checked_rows, Pedigree as Validated, PedigreeArg};
+use pedigree_graph_core::error::Error as PgError;
 use pedigree_graph_core::kinship::ancestry::AncestorSignatures;
-use pedigree_graph_core::kinship::pairwise::Walker;
+use pedigree_graph_core::kinship::pairwise::{KinshipRows, Walker};
 use pedigree_graph_core::kinship::KinshipPedigree;
 use pedigree_graph_core::relationships::{
-    pair_blocks, CategorySet, Execution, MaxDegree, Progress, Receiver,
+    reduce_pairs_in, Category, CategorySet, MaxDegree, Progress, Reducer, RowOrder, Symmetric,
 };
 use pedigree_graph_core::topology;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -326,26 +328,109 @@ impl Candidates {
     }
 }
 
+/// The operation a refused candidate buffer names.
+const CANDIDATES: &str = "pafgrs_candidates";
+
+/// Pairs per chunk, 512 KiB.
+const CHUNK_PAIRS: usize = 1 << 16;
+
+/// Every pair with a proband in it, once, in fixed-size chunks: a full
+/// chunk is set aside and a new one started, so no pair is ever copied
+/// and a lane holds at most one chunk of slack.
+struct PairChunks<'a> {
+    /// Proband index of each row, else `u32::MAX`.
+    slot: &'a [u32],
+}
+
+struct PairLane {
+    /// The chunk the lane is filling.
+    own: Vec<(u32, u32)>,
+    /// Full chunks, and every chunk of the lanes merged into this one.
+    full: Vec<Vec<(u32, u32)>>,
+    /// Set instead of failing inside `reduce` when the allocator refused
+    /// a new chunk.
+    refused: bool,
+}
+
+impl PairLane {
+    fn chunks(&self) -> impl Iterator<Item = &(u32, u32)> {
+        self.full.iter().flatten().chain(&self.own)
+    }
+}
+
+impl Reducer for PairChunks<'_> {
+    type Lane = PairLane;
+
+    fn lane(&self) -> Result<PairLane, PgError> {
+        Ok(PairLane {
+            own: Vec::new(),
+            full: Vec::new(),
+            refused: false,
+        })
+    }
+
+    #[inline]
+    fn reduce(&self, lane: &mut PairLane, _: Category, first: u32, second: u32) {
+        if lane.refused
+            || (self.slot[first as usize] == u32::MAX && self.slot[second as usize] == u32::MAX)
+        {
+            return;
+        }
+        if lane.own.len() == lane.own.capacity() {
+            let mut next = Vec::new();
+            if next.try_reserve_exact(CHUNK_PAIRS).is_err() || lane.full.try_reserve(1).is_err() {
+                lane.refused = true;
+                return;
+            }
+            let done = std::mem::replace(&mut lane.own, next);
+            if !done.is_empty() {
+                lane.full.push(done);
+            }
+        }
+        lane.own.push((first, second));
+    }
+
+    fn merge(&self, into: &mut PairLane, from: PairLane) {
+        into.full.push(from.own);
+        into.full.extend(from.full);
+        into.refused |= from.refused;
+    }
+}
+
+/// Built from the engine's pairs in family order, so each full sib reuses
+/// its predecessor's sets: the lists are sorted after, so pair order does
+/// not reach them.
 fn candidates(built: &Validated, probands: &[u32], ndegree: u8) -> Result<Candidates, Error> {
     let ped = built.relationships()?;
-    let blocks = pair_blocks(
-        &ped,
-        MaxDegree::try_new(ndegree)?,
-        CategorySet::up_to_degree(ndegree),
-        Receiver::Graph,
-        Execution::Speed,
-        &Progress::default(),
-    )?;
     let mut slot = vec![u32::MAX; built.len()];
     for (i, &row) in probands.iter().enumerate() {
         slot[row as usize] = i as u32;
     }
+    let lanes = NonZeroUsize::new(rayon::current_num_threads()).unwrap_or(NonZeroUsize::MIN);
+    let reduced = reduce_pairs_in(
+        &ped,
+        MaxDegree::try_new(ndegree)?,
+        CategorySet::up_to_degree(ndegree),
+        None,
+        Symmetric::Canonical,
+        lanes,
+        &PairChunks { slot: &slot },
+        &Progress::default(),
+        RowOrder::Families,
+    )?;
+    let refused = |elements| PgError::AllocationFailed {
+        operation: CANDIDATES,
+        requested_elements: elements,
+        dtype: "uint32",
+    };
+    let blocks = reduced.lane;
+    if blocks.refused {
+        return Err(refused(2 * CHUNK_PAIRS).into());
+    }
     let pairs = || {
         blocks
-            .0
-            .iter()
-            .flat_map(|b| b.first.iter().zip(&b.second))
-            .flat_map(|(&a, &b)| [(a as usize, b as u32), (b as usize, a as u32)])
+            .chunks()
+            .flat_map(|&(a, b)| [(a as usize, b), (b as usize, a)])
             .filter(|&(p, _)| slot[p] != u32::MAX)
     };
     let mut start = vec![0usize; probands.len() + 1];
@@ -355,7 +440,12 @@ fn candidates(built: &Validated, probands: &[u32], ndegree: u8) -> Result<Candid
     for i in 0..probands.len() {
         start[i + 1] += start[i];
     }
-    let mut rows = vec![0u32; start[probands.len()]];
+    let total = start[probands.len()];
+    let mut rows = Vec::new();
+    if rows.try_reserve_exact(total).is_err() {
+        return Err(refused(total).into());
+    }
+    rows.resize(total, 0u32);
     let mut fill = start[..probands.len()].to_vec();
     for (p, r) in pairs() {
         let i = slot[p] as usize;
@@ -429,6 +519,7 @@ fn walk_chunks(
     }
     let n_chunks = bounds.len() - 1;
     let signatures = AncestorSignatures::build(&kped)?;
+    let rows = KinshipRows::new(&kped)?;
     let terminals = Terminals::build(kped.mother(), kped.father(), kped.twin(), kped.depth());
     let rec = Recurrence {
         mother: kped.mother(),
@@ -452,7 +543,7 @@ fn walk_chunks(
             // A walker is reused across chunks until its memo outgrows the cap.
             let w = match walker.take() {
                 Some(w) if w.memo().entries() <= MEMO_CAP => walker.insert(w),
-                _ => walker.insert(Walker::new(kped, &signatures)?),
+                _ => walker.insert(Walker::new(&rows, &signatures)?),
             };
             let mut builder = ChunkBuilder::new(w, rec, &mut pos, walk);
             let result = groups[bounds[c]..bounds[c + 1]]
@@ -498,6 +589,8 @@ struct ChunkBuilder<'w, 'a, 'p> {
     /// Dense kinship among the union, `d * d`, diagonal included.
     local: Vec<f32>,
     kept: Vec<u32>,
+    /// Each union member's twin row, by union position.
+    twins: Vec<i32>,
 }
 
 impl<'w, 'a, 'p> ChunkBuilder<'w, 'a, 'p> {
@@ -523,6 +616,7 @@ impl<'w, 'a, 'p> ChunkBuilder<'w, 'a, 'p> {
             order: Vec::new(),
             local: Vec::new(),
             kept: Vec::new(),
+            twins: Vec::new(),
         }
     }
 
@@ -553,14 +647,27 @@ impl<'w, 'a, 'p> ChunkBuilder<'w, 'a, 'p> {
         order.extend(0..d as u32);
         let union = &self.union;
         order.sort_unstable_by_key(|&j| (rec.depth[union[j as usize] as usize], union[j as usize]));
+        let mut twins = std::mem::take(&mut self.twins);
+        twins.clear();
+        twins.extend(union.iter().map(|&row| rec.twin[row as usize]));
         self.local.clear();
         self.local.resize(d * d, 0.0);
-        let result = self.fill_local(rec, &order);
+        let result = self.fill_local(rec, &order, &twins);
         self.order = order;
+        self.twins = twins;
         result
     }
 
-    fn fill_local(&mut self, rec: Recurrence<'a>, order: &[u32]) -> Result<(), Error> {
+    /// Each union member's twin comes from `twins`, read once per group, and
+    /// a parent in the union is read straight from its row of the local
+    /// matrix: the inner loop touches no per-row column of the whole
+    /// pedigree.
+    fn fill_local(
+        &mut self,
+        rec: Recurrence<'a>,
+        order: &[u32],
+        twins: &[i32],
+    ) -> Result<(), Error> {
         let d = self.union.len();
         for (rank, &jb) in order.iter().enumerate() {
             let jb = jb as usize;
@@ -572,21 +679,40 @@ impl<'w, 'a, 'p> ChunkBuilder<'w, 'a, 'p> {
                 0.5f32 * (1.0f32 + self.operand(m, f as u32)?)
             };
             self.local[jb * d + jb] = diag;
+            // Each parent's union position, `u32::MAX` when it is missing
+            // or outside the union.
+            let at = |parent: i32| {
+                if parent < 0 {
+                    u32::MAX
+                } else {
+                    self.pos[parent as usize]
+                }
+            };
+            let (jm, jf) = (at(m), at(f));
             // A parent outside the union would send each operand to the
             // fallback; one exact test on `b`, whose terminals are its
             // parents' together, settles most such pairs first.
-            let local = |parent: i32| parent < 0 || self.pos[parent as usize] != u32::MAX;
-            let outside = !(local(m) && local(f));
+            let outside = (m >= 0 && jm == u32::MAX) || (f >= 0 && jf == u32::MAX);
+            let twin = rec.twin[b];
             for &ja in &order[..rank] {
                 let ja = ja as usize;
                 let a = self.union[ja];
-                let value = if rec.twin[b] == a as i32 || rec.twin[a as usize] == b as i32 {
+                let value = if twin == a as i32 || twins[ja] == b as i32 {
                     diag
                 } else if (m < 0 && f < 0) || (outside && rec.terminals.disjoint(a, b as u32)) {
                     0.0
                 } else {
-                    let vm = if m < 0 { 0.0 } else { self.operand(m, a)? };
-                    let vf = if f < 0 { 0.0 } else { self.operand(f, a)? };
+                    let mut parent = |p: i32, jp: u32| -> Result<f32, Error> {
+                        Ok(if p < 0 {
+                            0.0
+                        } else if jp != u32::MAX {
+                            self.local[jp as usize * d + ja]
+                        } else {
+                            self.operand(p, a)?
+                        })
+                    };
+                    let vm = parent(m, jm)?;
+                    let vf = parent(f, jf)?;
                     0.5f32 * (vm + vf)
                 };
                 self.local[ja * d + jb] = value;

@@ -5,6 +5,7 @@
 //! values once and every entry as the narrowest index that fits.  Decoding
 //! returns the stored bits exactly.
 
+use rustc_hash::FxBuildHasher;
 use std::collections::HashMap;
 
 /// A chunk's triangle entries over a dictionary of their distinct values.
@@ -25,7 +26,7 @@ impl Triangle {
     /// Dictionary in first-occurrence order, so it is a function of the
     /// values alone.
     pub(crate) fn encode(values: &[f32]) -> Triangle {
-        let mut index: HashMap<u32, u32> = HashMap::new();
+        let mut index: HashMap<u32, u32, FxBuildHasher> = HashMap::default();
         let mut dict: Vec<f32> = Vec::new();
         let mut codes: Vec<u32> = Vec::with_capacity(values.len());
         for v in values {

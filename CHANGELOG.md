@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- pedigree-graph-core is pinned to an unreleased pedigree-graph commit
+  (e2e5d91, the `pgp-pg-speedups` branch) with the shared `KinshipRows`
+  and family-ordered pair reduction; re-pin to the release tag that
+  carries it before a pg-phenotype release (issue #24).  PA-FGRS
+  `prepare` builds one `KinshipRows` beside its `AncestorSignatures` and
+  every worker's walker reads it.  Relative-Pair Correlations without the SE get the
+  engine's sib reuse: on simACE's 2M-row `bench_scale` pedigree, median of
+  5, one thread, 8.15 s to 7.24 s, and 20.4 s to 13.4 s with the rows
+  shuffled.  Results are identical.
+
+- PA-FGRS `prepare` is 11 to 18% faster at one thread (at six threads 12
+  to 13%, except `ndegree=2` on simACE row order, unchanged) and needs 6 to
+  13% less memory at six threads.  The kinship among each sibship's relatives reads a parent
+  in the sibship's union straight from its row of the local matrix and
+  each member's twin once, rather than looking both up in pedigree-wide
+  columns for every pair; the triangle dictionary hashes with FxHash; and
+  the candidate relatives come from the engine in family order, so each
+  full sib reuses its predecessor's relationship sets.  A refused
+  candidate buffer raises `allocation_failed` with operation
+  `pafgrs_candidates`.  Values are bit-identical.  On the 2M-row pedigree,
+  median of 5, one thread: `ndegree=2` 18.5 s to 16.5 s, `ndegree=3`
+  64.1 s to 55.0 s, `ndegree=2` with the rows shuffled 29.1 s to 23.8 s;
+  six threads, `ndegree=3` 20.4 s to 17.7 s, peak 3491 MiB to 3287 MiB.
+
+- `relative_pairs.correlation(..., se=True)` walks the pedigree in family
+  order, 21 to 28% faster when sibs are not stored together and 2 to 6%
+  faster otherwise; results are identical.  On the 2M-row pedigree with
+  the rows shuffled, median of 5, one thread: one trait 31.9 s to 23.1 s,
+  two traits with generation strata and `covariance=True` 47.1 s to
+  37.2 s.  The smaller per-lane cluster store leaves more of
+  `memory_budget_bytes` to the sweeps, which then run more requests at
+  once: that call at six threads, shuffled, budget 8 GiB, peaks at
+  6134 MiB rather than 5547 MiB (four sweeps at once instead of three) and
+  takes 13.7 s rather than 17.4 s, still within the budget.
+
 - `relative_pairs.correlation(..., se=True)` (R: `se = TRUE`) gives every
   Relative-Pair Correlation estimate a cluster sandwich SE (issue #18;
   ADR 0013): pooled, stratum and stratified cells, Pearson, tetrachoric

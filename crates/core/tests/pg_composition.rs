@@ -3,7 +3,7 @@
 
 use pedigree_graph_core::graph::{self, Columns, Limits, SexEncoding};
 use pedigree_graph_core::kinship::ancestry::AncestorSignatures;
-use pedigree_graph_core::kinship::pairwise::Walker;
+use pedigree_graph_core::kinship::pairwise::{KinshipRows, Walker};
 use pedigree_graph_core::kinship::KinshipPedigree;
 use pedigree_graph_core::relationships::{
     pair_blocks, Category, CategorySet, Execution, MaxDegree, Pedigree, Progress, Receiver,
@@ -65,7 +65,8 @@ fn build_pairs_and_walk_compose_from_outside_the_crate() {
     )
     .expect("kinship input");
     let signatures = AncestorSignatures::build(&kped).expect("signatures");
-    let mut walker = Walker::new(kped, &signatures).expect("walker");
+    let rows = KinshipRows::new(&kped).expect("rows");
+    let mut walker = Walker::new(&rows, &signatures).expect("walker");
     assert_eq!(walker.resolve(2, 3).expect("sibs"), 0.25);
     assert_eq!(walker.resolve(3, 4).expect("aunt"), 0.125);
     assert_eq!(walker.resolve(0, 1).expect("founders"), 0.0);
