@@ -29,6 +29,10 @@ pub fn budget() -> HostResult<usize> {
 }
 
 /// The core pool, sized by the committed budget; every native call runs in it.
+#[expect(
+    clippy::expect_used,
+    reason = "the core's threads::budget commits only budgets from 1 to MAX_THREADS"
+)]
 pub fn pool() -> HostResult<&'static pg_phenotype_core::rayon::ThreadPool> {
     let threads = NonZeroUsize::new(budget()?).expect("a committed budget is at least 1");
     Ok(pg_phenotype_core::configure_pool(threads)?)

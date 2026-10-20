@@ -22,9 +22,7 @@ pub(crate) fn to_robj(value: &Value) -> Robj {
         Value::Map(entries) => {
             let (names, values): (Vec<&str>, Vec<Robj>) =
                 entries.iter().map(|(k, v)| (*k, to_robj(v))).unzip();
-            List::from_names_and_values(names, values)
-                .expect("names and values of one length")
-                .into_robj()
+            crate::named_list(names, values)
         }
     }
 }

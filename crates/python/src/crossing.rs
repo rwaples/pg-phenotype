@@ -65,6 +65,10 @@ where
     T: Send,
 {
     let threads = threads::budget().map_err(budget_error)?;
+    #[expect(
+        clippy::expect_used,
+        reason = "the core's threads::budget commits only budgets from 1 to MAX_THREADS"
+    )]
     let threads = NonZeroUsize::new(threads).expect("a committed budget is at least 1");
     let pool = pg_phenotype_core::configure_pool(threads).map_err(|e| to_pyerr(py, e))?;
     py.detach(|| {

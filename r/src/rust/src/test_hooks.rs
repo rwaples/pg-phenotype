@@ -9,6 +9,7 @@ use extendr_api::prelude::*;
 /// Panic inside a native call, so the package tests can show a Rust panic
 /// reaches R as an error and leaves the session usable.
 #[cfg(feature = "test-hooks")]
+#[expect(clippy::panic, reason = "deliberate panic to exercise unwinding")]
 #[extendr]
 fn panic_for_test() {
     panic!("pgphenotype test hook: deliberate panic");
