@@ -6,6 +6,7 @@ import math
 import os
 import subprocess
 import sys
+import textwrap
 from collections import Counter
 from dataclasses import replace
 from types import MappingProxyType
@@ -318,7 +319,6 @@ def test_a_boundary_tetrachoric_has_no_se():
 _RUN = """
 import sys
 sys.path.insert(0, {root!r})
-import numpy as np
 from pg_phenotype import Trait, relative_pairs as rp
 from tests.pedigrees import random_pedigree
 from tests.test_relative_pairs_se import _strata, _traits
@@ -328,16 +328,22 @@ n = len(ped["id"])
 for kind in ("continuous", "binary"):
     traits = [Trait(v, kind=kind) for v in _traits(5, n, kind, 2)]
     for categories in (None, {groups!r}):
-        res = rp.correlation(ped, traits, categories=categories, stratum=_strata(5, n), se=True)
-        print(repr((res.cells, res.within_person)))
+        res = rp.correlation(ped, traits, categories=categories, stratum=_strata(5, n), se=True, **{options!r})
+{report}
 """
 
 
-def test_the_se_does_not_depend_on_the_thread_count():
+def at_thread_counts(report: str, **options: object) -> list[str]:
+    """What *report* prints about each two-trait SE fit of one pedigree, at 1, 3 and 8 threads.
+
+    The fits cover both kinds, all categories and :data:`GROUPS`, with strata; *options* go to the fit and
+    *report* sees it as ``res``.
+    """
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    out = [
+    script = _RUN.format(root=root, groups=GROUPS, options=options, report=textwrap.indent(report, " " * 8))
+    return [
         subprocess.run(
-            [sys.executable, "-c", _RUN.format(root=root, groups=GROUPS)],
+            [sys.executable, "-c", script],
             env={**os.environ, "PG_PHENOTYPE_THREADS": str(t)},
             capture_output=True,
             text=True,
@@ -345,5 +351,9 @@ def test_the_se_does_not_depend_on_the_thread_count():
         ).stdout
         for t in (1, 3, 8)
     ]
+
+
+def test_the_se_does_not_depend_on_the_thread_count():
+    out = at_thread_counts("print(repr((res.cells, res.within_person)))")
     assert "se=0." in out[0]
     assert out[0] == out[1] == out[2]

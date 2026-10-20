@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import itertools
-import os
-import subprocess
-import sys
 from collections import Counter
 from dataclasses import replace
 
@@ -36,6 +33,7 @@ from tests.test_relative_pairs_se import (
     _strata,
     _stratified_pearson,
     _traits,
+    at_thread_counts,
 )
 
 FORMS = ("pooled", "phi", "stratified")
@@ -363,39 +361,15 @@ def test_a_grandmother_star_gives_a_negative_kernel_meat():
     assert np.isnan(res.covariance.pooled[-1]).all()
 
 
-_RUN = """
-import sys
-sys.path.insert(0, {root!r})
-from pg_phenotype import Trait, relative_pairs as rp
-from tests.pedigrees import random_pedigree
-from tests.test_relative_pairs_se import _strata, _traits
-
-ped = random_pedigree(5, n_founders=300, generations=6, size=800)
-n = len(ped["id"])
-for kind in ("continuous", "binary"):
-    traits = [Trait(v, kind=kind) for v in _traits(5, n, kind, 2)]
-    for categories in (None, {groups!r}):
-        res = rp.correlation(ped, traits, categories=categories, stratum=_strata(5, n), se=True, covariance=True)
-        print(repr(res.within_person))
-        for m in (res.covariance.pooled, res.covariance.phi, res.covariance.stratified):
-            print(None if m is None else m.tobytes().hex())
-"""
-
-
 def test_the_covariance_does_not_depend_on_the_thread_count():
     """2: bit for bit at 1, 3 and 8 threads, the within-person SEs among them (Rust's test covers
     batching); the groups leave out kernel categories, which the pass traverses for the kernel alone."""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    out = [
-        subprocess.run(
-            [sys.executable, "-c", _RUN.format(root=root, groups=GROUPS)],
-            env={**os.environ, "PG_PHENOTYPE_THREADS": str(t)},
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-        for t in (1, 3, 8)
-    ]
+    out = at_thread_counts(
+        "print(repr(res.within_person))\n"
+        "for m in (res.covariance.pooled, res.covariance.phi, res.covariance.stratified):\n"
+        "    print(None if m is None else m.tobytes().hex())",
+        covariance=True,
+    )
     assert out[0].count("\n") == 16
     assert "se_reason='within_person'" not in out[0]
     assert "None" in out[0]
