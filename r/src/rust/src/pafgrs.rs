@@ -31,14 +31,12 @@ fn prepare_impl(pedigree: &Robj, ndegree: &Robj, probands: Robj) -> HostResult<R
             probands.as_ref().map(|c| c.values.as_slice()),
         )
     })?;
-    let mut out: Robj = ExternalPtr::new(Handle {
+    let out: Robj = ExternalPtr::new(Handle {
         prep,
         id_type: pedigree.id_type(),
     })
     .into();
-    out.set_class(["pgphenotype_pafgrs_prep"])
-        .expect("a character class attribute");
-    Ok(out)
+    Ok(crate::with_class(out, "pgphenotype_pafgrs_prep"))
 }
 
 /// Build a pedigree's relative structure in the pool.
