@@ -1,10 +1,9 @@
 """Calibrate cluster designs for the Relative-Pair Correlation SE (issue #18) on simACE replicates.
 
     pixi run python -B tools/relative_pairs_se_calibration.py --self-test
-    pixi run python -B tools/relative_pairs_se_calibration.py \\
-        <simACE>/results/se_calibration --jobs 11 --out docs/gates/relative-pairs-se
-    PG_PHENOTYPE_THREADS=1 pixi run python -B tools/relative_pairs_se_calibration.py \\
-        <simACE>/results/se_calibration --rust --jobs 11 --out docs/gates/relative-pairs-se
+    PG_PHENOTYPE_THREADS=1 RAYON_NUM_THREADS=1 POLARS_MAX_THREADS=1 OMP_NUM_THREADS=1 \\
+        OPENBLAS_NUM_THREADS=1 pixi run python -B tools/relative_pairs_se_calibration.py \\
+        <simACE>/results/se_calibration [--rust] --jobs 11 --out docs/gates/relative-pairs-se
 
 For every rep of every scenario under the results folder, compute each
 Relative-Pair Correlation cell (ADR 0009) of each trait: Pearson on
@@ -53,18 +52,15 @@ affected) and ``rust_summary.tsv`` (medians per scenario, category type,
 estimator and fit: ``cells`` for pooled and stratum cells, ``stratified``),
 and prints the largest gap between the two SEs.  A boundary tetrachoric
 has no influence function and is left out of the r̂ statistics, as above.
-Run it with ``PG_PHENOTYPE_THREADS=1``: the workers are the parallelism.
+Run it with the thread variables at 1: the workers are the parallelism.
 """
 
 from __future__ import annotations
 
-import argparse
 import itertools
 import math
 import os
-import re
 import sys
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -82,6 +78,7 @@ from pg_phenotype import relative_pairs as rp
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.oracle.relative_pairs_se import bvn_pdf, meats, pearson_if, tetrachoric_if, top_keys
+from tools import _calibration_runner as runner
 
 DESIGNS = ("pair", "person", "mn", "mn_person", "mrca", "mrca_person")
 CODES = tuple(code for code, c in RELATIONSHIPS.items() if c.degree <= 3)
@@ -559,36 +556,22 @@ def rust_summaries(reps: pl.DataFrame, out: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("results", nargs="?", type=Path, help="simACE results folder, e.g. results/se_calibration")
-    parser.add_argument("--out", type=Path)
-    parser.add_argument("--jobs", type=int, default=os.cpu_count())
-    parser.add_argument("--max-reps", type=int)
-    parser.add_argument("--reps", type=Path, help="also write the per-rep rows here (about 40 MB)")
-    parser.add_argument("--from-reps", type=Path, help="summarise these per-rep rows instead of computing them")
+    parser = runner.parser(__doc__, jobs=os.cpu_count(), reps_help="also write the per-rep rows here (about 40 MB)")
     parser.add_argument("--rust", action="store_true", help="calibrate the shipped SE (rust_*.tsv)")
-    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
         self_test()
         return
-    if args.out is None or (args.results is None) == (args.from_reps is None):
-        parser.error("--out and one of results or --from-reps are required")
+    runner.check_args(parser, args)
     if args.from_reps is not None:
         write_summaries(pl.read_csv(args.from_reps, separator="\t", infer_schema_length=None), args.out, args.rust)
         return
-    work = []
-    for scen in sorted(p for p in args.results.iterdir() if p.is_dir()):
-        numbered = ((int(m[1]), p) for p in scen.iterdir() if (m := re.fullmatch(r"rep(\d+)", p.name)))
-        reps = [p for _, p in sorted(numbered) if (p / "cohort.parquet").exists()]
-        work += [(p,) if args.rust else (p, i == 0) for i, p in enumerate(reps[: args.max_reps])]
+    work = runner.rep_dirs(args.results, args.max_reps)
+    if args.rust:
+        work = [(p,) for p, _ in work]
     rows: list[dict] = []
-    with ProcessPoolExecutor(args.jobs) as pool:
-        job = rust_rep_rows if args.rust else rep_rows
-        for done, out in enumerate(pool.map(job, *zip(*work, strict=True)), 1):
-            rows += out
-            if done % 50 == 0:
-                print(f"{done}/{len(work)} reps", file=sys.stderr)
+    for out in runner.run(rust_rep_rows if args.rust else rep_rows, work, args.jobs):
+        rows += out
     reps = pl.DataFrame(rows, infer_schema_length=None)
     if args.reps is not None:
         reps.write_csv(args.reps, separator="\t", float_precision=8)

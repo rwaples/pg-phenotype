@@ -45,19 +45,17 @@ parallelism.
 
 from __future__ import annotations
 
-import argparse
+import dataclasses
 import datetime
 import hashlib
 import json
 import math
-import multiprocessing
-import os
 import re
 import subprocess
 import sys
 import time
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -68,6 +66,7 @@ from pg_phenotype import Trait
 from pg_phenotype import relative_pairs as rp
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools import _calibration_runner as runner
 from tools.relative_pairs_se_calibration import Rep, load_rep, require
 
 if TYPE_CHECKING:
@@ -81,13 +80,6 @@ CROSS_QUANTITIES = ("sA", "sC", "sE", "rA", "rC", "rE")
 QUANTITIES = (*TRAIT_QUANTITIES, *CROSS_QUANTITIES)
 #: Why a cell's estimate with a value has no SE (``Estimate.se_reason``), as per-fit counts.
 CELL_SE_REASONS = ("boundary", "sandwich_undefined", "degenerate_meat", "negative_meat")
-THREAD_VARIABLES = (
-    "PG_PHENOTYPE_THREADS",
-    "RAYON_NUM_THREADS",
-    "POLARS_MAX_THREADS",
-    "OMP_NUM_THREADS",
-    "OPENBLAS_NUM_THREADS",
-)
 Z95 = 1.959964
 #: The NumPy check's tolerance, relative to max(1, |x|) for values and to |x| for SEs.
 TOL_VALUE, TOL_SE = 1e-9, 1e-7
@@ -173,10 +165,26 @@ def quantities(fit: AceFit) -> dict[str, Solved]:
     return out | {q: solved(fit.cross, q) for q in CROSS_QUANTITIES}
 
 
-def rep_rows(rep: Rep, truths: dict[str, float], check: bool) -> tuple[list[dict], dict[str, float]]:
+@dataclass
+class Gaps:
+    """The NumPy check's largest relative gaps and its counts of fits and SEs checked."""
+
+    value: float = 0.0
+    se: float = 0.0
+    fits: int = 0
+    se_checked: int = 0
+
+    def add(self, other: Gaps) -> None:
+        self.value = max(self.value, other.value)
+        self.se = max(self.se, other.se)
+        self.fits += other.fits
+        self.se_checked += other.se_checked
+
+
+def rep_rows(rep: Rep, truths: dict[str, float], check: bool) -> tuple[list[dict], Gaps]:
     """The rep's per-quantity rows, and with *check* the NumPy check's largest gaps."""
     rows: list[dict] = []
-    gaps = {"value": 0.0, "se": 0.0, "fits": 0.0, "se_checked": 0.0}
+    gaps = Gaps()
     for kind, values in (("continuous", rep.liability), ("binary", rep.affected)):
         traits = [Trait(values[t], kind) for t in (1, 2)]
         res = rp.correlation(rep.ped, traits, stratum=rep.generation, se=True, covariance=True)
@@ -208,8 +216,7 @@ def rep_rows(rep: Rep, truths: dict[str, float], check: bool) -> tuple[list[dict
                     res, shared_environment=SHARED_ENVIRONMENT, estimate=estimate, estimator=estimator, weights=weights
                 )
                 if check:
-                    for k, v in check_fit(res, fit, estimate, estimator, weights).items():
-                        gaps[k] = max(gaps[k], v) if k in ("value", "se") else gaps[k] + v
+                    gaps.add(check_fit(res, fit, estimate, estimator, weights))
                 fit_counts = {
                     "rows_used": sum(r.used for r in fit.rows),
                     "rows_no_se": sum(r.reason == "no_se" for r in fit.rows),
@@ -225,7 +232,7 @@ def rep_rows(rep: Rep, truths: dict[str, float], check: bool) -> tuple[list[dict
     return rows, gaps
 
 
-def rep_job(rep_dir: Path, check: bool) -> tuple[list[dict], dict[str, float]]:
+def rep_job(rep_dir: Path, check: bool) -> tuple[list[dict], Gaps]:
     return rep_rows(load_rep(rep_dir), nominal(rep_dir), check)
 
 
@@ -258,7 +265,7 @@ def design(row: AceRow, cross: bool) -> list[float]:
     return [*out, 0.0] if cross else out
 
 
-def check_fit(res: RelativePairCorrelation, fit: AceFit, estimate: str, estimator: str, weights: str) -> dict:
+def check_fit(res: RelativePairCorrelation, fit: AceFit, estimate: str, estimator: str, weights: str) -> Gaps:
     """Recompute *fit*'s values and SEs with NumPy; raise on a gap, else return the largest gaps."""
     where = f"{estimate} {estimator} {weights}"
     sigma = form_matrix(res, estimate, estimator)
@@ -321,7 +328,7 @@ def check_fit(res: RelativePairCorrelation, fit: AceFit, estimate: str, estimato
             grads[f"r{x}"] = grad
         else:
             q[f"r{x}"] = math.nan
-    gaps = {"value": 0.0, "se": 0.0, "fits": 1.0, "se_checked": 0.0}
+    gaps = Gaps(fits=1)
     for name, (value, reason, se, se_reason) in quantities(fit).items():
         touched = {SOLVE_OF[k] for k in DEPENDS[name]}
         at = f"{where} {name}"
@@ -332,7 +339,7 @@ def check_fit(res: RelativePairCorrelation, fit: AceFit, estimate: str, estimato
             require(reason == "nonpositive_component" and name[0] == "r", f"{at}: {reason}")
             require(math.isnan(q[name]), f"{at}: NumPy gives {q[name]}")
             continue
-        gaps["value"] = max(gaps["value"], abs(value - q[name]) / max(1.0, abs(q[name])))
+        gaps.value = max(gaps.value, abs(value - q[name]) / max(1.0, abs(q[name])))
         h = sum(coef * g_full[LINEAR.index(k)] for k, coef in grads[name].items())
         support = sorted({j for s in touched for j in solves[s]})
         block = sigma[np.ix_(support, support)]
@@ -345,10 +352,10 @@ def check_fit(res: RelativePairCorrelation, fit: AceFit, estimate: str, estimato
             continue
         require(se is not None, f"{at}: no SE ({se_reason}), NumPy var {var}")
         assert se is not None
-        gaps["se"] = max(gaps["se"], abs(se - math.sqrt(var)) / math.sqrt(var))
-        gaps["se_checked"] += 1
-    require(gaps["value"] <= TOL_VALUE, f"{where}: value gap {gaps['value']}")
-    require(gaps["se"] <= TOL_SE, f"{where}: SE gap {gaps['se']}")
+        gaps.se = max(gaps.se, abs(se - math.sqrt(var)) / math.sqrt(var))
+        gaps.se_checked += 1
+    require(gaps.value <= TOL_VALUE, f"{where}: value gap {gaps.value}")
+    require(gaps.se <= TOL_SE, f"{where}: SE gap {gaps.se}")
     return gaps
 
 
@@ -508,8 +515,8 @@ def self_test() -> None:
         {"A1": 0.5, "C1": 0.15, "E1": 0.35, "A2": 0.4, "C2": 0.2, "E2": 0.4, "rA": 0.5, "rC": 0.6, "rE": 0.2}
     )
     rows, gaps = rep_rows(simulated_rep(), truths, check=True)
-    require(gaps["fits"] == 15, f"checked {gaps['fits']} fits, expected 15")
-    require(gaps["se_checked"] > 0, "no SE checked")
+    require(gaps.fits == 15, f"checked {gaps.fits} fits, expected 15")
+    require(gaps.se_checked > 0, "no SE checked")
     per_fit = len(QUANTITIES) * len(WEIGHTS) + 1
     require(len(rows) == 5 * per_fit, f"{len(rows)} rows")
     require(any(r["se"] is not None for r in rows if r["quantity"] == "r_wp"), "no within-person SE")
@@ -564,41 +571,22 @@ def tree_state(out: Path) -> dict[str, str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("results", nargs="?", type=Path, help="simACE results folder, e.g. results/se_calibration")
-    parser.add_argument("--out", type=Path)
-    parser.add_argument("--jobs", type=int, default=8)
-    parser.add_argument("--max-reps", type=int)
-    parser.add_argument("--reps", type=Path, help="also write the per-rep rows here")
-    parser.add_argument("--from-reps", type=Path, help="summarise these per-rep rows instead of computing them")
-    parser.add_argument("--self-test", action="store_true")
+    parser = runner.parser(__doc__, jobs=8)
     args = parser.parse_args()
     if args.self_test:
         self_test()
         return
-    if args.out is None or (args.results is None) == (args.from_reps is None):
-        parser.error("--out and one of results or --from-reps are required")
+    runner.check_args(parser, args)
     if args.from_reps is not None:
         write_summaries(pl.read_csv(args.from_reps, separator="\t", infer_schema_length=None), args.out)
         return
-    unpinned = [v for v in THREAD_VARIABLES if os.environ.get(v) != "1"]
-    if unpinned:
-        parser.error(f"set {', '.join(unpinned)} to 1: the workers are the parallelism")
     start = time.perf_counter()
-    work = []
-    for scen in sorted(p for p in args.results.iterdir() if p.is_dir()):
-        numbered = ((int(m[1]), p) for p in scen.iterdir() if (m := re.fullmatch(r"rep(\d+)", p.name)))
-        reps = [p for _, p in sorted(numbered) if (p / "cohort.parquet").exists()]
-        work += [(p, i == 0) for i, p in enumerate(reps[: args.max_reps])]
+    work = runner.rep_dirs(args.results, args.max_reps)
     rows: list[dict] = []
-    gaps = {"value": 0.0, "se": 0.0, "fits": 0.0, "se_checked": 0.0}
-    with ProcessPoolExecutor(args.jobs, mp_context=multiprocessing.get_context("spawn")) as pool:
-        for done, (out, g) in enumerate(pool.map(rep_job, *zip(*work, strict=True)), 1):
-            rows += out
-            for k, v in g.items():
-                gaps[k] = max(gaps[k], v) if k in ("value", "se") else gaps[k] + v
-            if done % 50 == 0:
-                print(f"{done}/{len(work)} reps, {time.perf_counter() - start:.0f} s", file=sys.stderr, flush=True)
+    gaps = Gaps()
+    for out, g in runner.run(rep_job, work, args.jobs):
+        rows += out
+        gaps.add(g)
     reps = pl.DataFrame(rows, infer_schema_length=None)
     if args.reps is not None:
         reps.write_csv(args.reps, separator="\t")
@@ -606,12 +594,12 @@ def main() -> None:
     run = {
         "date": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "command": [str(Path(sys.argv[0])), *sys.argv[1:]],
-        "threads": {v: os.environ[v] for v in THREAD_VARIABLES},
+        "threads": runner.threads(),
         "jobs": args.jobs,
         "reps": len(work),
         "rows": len(reps),
         "wall_seconds": round(time.perf_counter() - start, 1),
-        "numpy_check": {"reps": sum(c for _, c in work), **gaps},
+        "numpy_check": {"reps": sum(c for _, c in work), **dataclasses.asdict(gaps)},
         "tree": tree_state(args.out),
         "results": str(args.results),
     }

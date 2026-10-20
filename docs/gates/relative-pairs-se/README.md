@@ -23,6 +23,11 @@ on `012a0f2`:
         <simACE>/results/se_calibration --jobs 11 --out docs/gates/relative-pairs-se \
         --reps <scratch>/reps.tsv
 
+The tool now refuses to compute reps unless all five thread variables
+(`PG_PHENOTYPE_THREADS`, `RAYON_NUM_THREADS`, `POLARS_MAX_THREADS`,
+`OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`) are 1
+(`tools/_calibration_runner.py`), so a rerun sets them all.
+
 `calibration.tsv` has one row per scenario x trait combination x estimator
 x cell x stratum: mean `n`, mean and SD of r̂ across reps, and for each
 design the mean SE, `ratio_` = SD(r̂)/mean SE, `cover_` = Wald 95%
@@ -150,6 +155,8 @@ pg-phenotype working tree on `f161268` (the Relative-Pair SE, uncommitted):
     PG_PHENOTYPE_THREADS=1 POLARS_MAX_THREADS=1 pixi run python -B \
         tools/relative_pairs_se_calibration.py <simACE>/results/se_calibration \
         --rust --jobs 11 --out docs/gates/relative-pairs-se --reps <scratch>/rust_reps.tsv
+
+As above, a rerun sets all five thread variables to 1.
 
 Per rep, `relative_pairs.correlation(..., stratum=generation, se=True)`
 with both traits, once for the 12 codes and once for the PO and HS groups,
