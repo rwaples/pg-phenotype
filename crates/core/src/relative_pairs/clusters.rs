@@ -439,15 +439,15 @@ impl Plan {
 }
 
 /// [`Pass::run`]'s inputs but the budget, the reserve and the kernel.
-type Args<'a, 'p> = (
-    &'p relationships::Pedigree<'p>,
-    MaxDegree,
-    CategorySet,
-    &'p [Request],
-    &'a Members,
-    &'a Ancestry<'a>,
-    NonZeroUsize,
-);
+struct Args<'a, 'p> {
+    ped: &'p relationships::Pedigree<'p>,
+    max_degree: MaxDegree,
+    union: CategorySet,
+    requests: &'p [Request],
+    members: &'a Members,
+    ancestry: &'a Ancestry<'a>,
+    threads: NonZeroUsize,
+}
 
 /// The pass's outputs: the engine table, unchanged, the finished store and
 /// the kernel's sums when it rode the pass.
@@ -502,7 +502,15 @@ impl<'a> Pass<'a> {
         reserve: u64,
         kernel: Option<&Kernel>,
     ) -> Result<Pass<'a>, Error> {
-        let args = (ped, max_degree, union, requests, members, ancestry, threads);
+        let args = Args {
+            ped,
+            max_degree,
+            union,
+            requests,
+            members,
+            ancestry,
+            threads,
+        };
         match kernel {
             None => Pass::with(args, budget, reserve, NoKernel),
             Some(kernel) => Pass::with(args, budget, reserve, kernel),
@@ -515,7 +523,7 @@ impl<'a> Pass<'a> {
         reserve: u64,
         kernel: Q,
     ) -> Result<Pass<'a>, Error> {
-        match args.4.exponents.len() {
+        match args.members.exponents.len() {
             0 => Pass::keyed(args, budget, reserve, kernel, Clusters::Binary),
             1 => Pass::keyed(args, budget, reserve, kernel, Clusters::One),
             _ => Pass::keyed(args, budget, reserve, kernel, Clusters::Two),
@@ -524,7 +532,15 @@ impl<'a> Pass<'a> {
 
     /// [`Pass::run`] with `K` value columns, its store wrapped by `wrap`.
     fn keyed<const K: usize, Q: Kin>(
-        (ped, max_degree, union, requests, members, ancestry, threads): Args<'a, '_>,
+        Args {
+            ped,
+            max_degree,
+            union,
+            requests,
+            members,
+            ancestry,
+            threads,
+        }: Args<'a, '_>,
         budget: u64,
         reserve: u64,
         kernel: Q,
