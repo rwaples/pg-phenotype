@@ -17,7 +17,7 @@ from tests.oracle.relative_pairs_reference import (
     within_person_reference,
     within_person_stratified_reference,
 )
-from tests.pedigrees import random_pedigree
+from tests.pedigrees import depth, random_pedigree
 
 DEFAULT = ["MZ", "MO", "FO", "FS", "MHS", "PHS", "GP", "Av", "GGP", "HAv", "GAv", "1C"]
 DIRECTED = [c for c in DEFAULT if c not in SYMMETRIC]
@@ -384,23 +384,15 @@ def test_the_gate_withholds_comparison_below_simaces_floor():
 
 
 def _generation(ped: dict[str, np.ndarray], seed: int) -> np.ndarray:
-    """A cohort-like stratum: each row's depth (founders 0, else one more than its deeper parent).
+    """A cohort-like stratum: each row's ``depth``.
 
     A fifth of rows are one later, so some sibs and cousins span two strata, and about a tenth are unknown.
     """
-    row = {int(i): r for r, i in enumerate(ped["id"])}
-    depth = np.zeros(len(ped["id"]))
-    for _ in range(len(depth)):
-        before = depth.copy()
-        for r, (m, f) in enumerate(zip(ped["mother"], ped["father"], strict=True)):
-            parents = [depth[row[int(p)]] for p in (m, f) if int(p) in row]
-            depth[r] = 1 + max(parents) if parents else 0
-        if (depth == before).all():
-            break
+    generation = depth(ped)
     rng = np.random.default_rng(seed + 7)
-    depth[rng.random(len(depth)) < 0.2] += 1
-    depth[rng.random(len(depth)) < 0.1] = np.nan
-    return depth
+    generation[rng.random(len(generation)) < 0.2] += 1
+    generation[rng.random(len(generation)) < 0.1] = np.nan
+    return generation
 
 
 def _value_close(value: float | None, expected: float | None, tol: float) -> None:

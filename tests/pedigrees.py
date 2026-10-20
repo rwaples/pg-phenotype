@@ -55,3 +55,17 @@ def random_pedigree(seed: int, *, n_founders: int = 12, generations: int = 4, si
         "twin": twin_id[order],
         "sex": np.array(sex)[order],
     }
+
+
+def depth(ped: dict[str, np.ndarray]) -> np.ndarray:
+    """Each row's depth: founders and rows without a parent in ``ped`` 0, else one more than the deeper parent."""
+    row = {int(i): r for r, i in enumerate(ped["id"])}
+    depth = np.zeros(len(ped["id"]))
+    for _ in range(len(depth)):
+        before = depth.copy()
+        for r, (m, f) in enumerate(zip(ped["mother"], ped["father"], strict=True)):
+            parents = [depth[row[int(p)]] for p in (m, f) if int(p) in row]
+            depth[r] = 1 + max(parents) if parents else 0
+        if (depth == before).all():
+            break
+    return depth

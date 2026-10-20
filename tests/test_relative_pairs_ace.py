@@ -12,7 +12,7 @@ from pedigree_graph import RELATIONSHIPS
 
 from pg_phenotype import Trait, ValidationError
 from pg_phenotype import relative_pairs as rp
-from tests.pedigrees import random_pedigree
+from tests.pedigrees import depth, random_pedigree
 
 CATEGORIES = ["MZ", "FS", "MHS", "PHS", "MO", "1C"]
 KINSHIP = {"MZ": 0.5, "FS": 0.25, "MO": 0.25, "MHS": 0.125, "PHS": 0.125, "1C": 0.0625}
@@ -49,17 +49,7 @@ def one(ped) -> rp.RelativePairCorrelation:
 @pytest.fixture(scope="module")
 def binary_two(ped) -> rp.RelativePairCorrelation:
     traits = [Trait(_familial(ped, s, "binary"), kind="binary") for s in (1, 2)]
-    return rp.correlation(ped, traits, categories=CATEGORIES, stratum=_depth(ped))
-
-
-def _depth(ped: dict[str, np.ndarray]) -> np.ndarray:
-    row = {int(i): r for r, i in enumerate(ped["id"])}
-    depth = np.zeros(len(ped["id"]))
-    for _ in range(len(depth)):
-        for r, (m, f) in enumerate(zip(ped["mother"], ped["father"], strict=True)):
-            parents = [depth[row[int(p)]] for p in (m, f) if int(p) in row]
-            depth[r] = 1 + max(parents) if parents else 0
-    return depth
+    return rp.correlation(ped, traits, categories=CATEGORIES, stratum=depth(ped))
 
 
 def _r(res: rp.RelativePairCorrelation, category: str) -> float:
@@ -186,7 +176,7 @@ def test_pooled_reads_each_cells_primary_or_phi(binary_two):
 
 def test_the_default_estimate_follows_the_result(ped, one):
     assert rp.ace(one, components="A").settings["estimate"] == "pooled"
-    stratified = rp.correlation(ped, Trait(_familial(ped, 1, "continuous")), categories=["FS"], stratum=_depth(ped))
+    stratified = rp.correlation(ped, Trait(_familial(ped, 1, "continuous")), categories=["FS"], stratum=depth(ped))
     fit = rp.ace(stratified, components="A")
     assert fit.settings["estimate"] == "stratified"
     assert fit.rows[0].value == stratified.cells[0].stratified.estimate.value
@@ -694,7 +684,7 @@ def test_a_covariance_of_other_cells_is_a_validation_error(one_cov):
 def generated() -> rp.RelativePairCorrelation:
     ped = random_pedigree(7, n_founders=60, generations=5, size=150)
     traits = [Trait(_familial(ped, s, "continuous")) for s in (4, 5)]
-    return rp.correlation(ped, traits, categories=CATEGORIES, stratum=_depth(ped), se=True, covariance=True)
+    return rp.correlation(ped, traits, categories=CATEGORIES, stratum=depth(ped), se=True, covariance=True)
 
 
 @pytest.mark.parametrize("estimate", ["pooled", "stratified"])
