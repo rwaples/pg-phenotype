@@ -49,6 +49,46 @@ impl Parent {
             Parent::Father => "father",
         }
     }
+
+    pub fn parse(name: &str) -> Option<Parent> {
+        Parent::ALL.into_iter().find(|p| p.name() == name)
+    }
+}
+
+/// A set of lines, by [`Parent`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lines([bool; 3]);
+
+impl Lines {
+    pub const ALL: Lines = Lines([true; 3]);
+    pub const EMPTY: Lines = Lines([false; 3]);
+
+    pub fn contains(self, parent: Parent) -> bool {
+        self.0[parent as usize]
+    }
+
+    pub fn insert(&mut self, parent: Parent) {
+        self.0[parent as usize] = true;
+    }
+
+    pub fn is_empty(self) -> bool {
+        self == Lines::EMPTY
+    }
+
+    /// The lines, in [`Parent::ALL`] order.
+    pub fn iter(self) -> impl Iterator<Item = Parent> {
+        Parent::ALL.into_iter().filter(move |&p| self.contains(p))
+    }
+}
+
+impl FromIterator<Parent> for Lines {
+    fn from_iter<I: IntoIterator<Item = Parent>>(parents: I) -> Lines {
+        let mut lines = Lines::EMPTY;
+        for parent in parents {
+            lines.insert(parent);
+        }
+        lines
+    }
 }
 
 /// Why a value is missing.
@@ -148,8 +188,8 @@ impl Subset {
 /// What a call computes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
-    /// Whether each line is fitted, in [`Parent::ALL`] order.
-    pub lines: [bool; 3],
+    /// The lines fitted.
+    pub lines: Lines,
     /// `false` fits the lines alone: no Mate Networks, and `se`, `p` and
     /// `ci` are [`Reason::NotRequested`].  Every other value is the same.
     pub inference: bool,
@@ -159,7 +199,7 @@ impl Default for Settings {
     /// Every line, with inference.
     fn default() -> Settings {
         Settings {
-            lines: [true; 3],
+            lines: Lines::ALL,
             inference: true,
         }
     }
@@ -216,7 +256,7 @@ pub fn parent_offspring(
     strata: Option<Strata<'_>>,
     settings: Settings,
 ) -> Result<ParentOffspring, Error> {
-    if !settings.lines.contains(&true) {
+    if settings.lines.is_empty() {
         return Err(Error::NoLines);
     }
     let pedigree = pedigree.resolve()?;
@@ -237,7 +277,7 @@ pub fn parent_offspring(
     }
     // Per requested parent, one fit per subset: pooled first, then each stratum.
     let fits = Parent::ALL.map(|parent| {
-        if !settings.lines[parent as usize] {
+        if !settings.lines.contains(parent) {
             return None;
         }
         let mut subsets: Vec<Children> = rows
@@ -581,9 +621,9 @@ impl ParentOffspring {
                     (
                         "lines",
                         Value::List(
-                            Parent::ALL
+                            self.settings
+                                .lines
                                 .iter()
-                                .filter(|&&p| self.settings.lines[p as usize])
                                 .map(|p| Value::Str(p.name()))
                                 .collect(),
                         ),
@@ -784,7 +824,7 @@ mod tests {
             run_with((&ids, &mother, &father), &v, Some(strata), settings).unwrap()
         };
         let full = run(Settings::default());
-        let lines = [true, false, true];
+        let lines = Lines::from_iter([Parent::Midparent, Parent::Father]);
         let point = run(Settings {
             lines,
             inference: false,
@@ -798,7 +838,7 @@ mod tests {
         for (a, b) in subsets(&full).iter().zip(&subsets(&point)) {
             for p in Parent::ALL {
                 let Some(got) = b.fit(p) else {
-                    assert!(!lines[p as usize]);
+                    assert!(!lines.contains(p));
                     continue;
                 };
                 let want = a.fit(p).unwrap();
@@ -819,8 +859,13 @@ mod tests {
         }
         assert!(full.pooled.fits.iter().all(Option::is_some));
         assert_eq!(point.settings.lines, lines);
+        assert_eq!(
+            Parent::ALL.map(|p| Parent::parse(p.name())),
+            Parent::ALL.map(Some)
+        );
+        assert_eq!(Parent::parse("both"), None);
         let none = Settings {
-            lines: [false; 3],
+            lines: Lines::EMPTY,
             inference: true,
         };
         let err = run_with((&ids, &mother, &father), &v, None, none).unwrap_err();

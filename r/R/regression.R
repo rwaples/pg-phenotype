@@ -60,7 +60,7 @@ regression_parent_offspring <- function(pedigree, trait, stratum = NULL,
   }
   inference <- .pgp_flag(inference, "inference", call)
   raw <- .pgp_call(
-    .native_regression_parent_offspring(pedigree, trait, stratum, .pgp_po_lines %in% lines, inference), call
+    .native_regression_parent_offspring(pedigree, trait, stratum, lines, inference), call
   )
   raw$settings$lines <- unlist(raw$settings$lines)
   structure(raw, class = "pgphenotype_parent_offspring")

@@ -123,7 +123,7 @@ def _subset(raw: dict) -> Subset:
     return Subset(*(_fit(raw[line]) for line in LINES))
 
 
-def _lines(lines: str | Iterable[str]) -> tuple[bool, bool, bool]:
+def _lines(lines: str | Iterable[str]) -> tuple[str, ...]:
     try:
         names = [lines] if isinstance(lines, str) else list(lines)
     except TypeError:
@@ -131,8 +131,7 @@ def _lines(lines: str | Iterable[str]) -> tuple[bool, bool, bool]:
     unknown = [name for name in names if name not in LINES]
     if unknown:
         raise ValueError(f"lines must name one or more of {', '.join(LINES)}, got {names!r}")
-    midparent, mother, father = (line in names for line in LINES)
-    return midparent, mother, father
+    return tuple(line for line in LINES if line in names)
 
 
 def parent_offspring(
@@ -184,7 +183,7 @@ def parent_offspring(
         ValueError: *lines* names no line, or one not in :data:`LINES`.
     """
     trait = checked(trait)
-    flags = _lines(lines)
+    names = _lines(lines)
     if not isinstance(inference, (bool, np.bool_)):
         raise TypeError(f"inference must be a bool, got {inference!r}")
     native = native_pedigree(pedigree)
@@ -192,7 +191,7 @@ def parent_offspring(
         native,
         trait,
         None if stratum is None else strata(stratum),
-        lines=flags,
+        lines=names,
         inference=bool(inference),
     )
     by_stratum = raw["strata"]

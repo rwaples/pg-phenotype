@@ -102,7 +102,7 @@ def parent_offspring(
     strata: _Strata | None,
     /,
     *,
-    lines: tuple[bool, bool, bool],
+    lines: tuple[str, ...],
     inference: bool,
 ) -> dict[str, Any]: ...
 def relative_pairs_correlation(

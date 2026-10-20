@@ -5,7 +5,7 @@
 //!     cargo run --release --example po_profile -- <per_gen> <gens> <pooled|gen> <all|mid> <inference|point> <calls>
 
 use pg_phenotype_core::assortative::Strata;
-use pg_phenotype_core::regression::{parent_offspring, Settings};
+use pg_phenotype_core::regression::{parent_offspring, Lines, Parent, Settings};
 use pg_phenotype_core::{Pedigree, PedigreeArg, PedigreeInput, Trait, TraitKind};
 use std::time::Instant;
 
@@ -41,7 +41,11 @@ fn main() {
     let (per_gen, gens) = (count(1, 2), count(2, 1));
     let config = args[3].as_str();
     let settings = Settings {
-        lines: [true, args[4] == "all", args[4] == "all"],
+        lines: if args[4] == "all" {
+            Lines::ALL
+        } else {
+            Lines::from_iter([Parent::Midparent])
+        },
         inference: args[5] == "inference",
     };
     let calls = count(6, 1);
