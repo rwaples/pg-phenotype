@@ -49,7 +49,7 @@ mod influence;
 mod mrca;
 mod within_person;
 
-pub use covariance::{Covariance, Form};
+pub use covariance::{Covariance, Form, Pick};
 
 /// The trait's field name with one trait, as errors report it.
 const FIELD: &str = "trait";
@@ -127,6 +127,12 @@ impl Estimator {
             Estimator::Tetrachoric => "tetrachoric",
             Estimator::Phi => "phi",
         }
+    }
+
+    pub fn parse(name: &str) -> Option<Estimator> {
+        [Estimator::Pearson, Estimator::Tetrachoric, Estimator::Phi]
+            .into_iter()
+            .find(|e| e.name() == name)
     }
 }
 

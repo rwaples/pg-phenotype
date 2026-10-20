@@ -95,23 +95,30 @@ fn value(value: Option<f64>, reason: Option<String>) -> Result<f64, String> {
 }
 
 fn cell(
+    py: Python<'_>,
     (name, members, first_trait, second_trait, crude, n, n_entries, stratified): HostCell,
-) -> Result<AceCell, pg_phenotype_core::Error> {
+) -> PyResult<AceCell> {
     Ok(AceCell {
         pairs: match members {
             None => Pairs::WithinPerson,
-            Some(codes) => Pairs::relatives(&codes)?,
+            Some(codes) => Pairs::relatives(&codes).map_err(|e| to_pyerr(py, e))?,
         },
-        name,
         first_trait,
         second_trait,
         crude: crude
             .into_iter()
-            .map(|(estimator, v, reason)| CrudeEstimate {
-                estimator,
-                value: value(v, reason),
+            .map(|(estimator, v, reason)| {
+                Ok(CrudeEstimate {
+                    estimator: relative_pairs::Estimator::parse(&estimator).ok_or_else(|| {
+                        PyValueError::new_err(format!(
+                            "cell {name:?}: crude estimate {estimator:?} is not an estimator"
+                        ))
+                    })?,
+                    value: value(v, reason),
+                })
             })
-            .collect(),
+            .collect::<PyResult<_>>()?,
+        name,
         n,
         n_entries,
         stratified: stratified.map(|(v, reason, n, n_entries)| StratifiedEstimate {
@@ -140,8 +147,8 @@ fn flat(matrix: &PyReadonlyArray1<'_, f64>) -> PyResult<Vec<f64>> {
 }
 
 /// The ACE Fit of a result's cells, which the wrapper checked, with the
-/// result's covariance when it has one; `weights` `None` is the core's
-/// default.
+/// result's covariance when it has one; `estimate` and `weights` `None`
+/// are the core's defaults.
 #[pyfunction]
 #[pyo3(signature = (cells, categories, components, shared_environment, estimator, estimate, weights, covariance, /))]
 #[allow(clippy::too_many_arguments)]
@@ -152,7 +159,7 @@ pub(crate) fn relative_pairs_ace<'py>(
     components: Vec<String>,
     shared_environment: Option<Vec<String>>,
     estimator: String,
-    estimate: String,
+    estimate: Option<String>,
     weights: Option<String>,
     covariance: Option<HostCovariance<'py>>,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -166,7 +173,9 @@ pub(crate) fn relative_pairs_ace<'py>(
         )?,
         shared_environment,
         estimator: named("estimator", &estimator, Estimator::parse(&estimator))?,
-        estimate: named("estimate", &estimate, Estimate::parse(&estimate))?,
+        estimate: estimate
+            .map(|e| named("estimate", &e, Estimate::parse(&e)))
+            .transpose()?,
         weights: weights
             .map(|w| named("weights", &w, Weights::parse(&w)))
             .transpose()?,
@@ -180,18 +189,14 @@ pub(crate) fn relative_pairs_ace<'py>(
             ))
         })
         .transpose()?;
-    let fit = cells
+    let cells = cells
         .into_iter()
-        .map(cell)
-        .collect::<Result<Vec<_>, _>>()
-        .and_then(|cells| {
-            let covariance = matrices
-                .map(|(pooled, phi, stratified)| {
-                    Covariance::new(cells.len(), pooled, phi, stratified)
-                })
-                .transpose()?;
-            ace::fit(&cells, &request, covariance.as_ref())
-        })
+        .map(|c| cell(py, c))
+        .collect::<PyResult<Vec<_>>>()?;
+    let fit = matrices
+        .map(|(pooled, phi, stratified)| Covariance::new(cells.len(), pooled, phi, stratified))
+        .transpose()
+        .and_then(|covariance| ace::fit(&cells, &request, covariance.as_ref()))
         .map_err(|e| to_pyerr(py, e))?;
     crossing::result(py, fit.to_value())
 }

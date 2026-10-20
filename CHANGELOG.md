@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- The Rust core's API changes; Python and R are unchanged.
+  `ace::AceRequest.estimate` is `Option<Estimate>`, and `None` resolves in
+  the core, as `weights` does (ADR 0014): stratified when any relatives
+  cell carries a stratified form, else pooled.  `AceFit.estimate` records
+  the estimate read.  `ace::CrudeEstimate.estimator` is a
+  `relative_pairs::Estimator` (with a new `Estimator::parse`) instead of
+  its name.  `relative_pairs::Form::pick` selects a cell's estimate of a
+  form; the covariance and the ACE Fit both select through it.
+  `regression::Settings.lines` is a `Lines` set indexed by `Parent`
+  (with `Parent::parse`) instead of `[bool; 3]`, and the hosts pass the
+  line names to the native layer.
+
 ## v0.5.0
 
 - pedigree-graph-core is pinned at pedigree-graph's v0.13.0 tag, with

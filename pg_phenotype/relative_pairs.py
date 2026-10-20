@@ -923,9 +923,7 @@ def ace(
     shared = _names("shared_environment", shared_environment)
     if estimator not in _ESTIMATORS:
         raise ValueError(f"estimator must be one of {_ESTIMATORS}, got {estimator!r}")
-    if estimate is None:
-        estimate = "stratified" if any(c.stratified is not None for c in result.cells) else "pooled"
-    elif estimate not in _ESTIMATES:
+    if estimate is not None and estimate not in _ESTIMATES:
         raise ValueError(f"estimate must be one of {_ESTIMATES}, got {estimate!r}")
     if weights is not None and weights not in _WEIGHTS:
         raise ValueError(f"weights must be one of {_WEIGHTS}, got {weights!r}")

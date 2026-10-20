@@ -121,7 +121,7 @@ def relative_pairs_ace(
     components: list[str],
     shared_environment: list[str] | None,
     estimator: str,
-    estimate: str,
+    estimate: str | None,
     weights: str | None,
     covariance: tuple[np.ndarray, np.ndarray | None, np.ndarray | None] | None,
     /,

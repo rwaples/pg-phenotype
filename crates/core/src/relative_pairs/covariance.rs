@@ -53,6 +53,18 @@ impl Form {
         }
     }
 
+    /// Which of a cell's estimates is this form, given its pooled estimates
+    /// (primary first) and each one's estimator: the first for
+    /// [`Form::Pooled`], phi's for [`Form::Phi`], and for
+    /// [`Form::Stratified`] the cell's stratified fit.
+    pub fn pick<'a, T>(self, pooled: &'a [T], estimator: impl Fn(&T) -> Estimator) -> Pick<'a, T> {
+        match self {
+            Form::Pooled => Pick::Pooled(pooled.first()),
+            Form::Phi => Pick::Pooled(pooled.iter().find(|e| estimator(e) == Estimator::Phi)),
+            Form::Stratified => Pick::Stratified,
+        }
+    }
+
     fn index(self) -> usize {
         self as usize
     }
@@ -149,27 +161,27 @@ pub(super) struct Slot {
     pub(super) column: Column,
 }
 
+/// A cell's estimate of a [`Form`]: one of its pooled estimates, if it has
+/// it, or its stratified fit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick<'a, T> {
+    Pooled(Option<&'a T>),
+    Stratified,
+}
+
 /// The covered estimates of the cell at slot `cell` whose influences are
-/// defined in its request's `influences`: the pooled primary, the pooled
-/// phi and the stratified fit.
+/// defined in its request's `influences`, one per [`Form`].
 pub(super) fn slots<'a>(
     cell: u32,
     fit: &'a Cell<Fit>,
     influences: &'a [Result<Influence, SeReason>],
 ) -> impl Iterator<Item = Slot> + 'a {
-    let phi = fit
-        .estimates
-        .iter()
-        .find(|f| f.estimate.estimator == Estimator::Phi);
-    let stratified = fit.stratified.as_ref().map(|s| &s.estimate);
-    [
-        (Form::Pooled, fit.estimates.first()),
-        (Form::Phi, phi),
-        (Form::Stratified, stratified),
-    ]
-    .into_iter()
-    .filter_map(move |(form, fit)| {
-        let influence = fit?.influence?;
+    Form::ALL.into_iter().filter_map(move |form| {
+        let estimate = match form.pick(&fit.estimates, |f| f.estimate.estimator) {
+            Pick::Pooled(estimate) => estimate,
+            Pick::Stratified => fit.stratified.as_ref().map(|s| &s.estimate),
+        };
+        let influence = estimate?.influence?;
         influences.get(influence)?.as_ref().ok()?;
         Some(Slot {
             influence: influence as u32,

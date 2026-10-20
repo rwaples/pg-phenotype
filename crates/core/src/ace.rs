@@ -28,7 +28,7 @@
 mod linear;
 
 use crate::error::{Error, Position};
-use crate::relative_pairs::{Covariance, Form};
+use crate::relative_pairs::{self, Covariance, Form, Pick};
 use crate::value::Value;
 use pedigree_graph_core::relationships::{Category, CategorySet};
 
@@ -176,8 +176,7 @@ impl Pairs {
 /// One crude estimate of a cell, as a host holds it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CrudeEstimate {
-    /// The estimator's name (`pearson`, `tetrachoric`, `phi`).
-    pub estimator: String,
+    pub estimator: relative_pairs::Estimator,
     /// The value, or the reason it is undefined.
     pub value: Result<f64, String>,
 }
@@ -222,8 +221,9 @@ pub struct AceRequest {
     /// The Shared-Environment Categories' codes; required with C.
     pub shared_environment: Option<Vec<String>>,
     pub estimator: Estimator,
-    /// The host resolves its default before the call.
-    pub estimate: Estimate,
+    /// `None` is the default: [`Estimate::Stratified`] when any relatives
+    /// cell carries a stratified form, else [`Estimate::Pooled`].
+    pub estimate: Option<Estimate>,
     /// The weighting of every solve; `None` is the default (ADR 0014):
     /// [`Weights::Pairs`] for phi or without the covariance of the form
     /// read, else per fit [`Weights::Gls`] when the fit's entered rows'
@@ -343,6 +343,8 @@ pub struct AceFit {
     /// Every candidate cell, in the order given.
     pub rows: Vec<Row>,
     pub request: AceRequest,
+    /// The estimate read: the request's, or its default.
+    pub estimate: Estimate,
 }
 
 /// How the fit was computed, as the tree's `method` reports it.
@@ -445,11 +447,19 @@ pub fn fit(
             maximum: 2,
         });
     }
-    if request.estimate == Estimate::Stratified && request.estimator == Estimator::Phi {
-        return Err(Error::NoStratifiedForm {
-            estimator: Estimator::Phi,
-        });
-    }
+    let estimate = request.estimate.unwrap_or_else(|| {
+        let stratified = cells
+            .iter()
+            .any(|c| c.pairs != Pairs::WithinPerson && c.stratified.is_some());
+        if stratified {
+            Estimate::Stratified
+        } else {
+            Estimate::Pooled
+        }
+    });
+    let form = form(estimate, request.estimator).ok_or(Error::NoStratifiedForm {
+        estimator: Estimator::Phi,
+    })?;
     let shared = shared_set(request)?;
     if let Some(names) = &request.categories {
         for (i, name) in names.iter().enumerate() {
@@ -474,16 +484,14 @@ pub fn fit(
         .collect();
     let mut rows = candidates
         .iter()
-        .map(|&(i, c)| row(c, i, request, shared.as_ref()))
+        .map(|&(i, c)| row(c, i, request.estimator, form, shared.as_ref()))
         .collect::<Result<Vec<Row>, Error>>()?;
-    if request.estimate == Estimate::Stratified
-        && candidates.iter().all(|(_, c)| c.stratified.is_none())
-    {
+    if estimate == Estimate::Stratified && candidates.iter().all(|(_, c)| c.stratified.is_none()) {
         return Err(Error::NoStratifiedForm {
             estimator: Estimator::Primary,
         });
     }
-    let sigma = sigma(cells.len(), request, covariance)?;
+    let sigma = sigma(cells.len(), form, covariance)?;
     let rule = rule(request, sigma)?;
     for (row, &(i, _)) in rows.iter_mut().zip(&candidates) {
         row.variance = sigma.and_then(|s| s.variance(i));
@@ -546,6 +554,7 @@ pub fn fit(
         cross,
         rows,
         request: request.clone(),
+        estimate,
     })
 }
 
@@ -619,14 +628,25 @@ impl<'a> Rule<'a> {
     }
 }
 
-/// The covariance of the form the request reads, when `covariance` has it.
+/// The form a fit reads for `estimate` and `estimator`; phi has no
+/// stratified form.
+fn form(estimate: Estimate, estimator: Estimator) -> Option<Form> {
+    match (estimate, estimator) {
+        (Estimate::Pooled, Estimator::Primary) => Some(Form::Pooled),
+        (Estimate::Pooled, Estimator::Phi) => Some(Form::Phi),
+        (Estimate::Stratified, Estimator::Primary) => Some(Form::Stratified),
+        (Estimate::Stratified, Estimator::Phi) => None,
+    }
+}
+
+/// The covariance of `form`, when `covariance` has it.
 ///
 /// # Errors
 ///
 /// `covariance_shape_mismatch` for a covariance not over `cells` cells.
 fn sigma<'a>(
     cells: usize,
-    request: &AceRequest,
+    form: Form,
     covariance: Option<&'a Covariance>,
 ) -> Result<Option<Sigma<'a>>, Error> {
     if let Some(covariance) = covariance.filter(|c| c.n() != cells) {
@@ -636,11 +656,6 @@ fn sigma<'a>(
             actual_length: covariance.n().saturating_mul(covariance.n()),
         });
     }
-    let form = match (request.estimate, request.estimator) {
-        (Estimate::Stratified, _) => Form::Stratified,
-        (Estimate::Pooled, Estimator::Primary) => Form::Pooled,
-        (Estimate::Pooled, Estimator::Phi) => Form::Phi,
-    };
     Ok(covariance
         .and_then(|c| c.of(form))
         .map(|matrix| Sigma { n: cells, matrix }))
@@ -683,11 +698,13 @@ fn shared_set(request: &AceRequest) -> Result<Option<CategorySet>, Error> {
     Ok(Some(set))
 }
 
-/// A cell's candidate row: its coefficients and the value it gives.
+/// A cell's candidate row: its coefficients and the value of `form` it
+/// gives.
 fn row(
     cell: &AceCell,
     position: usize,
-    request: &AceRequest,
+    estimator: Estimator,
+    form: Form,
     declared: Option<&CategorySet>,
 ) -> Result<Row, Error> {
     let kind = match &cell.pairs {
@@ -722,18 +739,14 @@ fn row(
             }
         }
     };
-    let (value, weight) = match request.estimate {
-        Estimate::Stratified => match &cell.stratified {
+    let (value, weight) = match form.pick(&cell.crude, |e| e.estimator) {
+        Pick::Stratified => match &cell.stratified {
             Some(s) => (s.value.clone(), s.n_entries.unwrap_or(s.n)),
             None => (Err("no_stratified_form".to_string()), 0),
         },
-        Estimate::Pooled => {
-            let estimate = match request.estimator {
-                Estimator::Primary => cell.crude.first(),
-                Estimator::Phi => cell.crude.iter().find(|e| e.estimator == "phi"),
-            };
+        Pick::Pooled(estimate) => {
             let estimate = estimate.ok_or_else(|| Error::MissingEstimator {
-                estimator: request.estimator,
+                estimator,
                 entry: cell.name.clone(),
             })?;
             (estimate.value.clone(), cell.n_entries.unwrap_or(cell.n))
@@ -1264,7 +1277,7 @@ impl AceFit {
                             .map_or(Value::Null, texts),
                     ),
                     ("estimator", request.estimator.name().into()),
-                    ("estimate", request.estimate.name().into()),
+                    ("estimate", self.estimate.name().into()),
                     (
                         "weights",
                         request.weights.map_or("default", Weights::name).into(),
@@ -1296,7 +1309,7 @@ mod tests {
 
     fn crude(estimator: &str, value: Result<f64, &str>) -> CrudeEstimate {
         CrudeEstimate {
-            estimator: estimator.to_string(),
+            estimator: relative_pairs::Estimator::parse(estimator).unwrap(),
             value: value.map_err(str::to_string),
         }
     }
@@ -1336,7 +1349,7 @@ mod tests {
             components,
             shared_environment: shared.map(|s| s.iter().map(|c| c.to_string()).collect()),
             estimator: Estimator::Primary,
-            estimate: Estimate::Pooled,
+            estimate: Some(Estimate::Pooled),
             weights: Some(Weights::Pairs),
         }
     }
@@ -1748,7 +1761,7 @@ mod tests {
             let fit = fit(
                 &cells,
                 &AceRequest {
-                    estimate,
+                    estimate: Some(estimate),
                     ..req.clone()
                 },
             )
@@ -1786,7 +1799,7 @@ mod tests {
         req.estimator = Estimator::Phi;
         close(one_trait(&cells, &req).a, 0.4, 1e-15);
         req.estimator = Estimator::Primary;
-        req.estimate = Estimate::Stratified;
+        req.estimate = Some(Estimate::Stratified);
         let fit = fit(&cells, &req).unwrap();
         assert_eq!(fit.rows.len(), 1);
         assert_eq!(fit.rows[0].weight, 850);
@@ -1795,6 +1808,25 @@ mod tests {
         let fit = self::fit(&cells, &req).unwrap();
         assert_eq!(fit.rows[1].value, Err("no_stratified_form".to_string()));
         assert_eq!(fit.traits[0].rows, [0]);
+    }
+
+    #[test]
+    fn the_default_estimate_is_stratified_when_a_relatives_cell_has_one() {
+        let stratified = StratifiedEstimate {
+            value: Ok(0.3),
+            n: 400,
+            n_entries: None,
+        };
+        let mut req = request(Components::A, None);
+        req.estimate = None;
+        let mut wp = within_person(0.2, 900);
+        wp.stratified = Some(stratified.clone());
+        let mut cells = vec![cell(&[FS], (0, 0), 0.4, 500), wp];
+        assert_eq!(fit(&cells, &req).unwrap().estimate, Estimate::Pooled);
+        cells[0].stratified = Some(stratified);
+        let fitted = fit(&cells, &req).unwrap();
+        assert_eq!(fitted.estimate, Estimate::Stratified);
+        assert_eq!(fitted.rows[0].value, Ok(0.3));
     }
 
     fn code(cells: &[AceCell], request: &AceRequest) -> &'static str {
@@ -1839,7 +1871,7 @@ mod tests {
             "empty_category_group"
         );
         let mut req = request(Components::A, None);
-        req.estimate = Estimate::Stratified;
+        req.estimate = Some(Estimate::Stratified);
         assert_eq!(
             fit(&[fs()], &req).unwrap_err(),
             Error::NoStratifiedForm {
@@ -2331,7 +2363,7 @@ mod tests {
         ] {
             let req = AceRequest {
                 estimator,
-                estimate,
+                estimate: Some(estimate),
                 ..req.clone()
             };
             let fit = super::fit(&cells, &req, Some(&covariance)).unwrap();
@@ -2339,7 +2371,7 @@ mod tests {
         }
         let pooled_only = with(1, vec![0.01]);
         let req = AceRequest {
-            estimate: Estimate::Stratified,
+            estimate: Some(Estimate::Stratified),
             ..req
         };
         let fit = super::fit(&cells, &req, Some(&pooled_only)).unwrap();

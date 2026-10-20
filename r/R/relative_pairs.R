@@ -370,10 +370,7 @@ relative_pairs_ace <- function(result, categories = NULL, components = c("A", "C
     .pgp_usage("`components` must be \"A\", \"C\" or both, each once", call)
   }
   estimator <- one_of(estimator, c("primary", "phi"), "estimator")
-  if (is.null(estimate)) {
-    estimate <- if (any(vapply(result$cells, function(cell) !is.null(cell$stratified), TRUE))) "stratified" else "pooled"
-  }
-  estimate <- one_of(estimate, c("stratified", "pooled"), "estimate")
+  if (!is.null(estimate)) estimate <- one_of(estimate, c("stratified", "pooled"), "estimate")
   if (!is.null(weights)) weights <- one_of(weights, c("pairs", "inverse_variance", "gls"), "weights")
   cells <- lapply(result$cells, .pgp_ace_cell, within_person = FALSE)
   if (!is.null(result$within_person)) {

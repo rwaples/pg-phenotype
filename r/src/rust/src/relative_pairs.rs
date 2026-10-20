@@ -189,8 +189,8 @@ fn cell(robj: &Robj) -> HostResult<AceCell> {
             n_entries: optional_count("stratified n_entries", &n_entries)?,
         })
     };
+    let name = strings("name", &name)?.concat();
     Ok(AceCell {
-        name: strings("name", &name)?.concat(),
         pairs: if members.is_null() {
             Pairs::WithinPerson
         } else {
@@ -201,11 +201,18 @@ fn cell(robj: &Robj) -> HostResult<AceCell> {
         crude: estimators
             .into_iter()
             .zip(values.iter().zip(&reasons))
-            .map(|(estimator, (&v, reason))| CrudeEstimate {
-                estimator,
-                value: value(v, reason),
+            .map(|(estimator, (&v, reason))| {
+                Ok(CrudeEstimate {
+                    estimator: relative_pairs::Estimator::parse(&estimator).ok_or_else(|| {
+                        HostError::usage(format!(
+                            "cell {name:?}: crude estimate {estimator:?} is not an estimator"
+                        ))
+                    })?,
+                    value: value(v, reason),
+                })
             })
-            .collect(),
+            .collect::<HostResult<_>>()?,
+        name,
         n: whole("n", &n)? as u64,
         n_entries: optional_count("n_entries", &n_entries)?,
         stratified,
@@ -258,7 +265,10 @@ fn ace_impl(
     let optional = |what: &str, x: &Robj| (!x.is_null()).then(|| strings(what, x)).transpose();
     let components = strings("components", components)?;
     let names: Vec<&str> = components.iter().map(String::as_str).collect();
-    let (estimator, estimate) = (one("estimator", estimator)?, one("estimate", estimate)?);
+    let estimator = one("estimator", estimator)?;
+    let estimate = (!estimate.is_null())
+        .then(|| one("estimate", estimate))
+        .transpose()?;
     let weights = (!weights.is_null())
         .then(|| one("weights", weights))
         .transpose()?;
@@ -271,7 +281,9 @@ fn ace_impl(
         )?,
         shared_environment: optional("shared_environment", shared_environment)?,
         estimator: named("estimator", &estimator, Estimator::parse(&estimator))?,
-        estimate: named("estimate", &estimate, Estimate::parse(&estimate))?,
+        estimate: estimate
+            .map(|e| named("estimate", &e, Estimate::parse(&e)))
+            .transpose()?,
         weights: weights
             .map(|w| named("weights", &w, Weights::parse(&w)))
             .transpose()?,
@@ -287,8 +299,8 @@ fn ace_impl(
 }
 
 /// The ACE Fit of a result's cells, which the R wrapper checked, with the
-/// result's covariance when it has one; `weights` `NULL` is the core's
-/// default.
+/// result's covariance when it has one; `estimate` and `weights` `NULL`
+/// are the core's defaults.
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn relative_pairs_ace(
