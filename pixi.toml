@@ -24,6 +24,14 @@ build-dev = "maturin develop --release --features test-hooks"
 test = { cmd = "pytest -n 6 --dist worksteal -m 'not slow'", depends-on = ["build-dev"], env = { PG_PHENOTYPE_REQUIRE_TEST_HOOKS = "1" } }
 test-all = { cmd = "pytest -n 6 --dist worksteal", depends-on = ["build-dev"], env = { PG_PHENOTYPE_REQUIRE_TEST_HOOKS = "1" } }
 test-rust = "cargo test --release"
+# `ci-local` runs the checks the CI push jobs run (.github/workflows/ci.yml),
+# before a push. CI-only: the Python 3.13 job, the offline R tarball check
+# (needs sudo unshare), the pedigree-graph main job (`test-against-pg`), and the
+# publish workflow's macOS/Windows/ARM legs, so float comparisons in tests need
+# a tolerance.
+lint-rust = "cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings"
+lint-python = "ruff check && ruff format --check && ty check"
+ci-local = { depends-on = ["lint-rust", "test-rust", "lint-python", "test-all", { task = "ci-r", environment = "r" }] }
 # Rebuild against a candidate pedigree-graph checkout and run every suite.
 test-against-pg = "tools/test_against_pg.sh"
 
@@ -40,6 +48,11 @@ make = "*"
 r-install = { cmd = "R CMD INSTALL --no-multiarch --preclean r", env = { PG_PHENOTYPE_CARGO_FEATURES = "test-hooks" } }
 r-doc = "Rscript -e 'roxygen2::roxygenise(\"r\", roclets = \"rd\")'"
 r-test = { cmd = "Rscript -e 'testthat::test_local(\"r\", stop_on_failure = TRUE)'", depends-on = ["r-install"], env = { PG_PHENOTYPE_REQUIRE_TEST_HOOKS = "1" } }
+# The binding crate under r/src/rust builds only in this env: outside it, extendr's
+# build script finds no R and caches the failure (`cargo clean -p extendr-api -p
+# extendr-ffi` clears it).
+lint-r-rust = { cmd = "cargo fmt --check && cargo clippy --release --all-targets --all-features -- -D warnings", cwd = "r/src/rust" }
+ci-r = { depends-on = ["lint-r-rust", "r-test"] }
 
 [environments]
 r = { features = ["r"], no-default-feature = false }
