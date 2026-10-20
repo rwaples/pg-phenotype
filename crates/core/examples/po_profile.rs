@@ -4,6 +4,13 @@
 //!
 //!     cargo run --release --example po_profile -- <per_gen> <gens> <pooled|gen> <all|mid> <inference|point> <calls>
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a benchmark, never reached from a host: a panic is its error report"
+)]
+
 use pg_phenotype_core::assortative::Strata;
 use pg_phenotype_core::regression::{parent_offspring, Lines, Parent, Settings};
 use pg_phenotype_core::{Pedigree, PedigreeArg, PedigreeInput, Trait, TraitKind};

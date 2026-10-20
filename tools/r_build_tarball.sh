@@ -67,6 +67,9 @@ for line in open(core_in).read().splitlines():
     header = re.match(r"^\[(.+)\]$", line)
     if header:
         section = header.group(1)
+    # [lints] is clippy's, inherited from a workspace the tarball lacks.
+    if section == "lints":
+        continue
     inherited = re.match(r"^([A-Za-z0-9_-]+)\.workspace = true$", line)
     if inherited:
         key = inherited.group(1)

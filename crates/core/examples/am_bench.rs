@@ -4,6 +4,13 @@
 //!
 //!     cargo run --release --example am_bench -- <dir> <a|b> <threads> <permutations> <bootstrap>
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a benchmark, never reached from a host: a panic is its error report"
+)]
+
 use pg_phenotype_core::assortative::{mate_correlation, Settings, Strata};
 use pg_phenotype_core::{configure_pool, PedigreeArg, PedigreeInput, Trait, TraitKind};
 use std::num::NonZeroUsize;

@@ -5,21 +5,6 @@
 //! raises into R.  A method crosses into the core through `crossing.rs`.  Each method is a module, as in the core
 //! ([`pafgrs`]).
 
-// No user-reachable panics (pedigree-graph ADR 0007): input errors cross as
-// host error values, as in the core.  A surviving `expect` / `unreachable!`
-// names the internal invariant it relies on in an `#[expect(..., reason)]`.
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::unreachable,
-        clippy::todo,
-        clippy::unimplemented
-    )
-)]
-
 mod assortative;
 mod correlation;
 mod crossing;
@@ -96,7 +81,7 @@ fn configure_threads(n: f64) -> Robj {
 /// The committed thread budget, committing it on first call.
 #[extendr]
 fn thread_budget() -> Robj {
-    finish(threads::budget().map(|n| (n as i32).into()))
+    finish(threads::budget().map(|n| (n.get() as i32).into()))
 }
 
 extendr_module! {

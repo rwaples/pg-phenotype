@@ -8,6 +8,9 @@ repository.workspace = true
 publish = false
 description = "Host-neutral phenotype-in-pedigree methods on pedigree-graph-core"
 
+[lints]
+workspace = true
+
 [lib]
 name = "pg_phenotype_core"
 

@@ -6,17 +6,6 @@
 //! thread pool are shared.
 
 #![forbid(unsafe_code)]
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::unreachable,
-        clippy::todo,
-        clippy::unimplemented
-    )
-)]
 
 /// The pedigree-graph revision this build links, as `Cargo.toml` pins it.
 pub const PG_CORE_REV: &str = "0a79c4e72f124c78144be2ad7074a9ba3558ba90";

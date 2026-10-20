@@ -79,24 +79,23 @@ pub fn coerce(field: &'static str, column: &Robj) -> HostResult<Coerced> {
         missing_at.push(position);
         -1
     };
-    let (values, storage) = match column.rtype() {
-        Rtype::Integers => {
-            let slice = column.as_integer_slice().unwrap_or_default();
-            let values = slice
-                .iter()
-                .enumerate()
-                .map(|(p, &v)| {
-                    if v == i32::MIN {
-                        missing(p)
-                    } else {
-                        i64::from(v)
-                    }
-                })
-                .collect();
-            (values, IdType::Integer)
-        }
-        Rtype::Doubles if column.inherits("integer64") => {
-            let slice = column.as_real_slice().unwrap_or_default();
+    // Each typed slice is `Some` only for its own R type, so the first that
+    // reads is the column's type.
+    let (values, storage) = if let Some(slice) = column.as_integer_slice() {
+        let values = slice
+            .iter()
+            .enumerate()
+            .map(|(p, &v)| {
+                if v == i32::MIN {
+                    missing(p)
+                } else {
+                    i64::from(v)
+                }
+            })
+            .collect();
+        (values, IdType::Integer)
+    } else if let Some(slice) = column.as_real_slice() {
+        if column.inherits("integer64") {
             let values = slice
                 .iter()
                 .enumerate()
@@ -106,9 +105,7 @@ pub fn coerce(field: &'static str, column: &Robj) -> HostResult<Coerced> {
                 })
                 .collect();
             (values, IdType::Integer64)
-        }
-        Rtype::Doubles => {
-            let slice = column.as_real_slice().unwrap_or_default();
+        } else {
             let mut values = Vec::with_capacity(n);
             for (position, &v) in slice.iter().enumerate() {
                 if v.is_nan() {
@@ -122,19 +119,19 @@ pub fn coerce(field: &'static str, column: &Robj) -> HostResult<Coerced> {
             }
             (values, IdType::Double)
         }
+    } else if let Some(slice) = column.as_logical_slice() {
         // `NA` alone is a logical in R, so `mother = NA` is a column of nulls.
-        Rtype::Logicals => {
-            let slice = column.as_logical_slice().unwrap_or_default();
-            if let Some(position) = slice.iter().position(|v| !v.is_na()) {
-                return Err(invalid(field, position, slice[position].to_bool().into()));
-            }
-            (0..n).for_each(|p| {
-                missing(p);
-            });
-            (vec![-1; n], IdType::Integer)
+        if let Some(position) = slice.iter().position(|v| !v.is_na()) {
+            return Err(invalid(field, position, slice[position].to_bool().into()));
         }
-        _ if n == 0 => (Vec::new(), IdType::Integer),
-        _ => return Err(invalid(field, 0, describe(column))),
+        (0..n).for_each(|p| {
+            missing(p);
+        });
+        (vec![-1; n], IdType::Integer)
+    } else if n == 0 {
+        (Vec::new(), IdType::Integer)
+    } else {
+        return Err(invalid(field, 0, describe(column)));
     };
     Ok(Coerced {
         values,

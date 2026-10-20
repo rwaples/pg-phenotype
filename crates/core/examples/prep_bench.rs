@@ -3,6 +3,13 @@
 //!
 //!     cargo run --release --example prep_bench -- <dir> <ndegree> <threads> [all]
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a benchmark, never reached from a host: a panic is its error report"
+)]
+
 use pg_phenotype_core::pafgrs::prepare;
 use pg_phenotype_core::{configure_pool, PedigreeArg, PedigreeInput};
 use std::num::NonZeroUsize;

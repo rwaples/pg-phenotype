@@ -8,6 +8,9 @@ repository.workspace = true
 publish = false
 description = "PyO3 host binding for pg-phenotype-core"
 
+[lints]
+workspace = true
+
 [lib]
 name = "pg_phenotype_native"
 crate-type = ["cdylib"]

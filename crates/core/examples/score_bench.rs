@@ -3,6 +3,13 @@
 //!
 //!     cargo run --release --example score_bench -- <dir> <ndegree> <threads> <uni|biv>
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a benchmark, never reached from a host: a panic is its error report"
+)]
+
 use pg_phenotype_core::pafgrs::{
     prepare, score_bivariate, score_univariate, BivParams, Cip, Interpolation,
 };

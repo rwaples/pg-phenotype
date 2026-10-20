@@ -20,7 +20,6 @@ use pg_phenotype_core::{threads, Error, Trait};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
-use std::num::NonZeroUsize;
 
 /// A `pg_phenotype.Trait`, read by its attributes; the wrapper checked its type.
 #[derive(FromPyObject)]
@@ -65,11 +64,6 @@ where
     T: Send,
 {
     let threads = threads::budget().map_err(budget_error)?;
-    #[expect(
-        clippy::expect_used,
-        reason = "the core's threads::budget commits only budgets from 1 to MAX_THREADS"
-    )]
-    let threads = NonZeroUsize::new(threads).expect("a committed budget is at least 1");
     let pool = pg_phenotype_core::configure_pool(threads).map_err(|e| to_pyerr(py, e))?;
     py.detach(|| {
         release_free_memory();

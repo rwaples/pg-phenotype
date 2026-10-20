@@ -21,6 +21,17 @@ crate-type = ["staticlib"]
 pg-phenotype-core = { path = "../../../crates/core" }
 extendr-api = "0.9"
 
+# The repository workspace's [workspace.lints.clippy], repeated because this
+# crate is its own workspace; tests/test_version.py fails
+# when the two differ.  The repository's clippy.toml exempts test code.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+
 [features]
 # Test-only entry points (the panic-boundary probe).  `pixi run -e r r-install`
 # enables it through PG_PHENOTYPE_CARGO_FEATURES; tools/r_build_tarball.sh

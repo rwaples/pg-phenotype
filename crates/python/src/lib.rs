@@ -4,21 +4,6 @@
 //! by `.code` with keyword fields from `Error::fields`; a thread-pool conflict
 //! crosses as `RuntimeError`, as `configure_threads` raises it.
 
-// No user-reachable panics (pedigree-graph ADR 0007): input errors cross as
-// host error values, as in the core.  A surviving `expect` / `unreachable!`
-// names the internal invariant it relies on in an `#[expect(..., reason)]`.
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::unreachable,
-        clippy::todo,
-        clippy::unimplemented
-    )
-)]
-
 use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
 use pg_phenotype_core::error::{Class, FieldValue, IndexBase};
 use pg_phenotype_core::pafgrs::{self, BivParams, Cip, Interpolation};
@@ -113,7 +98,9 @@ fn configure_threads(n: usize) -> PyResult<()> {
 /// The committed package thread budget, committing it on first call.
 #[pyfunction]
 fn thread_budget() -> PyResult<usize> {
-    threads::budget().map_err(budget_error)
+    threads::budget()
+        .map(std::num::NonZeroUsize::get)
+        .map_err(budget_error)
 }
 
 /// Clear the budget; for tests only (the pool keeps its size).

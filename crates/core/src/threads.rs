@@ -6,6 +6,7 @@
 //! budget is never invalidated behind its back (pedigree-graph ADR 0007).
 //! The budget sizes this crate's pool ([`crate::configure_pool`]).
 
+use std::num::NonZeroUsize;
 use std::sync::Mutex;
 
 /// The environment variable a budget falls back to.
@@ -27,8 +28,8 @@ pub enum BudgetError {
 }
 
 struct Budget {
-    configured: Option<usize>,
-    committed: Option<usize>,
+    configured: Option<NonZeroUsize>,
+    committed: Option<NonZeroUsize>,
 }
 
 static BUDGET: Mutex<Budget> = Mutex::new(Budget {
@@ -40,6 +41,11 @@ fn state() -> std::sync::MutexGuard<'static, Budget> {
     BUDGET.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// `n` as a budget, if it is one: from 1 to [`MAX_THREADS`].
+fn in_range(n: usize) -> Option<NonZeroUsize> {
+    NonZeroUsize::new(n).filter(|n| n.get() <= MAX_THREADS)
+}
+
 /// Record `n` as the budget, or confirm it once committed.
 ///
 /// # Errors
@@ -47,14 +53,12 @@ fn state() -> std::sync::MutexGuard<'static, Budget> {
 /// [`BudgetError::OutOfRange`], and [`BudgetError::Conflict`] once a
 /// different budget is committed.
 pub fn configure(n: usize) -> Result<(), BudgetError> {
-    if !(1..=MAX_THREADS).contains(&n) {
-        return Err(BudgetError::OutOfRange { requested: n });
-    }
+    let n = in_range(n).ok_or(BudgetError::OutOfRange { requested: n })?;
     let mut budget = state();
     match budget.committed {
         Some(committed) if committed != n => Err(BudgetError::Conflict {
-            committed,
-            requested: n,
+            committed: committed.get(),
+            requested: n.get(),
         }),
         Some(_) => Ok(()),
         None => {
@@ -64,18 +68,18 @@ pub fn configure(n: usize) -> Result<(), BudgetError> {
     }
 }
 
-fn from_env() -> Result<usize, BudgetError> {
+fn from_env() -> Result<NonZeroUsize, BudgetError> {
     let raw = match std::env::var(ENV_VAR) {
         Ok(raw) => raw,
-        Err(std::env::VarError::NotPresent) => return Ok(1),
+        Err(std::env::VarError::NotPresent) => return Ok(NonZeroUsize::MIN),
         Err(std::env::VarError::NotUnicode(raw)) => {
             return Err(BudgetError::InvalidEnv {
                 raw: raw.to_string_lossy().into_owned(),
             })
         }
     };
-    match raw.parse::<usize>() {
-        Ok(n) if (1..=MAX_THREADS).contains(&n) && raw.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
+    match raw.parse::<usize>().ok().and_then(in_range) {
+        Some(n) if raw.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
         _ => Err(BudgetError::InvalidEnv { raw }),
     }
 }
@@ -86,7 +90,7 @@ fn from_env() -> Result<usize, BudgetError> {
 ///
 /// [`BudgetError::InvalidEnv`] when the budget would come from a bad
 /// [`ENV_VAR`]; nothing is committed then.
-pub fn budget() -> Result<usize, BudgetError> {
+pub fn budget() -> Result<NonZeroUsize, BudgetError> {
     let mut budget = state();
     if let Some(committed) = budget.committed {
         return Ok(committed);
@@ -118,7 +122,7 @@ mod tests {
         assert_eq!(configure(0), Err(BudgetError::OutOfRange { requested: 0 }));
         configure(3).unwrap();
         configure(2).unwrap();
-        assert_eq!(budget(), Ok(2));
+        assert_eq!(budget().map(NonZeroUsize::get), Ok(2));
         assert_eq!(configure(2), Ok(()));
         assert_eq!(
             configure(4),
