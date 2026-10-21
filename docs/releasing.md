@@ -29,11 +29,19 @@ the R tarball attached.
 
         gh workflow run publish.yml --ref main
 
-5. Tag the commit and push the tag:
+5. Run [pg-phenotype-validate](https://github.com/rwaples/pg-phenotype-validate)
+   against the candidate, as its README's "Checking a local pg-phenotype
+   checkout" describes: point its `pg-phenotype` entry at this checkout,
+   build the R tarball with `pixi run -e r tools/r_build_tarball.sh`, and
+   run `PGP_VALIDATE_R_TARBALL=<tarball> pixi run harness` there.  Don't tag
+   while a row is FAIL or ERROR.  A row whose status changed needs its
+   differences.md entry updated there, after the release, against the
+   published pair.
+6. Tag the commit and push the tag:
 
         git tag vX.Y.Z
         git push origin vX.Y.Z
 
-6. To submit the R package to CRAN, upload the release's
+7. To submit the R package to CRAN, upload the release's
    `pgphenotype_X.Y.Z.tar.gz` at <https://cran.r-project.org/submit.html>.
    The workflow does not submit to CRAN.
