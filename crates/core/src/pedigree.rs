@@ -222,8 +222,9 @@ pub(crate) fn checked_rows(
     // Each stored position names a distinct row, so it is below n.
     let mut seen = vec![u32::MAX; n];
     let mut rows = Vec::with_capacity(ids.len());
-    for (position, &id) in ids.iter().enumerate() {
-        let row = index.row(id);
+    // One batch lookup, then the checks in position order, so the first bad
+    // position is still the one reported.
+    for (position, (&id, row)) in ids.iter().zip(index.resolve(ids)).enumerate() {
         if row < 0 {
             return Err(unknown(id, position));
         }
@@ -375,6 +376,21 @@ mod tests {
             Error::DuplicateLookupId {
                 id: 31,
                 positions: [0.into(), 2.into()]
+            }
+        );
+        // The first bad position wins, whichever kind it is.
+        assert_eq!(
+            ped.rows(&[31, 31, 99]).unwrap_err(),
+            Error::DuplicateLookupId {
+                id: 31,
+                positions: [0.into(), 1.into()]
+            }
+        );
+        assert_eq!(
+            ped.rows(&[31, 99, 31]).unwrap_err(),
+            Error::UnknownId {
+                id: 99,
+                position: 1.into()
             }
         );
         let err = ped.align(&[10, 11], &[1.0], f64::NAN).unwrap_err();
