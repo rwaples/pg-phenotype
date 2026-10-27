@@ -219,12 +219,14 @@ pub(crate) fn checked_rows(
     unknown: impl Fn(i64, usize) -> Error,
     duplicate: impl Fn(i64, [usize; 2]) -> Error,
 ) -> Result<Vec<usize>, Error> {
+    // One batch lookup, then the checks in position order, so the first bad
+    // position is still the one reported.  Resolving before `seen` exists,
+    // and widening only after it is dropped, keeps the call's peak at what a
+    // lookup per id cost: 4 bytes per row and 12 per id.
+    let resolved = index.resolve(ids);
     // Each stored position names a distinct row, so it is below n.
     let mut seen = vec![u32::MAX; n];
-    let mut rows = Vec::with_capacity(ids.len());
-    // One batch lookup, then the checks in position order, so the first bad
-    // position is still the one reported.
-    for (position, (&id, row)) in ids.iter().zip(index.resolve(ids)).enumerate() {
+    for (position, (&id, &row)) in ids.iter().zip(&resolved).enumerate() {
         if row < 0 {
             return Err(unknown(id, position));
         }
@@ -233,9 +235,9 @@ pub(crate) fn checked_rows(
             return Err(duplicate(id, [seen[row] as usize, position]));
         }
         seen[row] = position as u32;
-        rows.push(row);
     }
-    Ok(rows)
+    drop(seen);
+    Ok(resolved.into_iter().map(|row| row as usize).collect())
 }
 
 /// What a method takes: a built [`Pedigree`], or columns it validates for
