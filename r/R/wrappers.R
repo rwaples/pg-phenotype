@@ -41,8 +41,9 @@
   .Call(wrap__regression_parent_offspring, pedigree, trait, stratum, lines, inference)
 }
 .native_relative_pairs_correlation <- function(pedigree, traits, stratum, names, members, memory_budget_bytes, se,
-                                              covariance) {
-  .Call(wrap__relative_pairs_correlation, pedigree, traits, stratum, names, members, memory_budget_bytes, se, covariance)
+                                              covariance, influence) {
+  .Call(wrap__relative_pairs_correlation, pedigree, traits, stratum, names, members, memory_budget_bytes, se, covariance,
+        influence)
 }
 .native_relative_pairs_ace <- function(cells, categories, components, shared_environment, estimator, estimate, weights,
                                       covariance) {

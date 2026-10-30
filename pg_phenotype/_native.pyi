@@ -113,6 +113,7 @@ def relative_pairs_correlation(
     memory_budget_bytes: int,
     se: bool,
     covariance: bool,
+    influence: bool,
     /,
 ) -> dict[str, Any]: ...
 def relative_pairs_ace(

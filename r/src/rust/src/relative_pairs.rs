@@ -4,7 +4,7 @@
 
 use crate::crossing::{self, TraitArg};
 use crate::errors::{finish, HostError, HostResult};
-use crate::input;
+use crate::input::{self, IdType};
 use crate::pedigree::Source;
 use extendr_api::prelude::*;
 use pg_phenotype_core::ace::{
@@ -12,7 +12,7 @@ use pg_phenotype_core::ace::{
     StratifiedEstimate, Weights,
 };
 use pg_phenotype_core::assortative::Strata;
-use pg_phenotype_core::relative_pairs::{self, Covariance, Entry, Se};
+use pg_phenotype_core::relative_pairs::{self, CellEntries, Covariance, Entry, Se};
 
 fn strings(what: &str, x: &Robj) -> HostResult<Vec<String>> {
     x.as_string_vector()
@@ -63,9 +63,13 @@ fn correlation_impl(
     memory_budget_bytes: &Robj,
     se: bool,
     covariance: bool,
+    influence: bool,
 ) -> HostResult<Robj> {
     let se = Se::from_flags(se, covariance)
         .ok_or_else(|| HostError::usage("covariance needs se".into()))?;
+    if influence && se == Se::Off {
+        return Err(HostError::usage("influence needs se".into()));
+    }
     let pedigree = Source::read(pedigree)?;
     let traits = traits
         .values()
@@ -86,18 +90,97 @@ fn correlation_impl(
         "memory_budget_bytes",
         input::number("memory_budget_bytes", memory_budget_bytes)?,
     )?;
-    let result = crossing::run(|| {
-        relative_pairs::correlation(
+    let (result, cells) = crossing::run(|| {
+        relative_pairs::correlation_with(
             pedigree.arg(),
             &traits,
             strata,
             entries.as_deref(),
             budget,
             se,
+            influence,
         )
-        .map(|r| r.to_value())
+        .map(|mut r| (r.to_value(), r.entries.take()))
     })?;
-    crossing::result(result)
+    let id_type = pedigree.id_type();
+    let cells: Robj = match cells {
+        None => ().into(),
+        Some(cells) => {
+            List::from_values(cells.into_iter().map(|c| cell_entries(id_type, c))).into()
+        }
+    };
+    Ok(list!(result = crossing::result(result)?, entries = cells).into_robj())
+}
+
+/// The narrowest storage, from `id_type` up, that holds every one of
+/// `ids` exactly.  Each pedigree column is coerced on its own, so an
+/// external parent's id, an MRCA, can exceed the row ids' storage.
+fn lossless(id_type: IdType, ids: &[i64]) -> IdType {
+    const DOUBLE_EXACT: i64 = 1 << 53;
+    let max = ids.iter().copied().max().unwrap_or(0);
+    match id_type {
+        IdType::Integer if max <= i64::from(i32::MAX) => IdType::Integer,
+        IdType::Integer | IdType::Double if max <= DOUBLE_EXACT => IdType::Double,
+        _ => IdType::Integer64,
+    }
+}
+
+/// `ids` in the narrowest storage from `id_type` up that holds them
+/// exactly ([`lossless`]), `NA` where an id is `-1`.
+fn ids_or_na(id_type: IdType, ids: &[i64]) -> Robj {
+    match lossless(id_type, ids) {
+        IdType::Integer => Integers::from_values(ids.iter().map(|&v| {
+            if v < 0 {
+                Rint::na()
+            } else {
+                Rint::from(v as i32)
+            }
+        }))
+        .into_robj(),
+        IdType::Double => Doubles::from_values(ids.iter().map(|&v| {
+            if v < 0 {
+                Rfloat::na()
+            } else {
+                Rfloat::from(v as f64)
+            }
+        }))
+        .into_robj(),
+        // bit64's NA is the smallest i64.
+        IdType::Integer64 => crate::errors::integer64(
+            &ids.iter()
+                .map(|&v| if v < 0 { i64::MIN } else { v })
+                .collect::<Vec<_>>(),
+        ),
+    }
+}
+
+/// One cell's entries: its id columns in the pedigree's id storage, the
+/// MRCA `NA` for a pair with none, and one influence per estimate, `NULL`
+/// for an estimate with none.  Each column is freed once copied, so the
+/// Rust and R copies of the entries are not held whole at once.
+fn cell_entries(id_type: IdType, cell: CellEntries) -> Robj {
+    let CellEntries {
+        first_id,
+        second_id,
+        mrca_id,
+        influence,
+    } = cell;
+    let ids = |column: Vec<i64>| id_type.to_robj(&column);
+    let (first_id, second_id) = (ids(first_id), ids(second_id));
+    let mrca_id = ids_or_na(id_type, &mrca_id);
+    let influence = List::from_values(influence.into_iter().map(|column| -> Robj {
+        match column {
+            None => ().into(),
+            Some(c) => Doubles::from_values(c).into_robj(),
+        }
+    }));
+    list!(
+        first_id = first_id,
+        second_id = second_id,
+        mrca_id = mrca_id,
+        influence = influence
+    )
+    .into_robj()
 }
 
 /// The Relative-Pair Correlation of one or two traits, in the pool.
@@ -112,6 +195,7 @@ fn relative_pairs_correlation(
     memory_budget_bytes: Robj,
     se: bool,
     covariance: bool,
+    influence: bool,
 ) -> Robj {
     finish(correlation_impl(
         &pedigree,
@@ -122,6 +206,7 @@ fn relative_pairs_correlation(
         &memory_budget_bytes,
         se,
         covariance,
+        influence,
     ))
 }
 

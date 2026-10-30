@@ -57,9 +57,10 @@ fit <- relative_pairs_ace(res, shared_environment = c("MZ", "FS", "MHS"))
 | `traits` | A continuous or binary `Trait` on the pedigree's rows, or a sequence of one or two of one kind | required |
 | `categories` | The entries, in order: Relationship Category codes (`"FS"`, `"MO"`, `"1C"`) and mappings of a Category Group's name to its codes (`{"PO": ["MO", "FO"]}`; R: a named list element) | `None`: every category up to degree 3 |
 | `stratum` | One integer label per row (a generation, a birth cohort), NA where unknown | `None` (no strata) |
-| `memory_budget_bytes` | The bound on the engine's accumulators, with two traits the within-person accumulator, with `se` the per-cluster sums, and with `covariance` the per-key sums, the matrices and the kinship kernel | 2^30 (1 GiB) |
+| `memory_budget_bytes` | The bound on the engine's accumulators, with two traits the within-person accumulator, with `se` the per-cluster sums, with `covariance` the per-key sums, the matrices and the kinship kernel, and with `influence` the entries | 2^30 (1 GiB) |
 | `se` | Whether every estimate gets its cluster sandwich SE; see [SE](#se) | `False` |
 | `covariance` | With `se`, whether the result carries the covariance of the estimates `ace` reads, and with two traits the Within-Person SE; see [Covariance](#covariance) | `False` |
+| `influence` | With `se`, whether each cell carries its entries and each estimate its influence on them; see [Per-entry influences](#per-entry-influences) | `False` |
 
 The thread count is the package budget (`configure_threads`, or
 `PG_PHENOTYPE_THREADS`).  Traits and strata are matched to the pedigree's
@@ -308,6 +309,51 @@ the estimate's n rows and P kernel pairs.  On 600 simACE reps
 alone the within-person estimates have no SE (`within_person`): the
 kernel would cost the `se=True` call more than 5%.
 
+## Per-entry influences
+
+The SE's pass folds each entry into per-cluster sums and keeps no pair,
+so its clustering cannot be checked from the result alone.
+`influence=True` (with `se=True`; alone it raises `ValueError`) adds what
+the SE sums, one entry at a time, so an outside implementation can rebuild
+every SE:
+
+- Each `Cell` gets `entries`, an `Entries` of three read-only int64
+  arrays: `first_id`, `second_id` and `mrca_id`.  An entry is one oriented
+  pair whose first member shows the cell's `first_trait` and second member
+  its `second_trait`: a directed cell's `n` pairs, a symmetric same-trait
+  cell's pairs in both orientations (`2 n`), a symmetric cross-trait
+  cell's `n_entries`.  Entries are ordered by their members' rows.
+  `mrca_id` is the pair's MRCA (see [SE](#se)): a row's id or an external
+  parent's, and `-1` (R: `NA`) for a pair with no common ancestor in the
+  pedigree, which is its own cluster: key those entries by their unordered
+  pair, not by `mrca_id`.
+- Each `Estimate` of the cell (`crude`, each stratum's `crude`,
+  `stratified.estimate`) gets `influence`, a read-only float64 array
+  aligned with `entries`.  It is already divided by the fit's entries, and
+  it is 0 on an entry the estimate does not read: a stratum's estimate
+  reads its stratum's entries alone.  It is `None` for an estimate with no
+  influence (`no_estimate`, `boundary`, `sandwich_undefined`).  Every
+  column spans all of the cell's entries, so with many strata the entries
+  cost about 8 bytes x entries x (estimates + 3) per cell.
+
+For each estimate, the SE is then:
+
+```text
+meat = sum_m Phi_m^2 + sum_i S_i^2 - sum_(i,m) S_(i,m)^2        SE = sqrt(meat)
+```
+
+`Phi_m` sums `influence` over the entries whose MRCA is `m`, `S_i` over
+the entries with member `i` (first or second), and `S_(i,m)` over both.
+In R, `entries` is a data frame with the ids in the pedigree's id storage.
+`within_person` gets neither field.
+
+A second engine pass after the SE's sweeps lists the entries, so the cells,
+SEs and covariance do not change.  The entries, their ids and the
+influences count against `memory_budget_bytes`.  They are checked before
+that pass, and a budget they do not fit raises `memory_budget_exceeded`
+with operation `relative_pairs_influence`.  `settings` reports
+`influence`.
+
 ## Result
 
 `correlation` returns a frozen `RelativePairCorrelation`.  In R the same
@@ -319,8 +365,8 @@ values come as nested lists with the same names, `NULL` where Python has
 | `cells` | Each entry's cells in request order, each entry's in the order above |
 | `within_person` | With two traits, the within-person `Cell`; `None` with one |
 | `covariance` | With `covariance=True`, the `CellCovariance`; see [Covariance](#covariance). `None` without |
-| `settings` | `categories` (the entries' names), `trait_kind`, `memory_budget_bytes`, `threads`, `se` (whether the SE was asked for), `covariance` (whether the covariance was), `quantization_exponents`, `quantization_steps` (both `None` for binary traits) |
-| `method` | `entry`, `traits`, `within_person`, `estimators`, `quantization`, `strata`, `se`, `covariance`: the method in words |
+| `settings` | `categories` (the entries' names), `trait_kind`, `memory_budget_bytes`, `threads`, `se` (whether the SE was asked for), `covariance` (whether the covariance was), `influence` (whether the entries were), `quantization_exponents`, `quantization_steps` (both `None` for binary traits) |
+| `method` | `entry`, `traits`, `within_person`, `estimators`, `quantization`, `strata`, `se`, `covariance`, `influence`: the method in words |
 | `metadata` | `pg_phenotype_version`, `pedigree_graph_core_rev` |
 
 | `Cell` field | Contents |
@@ -334,11 +380,14 @@ values come as nested lists with the same names, `NULL` where Python has
 | `strata` | With `stratum`: label to `StratumCell` |
 | `n_cross_stratum`, `n_unknown_stratum` | With `stratum`; else 0 |
 | `stratified` | With `stratum`: `Stratified(n, n_entries, n_degenerate_stratum, estimate)` |
+| `entries` | With `influence`: the `Entries` its estimates' `influence` aligns with; see [Per-entry influences](#per-entry-influences) |
 
 An `Estimate` holds `estimator`, `primary`, `value` or `reason`,
 `boundary`, the tetrachoric fit's bound flag (`None` for other
-estimators), and `se` or `se_reason` (see [SE](#se); both `None`
-without `se`, and R leaves both out).
+estimators), `se` or `se_reason` (see [SE](#se); both `None`
+without `se`, and R leaves both out), and with `influence` its
+`influence` on the cell's entries.  `entries` and `influence` take no part
+in equality.
 
 ## ACE Fit
 

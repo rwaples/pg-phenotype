@@ -48,6 +48,33 @@ const NONE: u32 = u32::MAX;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct Cluster(pub(super) u32);
 
+/// The external parents' ids, ascending: the ids of a row's parents that
+/// have no row.  Cluster `n + i` is the `i`th.
+pub(super) fn external(pedigree: &Pedigree) -> Vec<i64> {
+    let mut external: Vec<i64> = [
+        (pedigree.mother_rows(), pedigree.mother_ids()),
+        (pedigree.father_rows(), pedigree.father_ids()),
+    ]
+    .iter()
+    .flat_map(|&(rows, ids)| rows.iter().zip(ids))
+    .filter(|&(&row, &id)| row < 0 && id >= 0)
+    .map(|(_, &id)| id)
+    .collect();
+    external.sort_unstable();
+    external.dedup();
+    external
+}
+
+/// `cluster`'s ancestor's original id, `ids` being the rows' and
+/// `external` [`external`]'s; `None` for a pair with no common ancestor.
+pub(super) fn id(ids: &[i64], external: &[i64], cluster: Cluster) -> Option<i64> {
+    let c = cluster.0 as usize;
+    match c.checked_sub(ids.len()) {
+        None => Some(ids[c]),
+        Some(rank) => external.get(rank).copied(),
+    }
+}
+
 /// Who is whose parent, as clusters, built once before the pass.
 pub(super) struct Ancestry<'p> {
     mother_rows: &'p [i32],
@@ -72,14 +99,7 @@ impl<'p> Ancestry<'p> {
             (mother_rows, pedigree.mother_ids()),
             (father_rows, pedigree.father_ids()),
         ];
-        let mut external: Vec<i64> = parents
-            .iter()
-            .flat_map(|&(rows, ids)| rows.iter().zip(ids))
-            .filter(|&(&row, &id)| row < 0 && id >= 0)
-            .map(|(_, &id)| id)
-            .collect();
-        external.sort_unstable();
-        external.dedup();
+        let external = external(pedigree);
         let n = mother_rows.len();
         let lone = u32::try_from(n + external.len())
             .ok()

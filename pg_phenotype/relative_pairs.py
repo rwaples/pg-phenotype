@@ -23,7 +23,10 @@ exact sums as pedigree-graph-core finds them and never stored.  With
 recent common ancestors and members (ADR 0013); without it there is none.
 With ``covariance=True`` as well, the result's :class:`CellCovariance` holds
 the covariance between the estimates :func:`ace` reads (ADR 0014), and with
-two traits the within-person estimates get their SEs.
+two traits the within-person estimates get their SEs.  With
+``influence=True`` and ``se=True``, each cell's :class:`Entries` and each
+estimate's ``influence`` on them are what its SE sums, entry by entry, so
+the SE can be rebuilt outside pg-phenotype.
 
 With ``stratum=`` (a generation, a birth cohort), each cell also gets one
 :class:`StratumCell` per known stratum and a :class:`Stratified` fit.  A
@@ -40,7 +43,7 @@ cross-trait correlations.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
@@ -52,6 +55,8 @@ from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._trait import as_traits
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pg_phenotype._trait import Trait
 
 __all__ = [
@@ -60,6 +65,7 @@ __all__ = [
     "Cell",
     "CellCovariance",
     "CrossShares",
+    "Entries",
     "Estimate",
     "RelativePairCorrelation",
     "Stratified",
@@ -91,7 +97,14 @@ class Estimate:
     over n entries, as when the cell's pairs share one most recent common
     ancestor or the estimate is ±1), ``negative_meat`` (the meat is negative) or ``within_person`` (the
     Within-Person SE comes with the covariance).  Both are ``None`` without
-    ``se=True``.
+    ``se=True``.  With ``influence=True``, ``influence`` is the estimate's
+    influence on each of its cell's :class:`Entries`, a read-only float64
+    array aligned with them, already divided by the fit's entries and 0 on
+    an entry the estimate does not read (a stratum's estimate reads its
+    stratum's entries alone).  It is ``None`` without ``influence=True``, in
+    ``within_person``, and for an estimate with no influence (``se_reason``
+    ``no_estimate``, ``boundary`` or ``sandwich_undefined``).  It takes no
+    part in equality.
     """
 
     estimator: str
@@ -101,6 +114,46 @@ class Estimate:
     boundary: bool | None
     se: float | None = None
     se_reason: str | None = None
+    influence: np.ndarray | None = field(default=None, repr=False, compare=False)
+
+
+@dataclass(frozen=True, eq=False)
+class Entries:
+    """A cell's entries, which its estimates' ``influence`` arrays align with (``influence=True``).
+
+    An entry is one oriented pair whose first member shows the cell's
+    ``first_trait`` and whose second member shows its ``second_trait``: a
+    directed cell's ``n`` pairs, a symmetric same-trait cell's pairs in both
+    orientations (``2 n``), a symmetric cross-trait cell's ``n_entries``.
+    They are ordered by their members' pedigree rows.  Each array is
+    read-only int64.
+
+    An estimate's SE (ADR 0013) is the square root of the meat
+    ``Σ_m Φ_m² + Σ_i S_i² − Σ_(i,m) S_(i,m)²``: ``Φ_m`` sums its
+    ``influence`` over the entries whose MRCA is ``m``, ``S_i`` over the
+    entries with member ``i`` (first or second), and ``S_(i,m)`` over both.
+
+    Every estimate's ``influence`` spans all of the cell's entries, so with
+    many strata the entries cost about 8 bytes x entries x (estimates + 3)
+    per cell.
+
+    Attributes:
+        first_id: Each entry's first member's id.
+        second_id: Each entry's second member's id.
+        mrca_id: Each entry's most recent common ancestor, its cluster: a
+            row's id or an external parent's (a parent id with no row);
+            ``-1`` for a pair with no common ancestor in the pedigree, which
+            is its own cluster, so key those entries by their unordered
+            pair, not by ``mrca_id``.
+    """
+
+    first_id: np.ndarray
+    second_id: np.ndarray
+    mrca_id: np.ndarray
+
+    def __len__(self) -> int:
+        """The number of entries."""
+        return len(self.first_id)
 
 
 class _Crude:
@@ -223,6 +276,9 @@ class Cell(_Crude):
             either member's of a symmetric pair.  ``n`` is the strata's ``n``
             plus ``n_cross_stratum`` plus ``n_unknown_stratum``.
         stratified: The fit over the strata; ``None`` without *stratum*.
+        entries: With ``influence=True``, the :class:`Entries` its
+            estimates' ``influence`` aligns with; ``None`` without, and in
+            ``within_person``.  It takes no part in equality.
     """
 
     category: str
@@ -241,6 +297,7 @@ class Cell(_Crude):
     n_cross_stratum: int
     n_unknown_stratum: int
     stratified: Stratified | None
+    entries: Entries | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True, eq=False)
@@ -315,6 +372,7 @@ class RelativePairCorrelation:
         settings: ``categories`` (the entries' names), ``trait_kind``,
             ``memory_budget_bytes``, ``threads``, ``se`` (whether the SE
             was asked for), ``covariance`` (whether the covariance was),
+            ``influence`` (whether the entries were),
             and continuous traits' ``quantization_exponents`` e, one per
             trait, and ``quantization_steps`` 2^-e (``None`` for binary
             traits).
@@ -376,7 +434,22 @@ def _entries(categories: object) -> list[tuple[int, str, list[str] | None]] | No
     return entries
 
 
-def _stratum_cell(raw: dict) -> StratumCell:
+#: The end of a cell's native influences.
+_DONE = object()
+
+
+def _read_only(array: np.ndarray) -> np.ndarray:
+    array.flags.writeable = False
+    return array
+
+
+def _estimate(raw: dict, influences: Iterator[np.ndarray | None] | None) -> Estimate:
+    """An :class:`Estimate`, with the next of *influences* when there are any."""
+    influence = None if influences is None else next(influences)
+    return Estimate(**raw, influence=None if influence is None else _read_only(influence))
+
+
+def _stratum_cell(raw: dict, influences: Iterator[np.ndarray | None] | None = None) -> StratumCell:
     concordance, table = raw["concordance"], raw["table"]
     return StratumCell(
         n=raw["n"],
@@ -384,14 +457,20 @@ def _stratum_cell(raw: dict) -> StratumCell:
         n_entries=raw["n_entries"],
         concordance=None if concordance is None else (concordance[0], concordance[1], concordance[2]),
         table=None if table is None else ((table[0][0], table[0][1]), (table[1][0], table[1][1])),
-        crude=tuple(Estimate(**e) for e in raw["crude"]),
+        crude=tuple(_estimate(e, influences) for e in raw["crude"]),
     )
 
 
-def _cell(raw: dict) -> Cell:
+def _cell(raw: dict, entries: dict | None = None) -> Cell:
+    """A :class:`Cell`; *entries*, its native entries, give it :class:`Entries` and its estimates' influences.
+
+    The native influences come in the order of the cell's estimates: the
+    crude ones, each stratum's, then the stratified one.
+    """
     roles, by_stratum, stratified = raw["roles"], raw["strata"], raw["stratified"]
-    pooled = _stratum_cell(raw)
-    return Cell(
+    influences = None if entries is None else iter(entries["influence"])
+    pooled = _stratum_cell(raw, influences)
+    cell = Cell(
         category=raw["category"],
         members=tuple(raw["members"]),
         symmetric=raw["symmetric"],
@@ -404,7 +483,9 @@ def _cell(raw: dict) -> Cell:
         concordance=pooled.concordance,
         table=pooled.table,
         crude=pooled.crude,
-        strata=None if by_stratum is None else MappingProxyType({s["stratum"]: _stratum_cell(s) for s in by_stratum}),
+        strata=None
+        if by_stratum is None
+        else MappingProxyType({s["stratum"]: _stratum_cell(s, influences) for s in by_stratum}),
         n_cross_stratum=raw["n_cross_stratum"],
         n_unknown_stratum=raw["n_unknown_stratum"],
         stratified=None
@@ -413,9 +494,15 @@ def _cell(raw: dict) -> Cell:
             n=stratified["n"],
             n_entries=stratified["n_entries"],
             n_degenerate_stratum=stratified["n_degenerate_stratum"],
-            estimate=Estimate(**stratified["estimate"]),
+            estimate=_estimate(stratified["estimate"], influences),
         ),
+        entries=None
+        if entries is None
+        else Entries(**{k: _read_only(entries[k]) for k in ("first_id", "second_id", "mrca_id")}),
     )
+    if influences is not None and next(influences, _DONE) is not _DONE:
+        raise RuntimeError(f"cell {cell.category!r}: more native influences than estimates")
+    return cell
 
 
 def correlation(
@@ -427,6 +514,7 @@ def correlation(
     memory_budget_bytes: int = DEFAULT_MEMORY_BUDGET_BYTES,
     se: bool = False,
     covariance: bool = False,
+    influence: bool = False,
 ) -> RelativePairCorrelation:
     """The Relative-Pair Correlation of *traits* in each requested category.
 
@@ -487,6 +575,13 @@ def correlation(
             adds 3 to 6% to the SE's time with one trait and 20 to 35% with
             two traits and strata, the kernel's included; with two traits
             and MZ alone it takes 1.4 to 2.3 times the SE's time.
+        influence: With *se*, also give each cell its :class:`Entries` and
+            each of its estimates its ``influence`` on them: what the SE
+            sums, entry by entry, so ``√meat`` over them is the SE.  A
+            second engine pass after the SE's sweeps lists the entries; the
+            entries, their ids and the influences count against
+            *memory_budget_bytes*, checked before that pass.  The cells and
+            the SEs do not change.
 
     Returns:
         A :class:`RelativePairCorrelation`.
@@ -510,30 +605,34 @@ def correlation(
             sums' operation is ``relative_pairs_se``), or with *covariance*
             the per-key sums it keeps may not (operation
             ``relative_pairs_covariance``, raised after the pass and before
-            the SE's sweeps), or the allocator refused the sums
+            the SE's sweeps), or with *influence* the entries may not
+            (operation ``relative_pairs_influence``, raised before their
+            pass), or the allocator refused the sums
             (``allocation_failed``).
         TypeError: *traits* is not a :class:`~pg_phenotype.Trait` or a
-            sequence of them, *se* or *covariance* is not a bool, or an
-            argument has the wrong type.
+            sequence of them, *se*, *covariance* or *influence* is not a
+            bool, or an argument has the wrong type.
         ValueError: A group mapping in *categories* is empty, or
-            *covariance* is asked for without *se*.
+            *covariance* or *influence* is asked for without *se*.
     """
     trait_list = as_traits(traits)
     entries = _entries(categories)
     budget = count("memory_budget_bytes", memory_budget_bytes)
-    for name, flag in (("se", se), ("covariance", covariance)):
+    for name, flag in (("se", se), ("covariance", covariance), ("influence", influence)):
         if not isinstance(flag, (bool, np.bool_)):
             raise TypeError(f"{name} must be a bool, got {flag!r}")
-    if covariance and not se:
-        raise ValueError("covariance=True needs se=True")
+    for name, flag in (("covariance", covariance), ("influence", influence)):
+        if flag and not se:
+            raise ValueError(f"{name}=True needs se=True")
     native = native_pedigree(pedigree)
     by_stratum = None if stratum is None else strata(stratum)
     raw = _native.relative_pairs_correlation(
-        native, trait_list, by_stratum, entries, budget, bool(se), bool(covariance)
+        native, trait_list, by_stratum, entries, budget, bool(se), bool(covariance), bool(influence)
     )
     within = raw["within_person"]
+    cell_entries = raw["entries"] or [None] * len(raw["cells"])
     return RelativePairCorrelation(
-        cells=tuple(_cell(c) for c in raw["cells"]),
+        cells=tuple(_cell(c, e) for c, e in zip(raw["cells"], cell_entries, strict=True)),
         within_person=None if within is None else _cell(within),
         covariance=_cell_covariance(raw["covariance"]),
         settings=MappingProxyType(dict(raw["settings"])),

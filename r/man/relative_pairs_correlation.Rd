@@ -11,7 +11,8 @@ relative_pairs_correlation(
   stratum = NULL,
   memory_budget_bytes = 2^30,
   se = FALSE,
-  covariance = FALSE
+  covariance = FALSE,
+  influence = FALSE
 )
 }
 \arguments{
@@ -78,6 +79,35 @@ negative (`"negative_meat"`).  The pass traverses those categories
 whether `categories` asks for them or not, and the cells stay as they
 are: two traits' covariance for MZ alone takes 1.4 to 2.3 times the
 SE's time.  `TRUE` without `se = TRUE` is an error.}
+
+\item{influence}{With `se = TRUE`, `TRUE` also gives each cell its
+`entries` and each of its estimates its `influence` on them: what the
+SE sums, entry by entry, so the SE can be rebuilt outside pg-phenotype.
+`entries` is a data frame with one row per entry, an oriented pair whose
+first member shows trait `first_trait` and second member trait
+`second_trait` (a directed cell's `n` pairs, a symmetric same-trait
+cell's pairs in both orientations, `2 n`, a symmetric cross-trait cell's
+`n_entries`), ordered by the members' pedigree rows: `first_id`,
+`second_id`, and `mrca_id`, the pair's MRCA (a row's id or an external
+parent's; `NA` for a pair with no common ancestor in the pedigree,
+which is its own cluster: key those entries by their unordered pair,
+not by `mrca_id`), the ids in the pedigree's id storage; `mrca_id`
+widens to double, then `integer64`, when an external parent's id does
+not fit it exactly.  An estimate's
+`influence` is a double vector aligned with the rows, already divided
+by the fit's entries and 0 on an entry the estimate does not read (a
+stratum's estimate reads its stratum's alone); `NULL` for an estimate
+with no influence (`se_reason` `"no_estimate"`, `"boundary"` or
+`"sandwich_undefined"`).  Every estimate's influence spans all of the
+cell's entries, so with many strata the entries cost about
+8 bytes x entries x (estimates + 3) per cell.  The SE is `sqrt(meat)`, the meat being the
+sum of squares of the influence sums over MRCAs plus over members
+(each entry counted for both) minus over (member, MRCA).  A second pass
+over the pedigree after the SE lists the entries; they count against
+`memory_budget_bytes`, checked before that pass (operation
+`relative_pairs_influence`).  The cells and SEs do not change, and
+`within_person` gets neither field.  `TRUE` without `se = TRUE` is an
+error.}
 }
 \value{
 An object of class `pgphenotype_relative_pairs`: a list with
@@ -85,7 +115,8 @@ An object of class `pgphenotype_relative_pairs`: a list with
   a symmetric entry's trait 1 x 1, 2 x 2, 1 x 2 and a directed entry's
   1 x 1, 1 x 2, 2 x 1, 2 x 2), `within_person` (with two traits, a cell
   over the rows; `NULL` with one), `settings` (`se`, whether the SE was
-  asked for, `covariance`, whether the covariance was, and with
+  asked for, `covariance`, whether the covariance was, `influence`,
+  whether the entries were, and with
   continuous traits' `quantization_exponents` and `quantization_steps`,
   one per trait), `covariance` (with `covariance = TRUE`; else `NULL`),
   `method` and `metadata`.  `covariance` holds `pooled` (each cell's
@@ -162,4 +193,6 @@ r <- relative_pairs_correlation(ped, list(x, y), categories = c("FS", "MO"))
 r$within_person
 relative_pairs_correlation(ped, x, categories = c("FO", "FS"), se = TRUE)
 relative_pairs_correlation(ped, x, categories = c("FO", "FS"), se = TRUE, covariance = TRUE)$covariance
+fs <- relative_pairs_correlation(ped, x, categories = "FS", se = TRUE, influence = TRUE)$cells[[1]]
+cbind(fs$entries, influence = fs$crude[[1]]$influence)
 }

@@ -45,6 +45,7 @@ use within_person::Kernel;
 
 mod clusters;
 mod covariance;
+mod entries;
 mod influence;
 mod mrca;
 mod within_person;
@@ -418,6 +419,33 @@ pub struct RelativePairCorrelation {
     /// With [`Se::Covariance`], the covariance of the cells' pooled, phi
     /// and stratified estimates.
     pub covariance: Option<Covariance>,
+    /// With the influences asked for, each of `cells`' [`CellEntries`].
+    pub entries: Option<Vec<CellEntries>>,
+}
+
+/// One cell's entries and each estimate's influence on them (issue #25):
+/// with these a caller forms the SE's meat itself (ADR 0013),
+/// `Σ_m Φ_m² + Σ_i S_i² − Σ_(i,m) S_(i,m)²` over the sums `Φ` of an
+/// estimate's influences per MRCA, `S` per member (each entry counted for
+/// both of its members) and per (member, MRCA), and its SE is `√meat`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CellEntries {
+    /// Each entry's first member's id.  An entry is one oriented pair whose
+    /// first member shows the cell's `first_trait` and second member its
+    /// `second_trait`: a symmetric pair's two orientations are two
+    /// entries.  Ordered by the members' rows.
+    pub first_id: Vec<i64>,
+    pub second_id: Vec<i64>,
+    /// The entry's MRCA (ADR 0013): the shared ancestor's id, which may be
+    /// an external parent's or a founder's; `-1` for a pair with no common
+    /// ancestor in the pedigree, whose cluster is the pair.
+    pub mrca_id: Vec<i64>,
+    /// Per estimate, in [`Cell::to_value`]'s order (the crude estimates,
+    /// each stratum's, then the stratified one): its influence on each
+    /// entry, already divided by its entries, 0 on an entry it does not
+    /// read; `None` for an estimate with no influence (`se_reason`
+    /// `no_estimate`, `boundary` or `sandwich_undefined`).
+    pub influence: Vec<Option<Vec<f64>>>,
 }
 
 /// One entry, resolved.
@@ -462,6 +490,36 @@ pub fn correlation(
     categories: Option<&[Entry]>,
     memory_budget_bytes: i64,
     se: Se,
+) -> Result<RelativePairCorrelation, Error> {
+    correlation_with(
+        pedigree,
+        traits,
+        strata,
+        categories,
+        memory_budget_bytes,
+        se,
+        false,
+    )
+}
+
+/// [`correlation`], with `influence` and the SE also each cell's
+/// [`CellEntries`], from a second engine pass after the SE's sweeps.  With
+/// [`Se::Off`] there are no influences, and `influence` gives no entries;
+/// the hosts refuse that call.
+///
+/// # Errors
+///
+/// [`correlation`]'s, then `memory_budget_exceeded` (operation
+/// `relative_pairs_influence`) before the second pass when what the call
+/// holds and the entries' bytes do not fit the budget.
+pub fn correlation_with(
+    pedigree: PedigreeArg<'_>,
+    traits: &[Trait<'_>],
+    strata: Option<Strata<'_>>,
+    categories: Option<&[Entry]>,
+    memory_budget_bytes: i64,
+    se: Se,
+    influence: bool,
 ) -> Result<RelativePairCorrelation, Error> {
     let pedigree = pedigree.resolve()?;
     let n_rows = pedigree.len();
@@ -523,6 +581,7 @@ pub fn correlation(
         threads,
         se: se != Se::Off,
         covariance: None,
+        entries: None,
     };
     let union: CategorySet = requests.iter().flat_map(|r| r.members.clone()).collect();
     let within = match (&within_person, within_influences.0.as_deref()) {
@@ -553,6 +612,7 @@ pub fn correlation(
     let Some(top) = traversal.top_degree() else {
         result.within_person = finish_within(&[]);
         result.covariance = (se == Se::Covariance).then(|| shape.empty());
+        result.entries = (influence && se != Se::Off).then(Vec::new);
         return Ok(result);
     };
     let ped = pedigree.relationships()?;
@@ -674,12 +734,42 @@ pub fn correlation(
     }
     let Swept { meats, mut sources } =
         sweeps.run(budget.saturating_sub(held), threads, covered.as_deref())?;
-    drop((clusters, influences));
+    drop(clusters);
+    // Held past the covariance only for the entries.
+    let influences = influence.then_some(influences);
     sources.extend(within_source);
     result.covariance = covered.map(|covered| {
         shape.covariance(&sources, &covered, &meats, (&within_slots, &within_meats))
     });
     drop(sources);
+    if let (Some(influences), Some(ancestry)) = (&influences, &ancestry) {
+        let held = (table.bytes().len() as u64)
+            .saturating_add(ancestry.bytes())
+            .saturating_add(influences.iter().flatten().map(Influence::bytes).sum());
+        // The kernel's categories can reach deeper than the requests'; with
+        // no request there are no cells.
+        let found = match union.top_degree() {
+            None => Vec::new(),
+            Some(top) => entries::entries(
+                entries::Args {
+                    pedigree: &pedigree,
+                    ped: &ped,
+                    max_degree: MaxDegree::try_new(top)?,
+                    union,
+                    requests: &requests,
+                    members: &members,
+                    ancestry,
+                    threads: lanes,
+                    cells: &cells,
+                    influences,
+                },
+                held,
+                budget,
+            )?,
+        };
+        result.entries = Some(found);
+    }
+    drop(influences);
     let ses: Vec<Vec<Result<f64, SeReason>>> = meats
         .iter()
         .map(|list| {
@@ -2095,7 +2185,7 @@ fn phi(table: [[u64; 2]; 2]) -> Estimate {
     }
 }
 
-const METHOD: [(&str, &str); 8] = [
+const METHOD: [(&str, &str); 9] = [
     (
         "entry",
         "a symmetric category's pairs enter in both orders (a same-trait cell is intraclass); \
@@ -2150,6 +2240,13 @@ const METHOD: [(&str, &str); 8] = [
          rows (MZ, MO, FO, FS, MHS, PHS, GP, Av, traversed whether requested or not) of their \
          influences' product, a kinship kernel that can be negative; its scale (n + 2P) / n^2 \
          over its n rows and P pairs",
+    ),
+    (
+        "influence",
+        "with influence, each cell's entries (first_id, second_id, mrca_id; -1 for a pair with \
+         no common ancestor, its own cluster) and each estimate's influence on them, divided by \
+         its entries and 0 on an entry it does not read, from a second engine pass after the \
+         SE's sweeps: the meat over them is the SE squared",
     ),
 ];
 
@@ -2347,6 +2444,7 @@ impl RelativePairCorrelation {
                     ("threads", (self.threads as u64).into()),
                     ("se", self.se.into()),
                     ("covariance", self.covariance.is_some().into()),
+                    ("influence", self.entries.is_some().into()),
                     (
                         "quantization_exponents",
                         exponents

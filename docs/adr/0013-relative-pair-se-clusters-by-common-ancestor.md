@@ -4,7 +4,7 @@
 the MRCA key, the entry-level meat, one engine pass, opt-in, the
 degenerate and negative meats, the calibration through the public API);
 amended 2026-10-17 by ADR 0014 (the cells' covariance and the
-Within-Person SE)
+Within-Person SE); amended 2026-10-30 (the per-entry influences, issue #25)
 **Date:** 2026-10-16
 **Context:** issue #18 (cells), issue #19 (the ACE Fit); ADR 0009, ADR 0012;
 `docs/relative-pairs-se-research.md`; `docs/gates/relative-pairs-se/`
@@ -195,3 +195,31 @@ Rejected:
   degree at most 2, computed only under `covariance=True`.  Under
   `se=True` alone the within-person estimates keep
   `se_reason="within_person"`.
+
+## Amendment (2026-10-30): the per-entry influences (issue #25)
+
+- An outside implementation cannot check this SE from the result: the
+  pass keeps no pair, so the MRCA keys and the influences never leave the
+  core.  `influence=True` (with the SE) gives them: per cell, each entry's
+  member ids and MRCA id (`-1`, R `NA`, for a pair with no common
+  ancestor), and per estimate its influence on each entry, divided by the
+  fit's entries and 0 on an entry it does not read.  The inclusion-exclusion
+  meat over them is the SE squared.
+- A second engine pass after the SE's sweeps lists them, so the SE's pass,
+  its memory plan and its cost are unchanged, and nothing is stored when
+  the flag is off.  The SE's store cannot give them back: it holds per
+  (member, side, MRCA, cell) partner sums.  Each influence is the
+  estimate's weight on the entry's engine cell applied to the entry's own
+  stride, the terms the SE's sweep sums.  Both orientations of a
+  symmetric pair are entries, as the meat is formed at the entry level.
+- The entries are bounded before their pass: the records (three times
+  their size, for the lanes' growth and the sorted concatenation), the
+  cells' ids and influences, and the largest request's weights, over what
+  the call holds then (the table, the ancestry and the influences).  A
+  budget that does not hold them raises `memory_budget_exceeded`
+  (operation `relative_pairs_influence`).
+- The entries are sorted by (request, first row, second row, category)
+  after the pass, so they do not depend on lanes or threads.
+- Checked against the Python reference's entries, MRCA keys and
+  influences (`tests/test_relative_pairs_influence.py`), and every SE
+  against √meat over its entries in Rust, Python and R.

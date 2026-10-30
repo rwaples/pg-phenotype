@@ -177,6 +177,10 @@ primary estimator, weights each solve by GLS, or by pair counts where that
 solve's covariance has no Cholesky factor; without it `ace` fits by pair
 counts and reports no SE
 ([ADR 0014](docs/adr/0014-ace-fit-se-from-the-cells-covariance.md)).
+`influence=True` (with `se=True`) gives each cell its entries (member and
+MRCA ids) and each estimate its influence on them, so the SE can be
+rebuilt outside pg-phenotype
+([reference](docs/relative-pairs.md#per-entry-influences)).
 
 ## Rows and alignment
 

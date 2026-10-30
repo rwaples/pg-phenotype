@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- `relative_pairs.correlation(..., se=True, influence=True)` (R:
+  `relative_pairs_correlation(..., se = TRUE, influence = TRUE)`) gives
+  each cell its `entries` (`first_id`, `second_id`, `mrca_id`) and each
+  estimate its `influence` on them, so the Relative-Pair SE can be rebuilt
+  outside pg-phenotype as `sqrt(meat)` (issue #25; ADR 0013, amended).  A
+  second engine pass after the SE lists the entries; off by default, the
+  call is unchanged.  The entries count against `memory_budget_bytes`
+  (operation `relative_pairs_influence`).  `settings` and `method` gain
+  `influence`.  The Rust core adds `relative_pairs::correlation_with` and
+  `CellEntries`, and `RelativePairCorrelation` gains `entries`.
+
 ## v0.6.0
 
 - pedigree-graph-core is pinned at pedigree-graph's v0.14.0 tag, and the

@@ -257,7 +257,7 @@ def test_the_se_is_opt_in_and_leaves_the_estimates_unchanged(kind):
     def raw(se):
         entries = rp._entries(None)
         native = rp.native_pedigree(ped)
-        return _native.relative_pairs_correlation(native, traits, rp.strata(stratum), entries, 2**30, se, False)
+        return _native.relative_pairs_correlation(native, traits, rp.strata(stratum), entries, 2**30, se, False, False)
 
     def keys(tree, out):
         if isinstance(tree, dict):

@@ -102,6 +102,86 @@ test_that("covariance = TRUE gives the estimates' covariance, its diagonal each 
   expect_error(relative_pairs_correlation(ped, trait(v), se = TRUE, covariance = NA))
 })
 
+test_that("influence = TRUE gives each cell's entries and influences, the meat over them each SE squared", {
+  # Three generations: 30 founder couples with 3 children each, then 44 couples of children of two
+  # neighbouring families with 2 children each; every fifth of those has the external father 9999.
+  kids <- 61:150
+  mothers2 <- kids[seq(1, 88, by = 2)]
+  fathers2 <- ifelse(seq_along(mothers2) %% 5 == 0, 9999, kids[seq(4, 91, by = 2)])
+  ped <- data.frame(
+    id = c(1:150, 151:238),
+    mother = c(rep(NA, 60), rep(seq(1, 59, by = 2), each = 3), rep(mothers2, each = 2)),
+    father = c(rep(NA, 60), rep(seq(2, 60, by = 2), each = 3), rep(fathers2, each = 2))
+  )
+  set.seed(1)
+  family <- rnorm(238)[ifelse(is.na(ped$mother), ped$id, ped$mother)]
+  x <- family + rnorm(238)
+  y <- family + rnorm(238)
+  x[sample(238, 20)] <- NA
+  st <- c(rep(0, 60), rep(1, 90), rep(2, 88))
+  rebuilt <- function(entries, phi) {
+    a <- entries$first_id
+    b <- entries$second_id
+    m <- ifelse(is.na(entries$mrca_id), paste("pair", pmin(a, b), pmax(a, b)), entries$mrca_id)
+    sq <- function(key, w) sum(tapply(w, key, sum)^2)
+    sqrt(sq(m, phi) + sq(c(a, b), c(phi, phi)) - sq(paste(c(a, b), c(m, m)), c(phi, phi)))
+  }
+  for (traits in list(trait(x), list(trait(x), trait(y)), trait(as.numeric(x > 0), kind = "binary"))) {
+    plain <- relative_pairs_correlation(ped, traits, stratum = st, se = TRUE)
+    r <- relative_pairs_correlation(ped, traits, stratum = st, se = TRUE, influence = TRUE)
+    expect_identical(c(plain$settings$influence, r$settings$influence), c(FALSE, TRUE))
+    expect_null(plain$cells[[1L]]$entries)
+    checked <- 0L
+    for (i in seq_along(r$cells)) {
+      cell <- r$cells[[i]]
+      n <- if (!is.null(cell$n_entries)) cell$n_entries else if (cell$symmetric) 2L * cell$n else cell$n
+      expect_s3_class(cell$entries, "data.frame")
+      expect_identical(nrow(cell$entries), as.integer(n))
+      expect_identical(names(cell$entries), c("first_id", "second_id", "mrca_id"))
+      estimates <- c(cell$crude, unlist(lapply(cell$strata, `[[`, "crude"), recursive = FALSE),
+                     list(cell$stratified$estimate))
+      for (e in estimates) {
+        if (is.null(e$influence)) {
+          expect_true(e$se_reason %in% c("no_estimate", "boundary", "sandwich_undefined"))
+          next
+        }
+        expect_length(e$influence, n)
+        if (!is.null(e$se)) {
+          expect_equal(rebuilt(cell$entries, e$influence), e$se, tolerance = 1e-9)
+          checked <- checked + 1L
+        }
+      }
+      strip <- function(e) e[setdiff(names(e), "influence")]
+      cell$entries <- NULL
+      cell$crude <- lapply(cell$crude, strip)
+      cell$strata <- lapply(cell$strata, function(s) {
+        s$crude <- lapply(s$crude, strip)
+        s
+      })
+      cell$stratified$estimate <- strip(cell$stratified$estimate)
+      expect_identical(cell, plain$cells[[i]])
+    }
+    expect_gt(checked, 10L)
+  }
+  # The paternal half-sibs through the external father 9999 have him as their MRCA.
+  expect_true(any(unlist(lapply(r$cells, function(cell) cell$entries$mrca_id)) == 9999))
+  expect_pgp_error(relative_pairs_correlation(ped, trait(x), influence = TRUE), "usage")
+  expect_error(relative_pairs_correlation(ped, trait(x), se = TRUE, influence = NA))
+})
+
+test_that("an external MRCA id past the id storage widens mrca_id instead of truncating", {
+  # Integer row ids, and a double father column whose external id is past R's integer range.
+  big <- 4294967297
+  ped <- data.frame(id = 1:5, mother = c(NA, NA, 1L, 2L, 1L), father = c(NA, NA, big, big, 2))
+  r <- relative_pairs_correlation(ped, trait(c(0.1, 0.5, 0.9, -0.3, 1.2)), categories = c("PHS", "MHS"),
+                                  se = TRUE, influence = TRUE)
+  phs <- r$cells[[1L]]$entries
+  expect_type(phs$first_id, "integer")
+  expect_type(phs$mrca_id, "double")
+  expect_identical(phs$mrca_id, c(big, big))
+  expect_type(r$cells[[2L]]$entries$mrca_id, "integer")
+})
+
 test_that("print shows each estimate's SE, or why it has none", {
   plain <- relative_pairs_correlation(ped, trait(v), categories = c("FS", "FO"))
   r <- relative_pairs_correlation(ped, trait(v), categories = c("FS", "FO"), se = TRUE)
