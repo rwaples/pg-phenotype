@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.6.0
 
 - pedigree-graph-core is pinned at pedigree-graph's v0.14.0 tag, and the
   Python test dependency takes `pedigree-graph>=0.14,<0.15`. PA-FGRS
