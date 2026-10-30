@@ -29,9 +29,17 @@ column, which differs from that sum by up to 2.8e-7 (coverage rep).  So
 #47's design changes simACE's r_ho by about 1e-9, by changing the input,
 not by any pg-phenotype difference.
 
+simACE ec3d0a3 replaced simACE's NumPy code with pg-phenotype, so the tool
+now imports simACE from a checkout at `SIMACE_REV` (6355ffa6aebe, the
+last before it) and refuses any other.  The 2026-10-09 run predates that
+pin and used the simACE checkout of the day.  A rerun at the pin on
+2026-10-30 (coverage rep, one repeat) matched it: 2,982 pairs, max abs
+diff 0.0, r_ho diff 2.3e-9.
+
 ```bash
+git worktree add --detach <dir> 6355ffa6aebe
 PYTHONPATH=<B site> pixi run python -P external/pg-phenotype/tools/consumer_simace.py bench \
-    --rep results/bench_scale/bench1M_am/rep1 --repeats 7 --pixi <absolute pixi> --out <jsonl>
+    --simace <dir> --rep results/bench_scale/bench1M_am/rep1 --repeats 7 --pixi <absolute pixi> --out <jsonl>
 pixi run python -P external/pg-phenotype/tools/consumer_simace.py summary <jsonl>...
 ```
 

@@ -15,10 +15,13 @@ exactly (pass/fail); wall time and peak memory are reported, not gated.
 ``r_ho`` is reported but not gated: simACE sums its Float32 ``A + C + E``,
 while the three calls read the Float64 ``liability`` column.
 Run from the simACE root, in simACE's env, with the build under test first
-on ``PYTHONPATH`` (simACE does not depend on pg-phenotype)::
+on ``PYTHONPATH``, against a clean simACE checkout at ``SIMACE_REV``.  From
+simACE ec3d0a3 on, simACE's mate correlations are pg-phenotype's, so a later
+checkout would compare pg-phenotype with itself::
 
+    git worktree add --detach <dir> 6355ffa6aebe
     PYTHONPATH=<site> pixi run python -P external/pg-phenotype/tools/consumer_simace.py bench \\
-        --rep results/test/coverage_scenario/rep1 --repeats 5 --out <jsonl>
+        --simace <dir> --rep results/test/coverage_scenario/rep1 --repeats 5 --out <jsonl>
     pixi run python -P external/pg-phenotype/tools/consumer_simace.py summary <jsonl>...
 """
 
@@ -31,10 +34,13 @@ import os
 import resource
 import statistics
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
+#: The last simACE whose mate correlations are its own NumPy code.
+SIMACE_REV = "6355ffa6aebe37238cb2724dfcde288830fdcb6c"
 PATHS = ("today", "columns", "pedigree")
 TOLERANCE = 1e-12
 #: Estimates the planned path takes from another input than ``today`` (see the docstring).
@@ -49,10 +55,20 @@ def cgroup_peak() -> int | None:
         return None
 
 
+def check_simace(checkout: Path) -> None:
+    """Exit unless *checkout* is a clean simACE at ``SIMACE_REV``."""
+    git = ["git", "-C", str(checkout)]
+    if subprocess.run([*git, "status", "--porcelain"], capture_output=True, text=True, check=True).stdout.strip():
+        raise SystemExit(f"{checkout} has uncommitted changes")
+    rev = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    if rev != SIMACE_REV:
+        raise SystemExit(f"{checkout} is at {rev}, not SIMACE_REV {SIMACE_REV}")
+
+
 def today(df: object, params: dict) -> dict:
-    from simace.analysis.quality.am_relatedness import observed_mate_correlations
-    from simace.analysis.quality.assortative_mating import validate_assortative_mating
     from simace.analysis.stats.correlations import compute_mate_correlation
+    from simace.analysis.validate.am_relatedness import observed_mate_correlations
+    from simace.analysis.validate.assortative_mating import validate_assortative_mating
     from simace.core.pedigree_arrays import PedigreeArrays
 
     stats = compute_mate_correlation(df)
@@ -104,11 +120,16 @@ def planned(df: object, built: bool) -> dict:
 
 
 def run(args: argparse.Namespace) -> None:
+    sys.path.insert(0, str(args.simace.resolve()))
+    import simace
+
+    if not Path(simace.__file__).resolve().is_relative_to(args.simace.resolve()):
+        raise SystemExit(f"imported simace from {simace.__file__}, not {args.simace}")
     # Every path's modules load before the timer, so each run pays the same imports.
     import polars as pl
-    import simace.analysis.quality.am_relatedness
-    import simace.analysis.quality.assortative_mating
-    import simace.analysis.stats.correlations  # noqa: F401
+    import simace.analysis.stats.correlations
+    import simace.analysis.validate.am_relatedness
+    import simace.analysis.validate.assortative_mating
     import yaml
 
     import pg_phenotype.assortative
@@ -133,7 +154,8 @@ def one_run(args: argparse.Namespace, path: str) -> dict:
     env = {**os.environ, "OMP_NUM_THREADS": "1", "POLARS_MAX_THREADS": "1", "PG_PHENOTYPE_THREADS": "1"}
     cmd = [
         "systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=12G", "-p", "MemorySwapMax=0",
-        args.pixi, "run", "python", "-P", str(HERE), "run", "--rep", str(args.rep), "--path", path,
+        args.pixi, "run", "python", "-P", str(HERE), "run", "--simace", str(args.simace), "--rep", str(args.rep),
+        "--path", path,
     ]  # fmt: skip
     out = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
     if out.returncode:
@@ -157,6 +179,7 @@ def compare(want: dict, got: dict) -> list[str]:
 
 
 def bench(args: argparse.Namespace) -> None:
+    check_simace(args.simace)
     for i in range(args.repeats):
         order = PATHS if i % 2 == 0 else PATHS[::-1]
         runs = {path: one_run(args, path) for path in order}
@@ -214,9 +237,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("run")
+    p.add_argument("--simace", type=Path, required=True, help="simACE checkout at SIMACE_REV")
     p.add_argument("--rep", type=Path, required=True)
     p.add_argument("--path", choices=PATHS, required=True)
     p = sub.add_parser("bench")
+    p.add_argument("--simace", type=Path, required=True, help="simACE checkout at SIMACE_REV")
     p.add_argument("--rep", type=Path, required=True)
     p.add_argument("--repeats", type=int, default=5)
     p.add_argument("--pixi", default="pixi", help="the pixi executable (absolute inside a systemd scope)")

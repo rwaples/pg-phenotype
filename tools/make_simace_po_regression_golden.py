@@ -1,10 +1,13 @@
 """Write simACE's parent-offspring regressions over the gate's pedigrees (issue #3).
 
-Runs in simACE's pixi env against a clean simACE checkout, whose ``simace``
-it imports ahead of the env's own install:
+Runs in simACE's pixi env against a clean simACE checkout at ``SIMACE_REV``,
+whose ``simace`` it imports ahead of the env's own install.  From simACE
+c655f40 on, simACE fits these regressions with pg-phenotype, so a later
+checkout would compare pg-phenotype with itself:
 
+    git -C <simACE> worktree add --detach <dir> 6355ffa6aebe
     pixi run --manifest-path <simACE>/pixi.toml python -B tools/make_simace_po_regression_golden.py \\
-        --simace <simACE checkout> --out tests/golden/simace_po_regression_<sha12>
+        --simace <dir> --out tests/golden/simace_po_regression_6355ffa6aebe
 
 Each scenario is a ``run_simulation`` pedigree with affected status at 10%
 prevalence (as simACE's stats tests build it).  ``golden.json`` holds, per
@@ -29,6 +32,8 @@ from pathlib import Path
 
 import numpy as np
 
+#: The last simACE whose parent-offspring regressions are its own NumPy code.
+SIMACE_REV = "6355ffa6aebe37238cb2724dfcde288830fdcb6c"
 BASE = {
     "p_mztwin": 0.02,
     "A1": 0.5,
@@ -67,12 +72,12 @@ def plain(obj: object) -> object:
 
 def scenario(name: str, params: dict) -> dict:
     import polars as pl
-    from simace.analysis.quality.heritability import _validate_parent_offspring
     from simace.analysis.stats.correlations import (
         compute_parent_offspring_affected_corr,
         compute_parent_offspring_corr,
         compute_parent_offspring_corr_by_sex,
     )
+    from simace.analysis.validate.heritability import _validate_parent_offspring
     from simace.core.pedigree_arrays import PedigreeArrays
     from simace.phenotype.models._prevalence import case_status_from_liability
     from simace.simulation.simulate import run_simulation
@@ -126,6 +131,8 @@ def main() -> None:
     if status.stdout.strip():
         sys.exit(f"{args.simace} has uncommitted changes")
     rev = subprocess.run(["git", "-C", args.simace, "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
+    if rev.stdout.strip() != SIMACE_REV:
+        sys.exit(f"{args.simace} is at {rev.stdout.strip()}, not SIMACE_REV {SIMACE_REV}")
     sys.path.insert(0, str(args.simace.resolve()))
     import simace
 
