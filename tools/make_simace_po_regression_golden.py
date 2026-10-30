@@ -1,13 +1,10 @@
 """Write simACE's parent-offspring regressions over the gate's pedigrees (issue #3).
 
-Runs in simACE's pixi env against a clean simACE checkout at ``SIMACE_REV``,
-whose ``simace`` it imports ahead of the env's own install.  From simACE
-c655f40 on, simACE fits these regressions with pg-phenotype, so a later
-checkout would compare pg-phenotype with itself:
+Runs in simACE's pixi env against a simACE checkout at ``_simace.SIMACE_REV``,
+whose ``simace`` it imports ahead of the env's own install:
 
-    git -C <simACE> worktree add --detach <dir> 6355ffa6aebe
     pixi run --manifest-path <simACE>/pixi.toml python -B tools/make_simace_po_regression_golden.py \\
-        --simace <dir> --out tests/golden/simace_po_regression_6355ffa6aebe
+        --simace <checkout> --out tests/golden/simace_po_regression_6355ffa6aebe
 
 Each scenario is a ``run_simulation`` pedigree with affected status at 10%
 prevalence (as simACE's stats tests build it).  ``golden.json`` holds, per
@@ -26,14 +23,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
+from _simace import SIMACE_REV, import_simace
 
-#: The last simACE whose parent-offspring regressions are its own NumPy code.
-SIMACE_REV = "6355ffa6aebe37238cb2724dfcde288830fdcb6c"
 BASE = {
     "p_mztwin": 0.02,
     "A1": 0.5,
@@ -125,22 +119,10 @@ def main() -> None:
     parser.add_argument("--simace", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    status = subprocess.run(
-        ["git", "-C", args.simace, "status", "--porcelain"], capture_output=True, text=True, check=True
-    )
-    if status.stdout.strip():
-        sys.exit(f"{args.simace} has uncommitted changes")
-    rev = subprocess.run(["git", "-C", args.simace, "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
-    if rev.stdout.strip() != SIMACE_REV:
-        sys.exit(f"{args.simace} is at {rev.stdout.strip()}, not SIMACE_REV {SIMACE_REV}")
-    sys.path.insert(0, str(args.simace.resolve()))
-    import simace
-
-    if not Path(simace.__file__).resolve().is_relative_to(args.simace.resolve()):
-        sys.exit(f"imported simace from {simace.__file__}, not {args.simace}")
+    import_simace(args.simace)
     args.out.mkdir(parents=True, exist_ok=True)
     golden = {
-        "simace_rev": rev.stdout.strip(),
+        "simace_rev": SIMACE_REV,
         "scenarios": [scenario(name, params) for name, params in SCENARIOS.items()],
     }
     (args.out / "golden.json").write_text(json.dumps(golden))

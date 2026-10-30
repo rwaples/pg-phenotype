@@ -1,10 +1,10 @@
 """Write simACE's Aalen-Johansen CIFs over the gate's cases (issue #4).
 
-Runs in simACE's pixi env against a clean simACE checkout, whose
-``simace`` it imports ahead of the env's own install:
+Runs in simACE's pixi env against a simACE checkout at ``_simace.SIMACE_REV``,
+whose ``simace`` it imports ahead of the env's own install:
 
     pixi run --manifest-path <simACE>/pixi.toml python -B tools/make_simace_aj_golden.py \\
-        --simace <simACE checkout> --out tests/golden/simace_aj_<sha12>
+        --simace <checkout> --out tests/golden/simace_aj_6355ffa6aebe
 
 Each scenario runs simACE's pipeline (``run_simulation``, ``run_phenotype``
 with the default frailty traits, ``run_censor`` with death as a competing
@@ -29,11 +29,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
+from _simace import SIMACE_REV, import_simace
 
 CENSOR_AGE = 80.0
 LATE_ENTRY = {3: [40.0, 80.0], 4: [0.0, 80.0], 5: [0.0, 45.0]}
@@ -134,20 +133,7 @@ def main() -> None:
     parser.add_argument("--simace", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    sys.path.insert(0, str(args.simace))
-    import simace
-
-    if not Path(simace.__file__).resolve().is_relative_to(args.simace.resolve()):
-        sys.exit(f"imported simace from {simace.__file__}, not {args.simace}")
-    status = subprocess.run(
-        ["git", "-C", args.simace, "status", "--porcelain", "--untracked-files=no"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    if status.stdout.strip():
-        sys.exit(f"{args.simace} has uncommitted changes")
-    rev = subprocess.run(["git", "-C", args.simace, "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
+    import_simace(args.simace)
 
     arrays: dict[str, np.ndarray] = {}
     cases: dict = {}
@@ -157,7 +143,7 @@ def main() -> None:
         cases |= c
     args.out.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.out / "cases.npz", **arrays)
-    payload = {"simace_rev": rev.stdout.strip(), "censor_age": CENSOR_AGE, "cases": cases}
+    payload = {"simace_rev": SIMACE_REV, "censor_age": CENSOR_AGE, "cases": cases}
     (args.out / "simace.json").write_text(json.dumps(payload, indent=1) + "\n")
     print(f"wrote {len(cases)} cases to {args.out}")
 

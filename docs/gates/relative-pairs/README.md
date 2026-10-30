@@ -5,7 +5,7 @@ Result: **pass**.  Run 2026-10-10 on simACE
 pg-phenotype working tree on `6e11fd3`:
 
     pixi run --manifest-path <simACE>/pixi.toml python -B tools/make_simace_relative_pairs_golden.py \
-        --simace <simACE checkout> --reps <simACE>/results/test/small_test/rep{1,2,3} \
+        --simace <checkout at 6355ffa6aebe> --reps <simACE>/results/test/small_test/rep{1,2,3} \
         --out tests/golden/simace_relative_pairs_6355ffa6aebe
     pixi run python -B tools/relative_pairs_gate.py --out docs/gates/relative-pairs/gate.json
 

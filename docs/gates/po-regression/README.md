@@ -4,9 +4,8 @@ Result: **pass**.  Run 2026-10-10 on simACE
 `6355ffa6aebe37238cb2724dfcde288830fdcb6c` (simACE's pixi env) against the
 pg-phenotype working tree on `e2bded7`:
 
-    git -C <simACE> worktree add --detach <dir> 6355ffa6aebe
     pixi run --manifest-path <simACE>/pixi.toml python -B tools/make_simace_po_regression_golden.py \
-        --simace <dir> --out tests/golden/simace_po_regression_6355ffa6aebe
+        --simace <checkout at 6355ffa6aebe> --out tests/golden/simace_po_regression_6355ffa6aebe
     pixi run python -B tools/po_regression_gate.py --out docs/gates/po-regression/gate.json
 
 `tests/test_regression.py` asserts the outcomes and the agreement below.

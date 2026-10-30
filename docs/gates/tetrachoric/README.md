@@ -6,7 +6,7 @@ numba 0.67.0, SciPy 1.18.1, JIT on) against the pg-phenotype working tree on
 `122d612` (Linux, SciPy 1.18.1 for the oracle):
 
     pixi run --manifest-path <simACE>/pixi.toml python -B tools/make_simace_tetrachoric_golden.py \
-        --simace <simACE checkout> --out tests/golden/simace_tetrachoric_6355ffa6aebe
+        --simace <checkout at 6355ffa6aebe> --out tests/golden/simace_tetrachoric_6355ffa6aebe
     pixi run python -B tools/tetrachoric_gate.py --out docs/gates/tetrachoric/gate.json
 
 simACE's side is `tetrachoric_from_table(n11, n10, n01, n00)`, which

@@ -1,10 +1,10 @@
 """Write simACE's tetrachoric results over the gate's table grid (issue #2).
 
-Runs in simACE's pixi env against a clean simACE checkout, whose
-``simace`` it imports ahead of the env's own install:
+Runs in simACE's pixi env against a simACE checkout at ``_simace.SIMACE_REV``,
+whose ``simace`` it imports ahead of the env's own install:
 
     pixi run --manifest-path <simACE>/pixi.toml python -B tools/make_simace_tetrachoric_golden.py \\
-        --simace <simACE checkout> --out tests/golden/simace_tetrachoric_<sha12>
+        --simace <checkout> --out tests/golden/simace_tetrachoric_6355ffa6aebe
 
 The grid (``tables.json``):
 
@@ -27,11 +27,10 @@ import itertools
 import json
 import logging
 import math
-import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
+from _simace import SIMACE_REV, import_simace
 from scipy.stats import multivariate_normal, norm
 
 NS = (50, 200, 1000, 10_000, 100_000, 1_000_000)
@@ -84,20 +83,6 @@ def one_empty() -> list[list[list[int]]]:
     return out
 
 
-def revision(checkout: Path) -> str:
-    dirty = subprocess.run(
-        ["git", "-C", str(checkout), "status", "--porcelain", "--", "simace"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    if dirty:
-        sys.exit(f"{checkout}/simace has uncommitted changes:\n{dirty}")
-    return subprocess.run(
-        ["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-    ).stdout.strip()
-
-
 def finite_or_none(v: float) -> float | None:
     return None if math.isnan(v) else float(v)
 
@@ -107,14 +92,9 @@ def main() -> int:
     p.add_argument("--simace", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
     args = p.parse_args()
-    checkout = args.simace.resolve()
-    rev = revision(checkout)
-    sys.path.insert(0, str(checkout))
-    import simace
+    import_simace(args.simace)
     from simace.analysis.stats.tetrachoric import tetrachoric_from_table
 
-    if not Path(simace.__file__).resolve().is_relative_to(checkout):
-        sys.exit(f"imported simace from {simace.__file__}, not {checkout}")
     logging.disable(logging.WARNING)  # the n < 50 warning
 
     expected, sampled, settings = expected_and_sampled()
@@ -129,12 +109,12 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "tables.json").write_text(json.dumps({"sets": sets, "expected_settings": settings}) + "\n")
     meta = {
-        "simace_rev": rev,
+        "simace_rev": SIMACE_REV,
         "function": "simace.analysis.stats.tetrachoric.tetrachoric_from_table(n11, n10, n01, n00)",
         "numpy": np.__version__,
     }
     (args.out / "simace.json").write_text(json.dumps({"meta": meta, "results": results}) + "\n")
-    print(f"{sum(map(len, sets.values()))} tables at simACE {rev[:12]} -> {args.out}")
+    print(f"{sum(map(len, sets.values()))} tables at simACE {SIMACE_REV[:12]} -> {args.out}")
     return 0
 
 

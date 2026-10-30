@@ -1,11 +1,11 @@
 """Write simACE's relative-pair correlations over simACE ``small_test`` reps (ADR 0009 gate).
 
-Runs in simACE's pixi env against a clean simACE checkout, whose ``simace``
-it imports ahead of the env's own install:
+Runs in simACE's pixi env against a simACE checkout at ``_simace.SIMACE_REV``,
+whose ``simace`` it imports ahead of the env's own install:
 
     pixi run --manifest-path <simACE>/pixi.toml python -B tools/make_simace_relative_pairs_golden.py \\
-        --simace <simACE checkout> --reps <results>/test/small_test/rep{1,2,3} \\
-        --out tests/golden/simace_relative_pairs_<sha12>
+        --simace <checkout> --reps <results>/test/small_test/rep{1,2,3} \\
+        --out tests/golden/simace_relative_pairs_6355ffa6aebe
 
 Each rep gives its full pedigree (``pedigree.parquet``) and the phenotyped
 rows' ``liability1`` and ``affected1`` (``phenotype.parquet``), aligned to the
@@ -27,11 +27,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
+from _simace import SIMACE_REV, import_simace
 
 
 def plain(obj: object) -> object:
@@ -106,24 +105,14 @@ def main() -> None:
     parser.add_argument("--reps", type=Path, nargs="+", required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    status = subprocess.run(
-        ["git", "-C", args.simace, "status", "--porcelain"], capture_output=True, text=True, check=True
-    )
-    if status.stdout.strip():
-        sys.exit(f"{args.simace} has uncommitted changes")
-    rev = subprocess.run(["git", "-C", args.simace, "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
-    sys.path.insert(0, str(args.simace.resolve()))
-    import simace
-
-    if not Path(simace.__file__).resolve().is_relative_to(args.simace.resolve()):
-        sys.exit(f"imported simace from {simace.__file__}, not {args.simace}")
+    import_simace(args.simace)
     args.out.mkdir(parents=True, exist_ok=True)
     reps, arrays = [], {}
     for path in args.reps:
         result, columns = rep(path)
         reps.append(result)
         arrays.update({f"{path.name}.{k}": v for k, v in columns.items()})
-    golden = {"simace_rev": rev.stdout.strip(), "reps": reps}
+    golden = {"simace_rev": SIMACE_REV, "reps": reps}
     (args.out / "golden.json").write_text(json.dumps(golden, indent=1) + "\n")
     np.savez_compressed(args.out / "inputs.npz", **arrays)
 

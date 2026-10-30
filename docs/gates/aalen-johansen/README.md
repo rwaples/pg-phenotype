@@ -6,7 +6,7 @@ with survival 3.8.12 (pg-phenotype's `r` env), against the pg-phenotype
 working tree on `46b7502`:
 
     pixi run --manifest-path <simACE>/pixi.toml python -B tools/make_simace_aj_golden.py \
-        --simace <simACE checkout> --out tests/golden/simace_aj_6355ffa6aebe
+        --simace <checkout at 6355ffa6aebe> --out tests/golden/simace_aj_6355ffa6aebe
     pixi run python -B tools/make_survival_aj_golden.py --golden tests/golden/simace_aj_6355ffa6aebe
     pixi run python -B tools/aj_gate.py --out docs/gates/aalen-johansen/gate.json
 
