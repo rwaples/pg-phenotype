@@ -1,5 +1,10 @@
 # ACE Fit truth recovery on simACE reps (plan D10, #17)
 
+> Recorded on pedigree-graph 0.13 and not rerun on 0.14, whose path-count
+> full and half categories (its ADR 0018) move a few 1C and Av-family pairs
+> on these random-mating pedigrees (about 0.1-0.4% of 1C). The result is not
+> expected to change; a rerun on 0.14 would restate it.
+
 Result: **pass**.  All 38 gated targets are within the Bonferroni bound
 |z| <= 3.2125 (familywise 5%), and no rep is undefined.  The largest
 |z| is 2.54.  Four targets fall outside 2 MC SE, the reported near-miss

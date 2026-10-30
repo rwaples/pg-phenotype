@@ -213,21 +213,21 @@ def pa_fgrs_bivariate_core(
 # ---------------------------------------------------------------------------
 
 
-def canonical_univariate_order(w: np.ndarray, kin_p: np.ndarray, kin: np.ndarray, rows: np.ndarray) -> np.ndarray:
-    """#16 univariate: w desc, phi(r, p) desc, phi(r, p) + sum_j phi(r, j) desc, row asc.
+def canonical_univariate_order(w: np.ndarray, kin_p: np.ndarray, kin: np.ndarray, ids: np.ndarray) -> np.ndarray:
+    """#16 univariate: w desc, phi(r, p) desc, phi(r, p) + sum_j phi(r, j) desc, id asc.
 
     *kin* is the symmetric kinship among the valid relatives with a zero
     diagonal, float64 of the float32 values (sums of dyadics: exact).
     """
     row_sum = kin_p + kin.sum(axis=1)
-    return np.lexsort((rows, -row_sum, -kin_p, -w))
+    return np.lexsort((ids, -row_sum, -kin_p, -w))
 
 
 def canonical_bivariate_order(
     w: np.ndarray,
     kin_p: np.ndarray,
     kin: np.ndarray,
-    rows: np.ndarray,
+    ids: np.ndarray,
     traits: np.ndarray,
     person: np.ndarray,
     h2: tuple[float, float],
@@ -252,7 +252,7 @@ def canonical_bivariate_order(
     paired = np.array([np.any((person == person[i]) & (np.arange(m) != i)) for i in range(m)])
     rho_term = np.where(paired, abs(rho_within), 0.0)
     row_sum = to_proband + 1.0 + rho_term + 2.0 * (h2v * a + abs_cov * b)
-    return np.lexsort((traits, rows, -row_sum, -to_proband, -w))
+    return np.lexsort((traits, ids, -row_sum, -to_proband, -w))
 
 
 def numba_order(w: np.ndarray, kin_p: np.ndarray, h2: float) -> np.ndarray:

@@ -4,11 +4,11 @@
 
 Writes tests/golden/r_pafgrs_<sha>/ with the fixture inputs (pedigree,
 traits, CIP, parameters) and R's ``pa_fgrs`` scores per case and proband.
-Each proband's problem is its relatives with ``w > 0`` in ascending row
+Each proband's problem is its relatives with ``w > 0`` in ascending id
 order and the covariance ``2 h2 phi`` from pg-phenotype's PA-FGRS prep, whose kinship
 tests/test_prep.py holds to pedigree-graph.  ``h2`` is 0.25, 0.5 or 0.75 so
 every covariance entry is dyadic: R's floating row sums are then exact and
-its stable ``order`` breaks ties by row, as the canonical order does.
+its stable ``order`` breaks ties by id, as the canonical order does.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ CASES = [
 ]
 
 
-def _problems(prep, trait, h2: float) -> tuple[list[int], list[str]]:
+def _problems(prep, ped_ids, trait, h2: float) -> tuple[list[int], list[str]]:
     affected, w, thr = observe(trait)
     ids, lines = [], []
     for i in range(prep.n_probands):
@@ -47,6 +47,8 @@ def _problems(prep, trait, h2: float) -> tuple[list[int], list[str]]:
         if not valid.any():
             continue
         rows, kin_p, kin = rows[valid], kin_p[valid], kin[np.ix_(valid, valid)]
+        by_id = np.argsort(ped_ids[rows], kind="stable")
+        rows, kin_p, kin = rows[by_id], kin_p[by_id], kin[np.ix_(by_id, by_id)]
         d = len(rows)
         cov = np.empty((d + 1, d + 1))
         cov[0, 0] = h2
@@ -74,7 +76,7 @@ def main() -> None:
         ped = random_pedigree(case["seed"], generations=5)
         trait = random_trait(len(ped["id"]), case["seed"])
         prep = pafgrs.prepare(ped, ndegree=case["ndegree"])
-        ids, lines = _problems(prep, trait, case["h2"])
+        ids, lines = _problems(prep, ped["id"], trait, case["h2"])
         with tempfile.TemporaryDirectory() as tmp:
             problems, scores = Path(tmp) / "problems.txt", Path(tmp) / "scores.txt"
             problems.write_text(f"{len(ids)}\n" + "\n".join(lines) + "\n")

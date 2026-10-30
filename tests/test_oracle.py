@@ -35,7 +35,7 @@ def test_univariate_matches_reference(seed, ndegree):
         np.fill_diagonal(cov[1:, 1:], 1.0)
         t1 = np.where(affected[rows], thr, -np.inf)
         t2 = np.where(affected[rows], np.inf, thr)
-        order = reference.canonical_univariate_order(w[rows], kin_p, kin, rows)
+        order = reference.canonical_univariate_order(w[rows], kin_p, kin, ped["id"][rows])
         est, var = reference.pa_fgrs_core(t1, t2, w[rows], cov, order)
         assert got.est[i] == pytest.approx(est, abs=TOL), i
         assert got.var[i] == pytest.approx(var, abs=TOL), i
@@ -93,7 +93,7 @@ def test_bivariate_matches_reference(seed, ndegree):
         upper = np.where(aff, np.inf, thr)
         kin_obs = kin[np.ix_(person, person)] if m else np.zeros((0, 0))
         order = reference.canonical_bivariate_order(
-            w, kin_p[person], kin_obs, rows[person], trait_of, person, h2, cov_g, rho_within
+            w, kin_p[person], kin_obs, ped["id"][rows[person]], trait_of, person, h2, cov_g, rho_within
         )
         want = reference.pa_fgrs_bivariate_core(lower, upper, w, cov, order)
         have = (got.est1[i], got.est2[i], got.var1[i], got.var2[i], got.cov12[i])

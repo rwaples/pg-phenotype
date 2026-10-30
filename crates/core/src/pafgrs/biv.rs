@@ -163,7 +163,7 @@ pub fn score_bivariate(
             ["trait2", "age2"],
         )?,
     ];
-    let one = prep.score_each(|s: &mut Scratch, rel| s.score(rel, &obs, &params));
+    let one = prep.score_each(|s: &mut Scratch, rel| s.score(rel, &obs, &params, prep.ids()));
     let per_trait = |f: fn(&One) -> [f64; 2], t: usize| one.iter().map(|o| f(o)[t]).collect();
     Ok(BivScores {
         ids: prep.proband_ids(),
@@ -197,7 +197,13 @@ struct Scratch {
 }
 
 impl Scratch {
-    fn score(&mut self, rel: Relatives<'_>, obs: &[Observed; 2], params: &BivParams) -> One {
+    fn score(
+        &mut self,
+        rel: Relatives<'_>,
+        obs: &[Observed; 2],
+        params: &BivParams,
+        ids: &[i64],
+    ) -> One {
         let [h1, h2] = params.h2;
         let cov_g = params.cov_g();
         let g = [[h1, cov_g], [cov_g, h2]];
@@ -255,6 +261,7 @@ impl Scratch {
                     to_proband,
                     row_sum,
                     row,
+                    id: ids[row as usize],
                     trait_index: t as u8,
                     index: x,
                 });

@@ -1,5 +1,10 @@
 # ACE Fit SE and weights: calibration on simACE reps (issue #19)
 
+> Recorded on pedigree-graph 0.13 and not rerun on 0.14, whose path-count
+> full and half categories (its ADR 0018) move a few 1C and Av-family pairs
+> on these random-mating pedigrees (about 0.1-0.4% of 1C). The result is not
+> expected to change; a rerun on 0.14 would restate it.
+
 Result: **no weighting fully calibrates the continuous A, E, sA and rA.
 The tetrachoric SEs are close to calibrated under every weighting. `gls` is the most
 efficient for continuous traits. `inverse_variance` and `gls` fail on phi

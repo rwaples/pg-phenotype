@@ -76,7 +76,7 @@ pub fn score_univariate(
 ) -> Result<UniScores, Error> {
     check_h2("h2", h2)?;
     let obs = Observed::new(values, age, cip, prep.n_rows(), ["trait", "age"])?;
-    let one = prep.score_each(|s: &mut Scratch, rel| s.score(rel, &obs, h2));
+    let one = prep.score_each(|s: &mut Scratch, rel| s.score(rel, &obs, h2, prep.ids()));
     Ok(UniScores {
         ids: prep.proband_ids(),
         est: one.iter().map(|o| o.est).collect(),
@@ -113,7 +113,13 @@ struct Scratch {
 }
 
 impl Scratch {
-    fn score(&mut self, rel: super::prep::Relatives<'_>, obs: &Observed, h2: f64) -> One {
+    fn score(
+        &mut self,
+        rel: super::prep::Relatives<'_>,
+        obs: &Observed,
+        h2: f64,
+        ids: &[i64],
+    ) -> One {
         self.valid.clear();
         self.valid.extend(
             rel.rows
@@ -140,6 +146,7 @@ impl Scratch {
                 to_proband,
                 row_sum: to_proband + self.phi[x * n..(x + 1) * n].iter().sum::<f64>(),
                 row,
+                id: ids[row as usize],
                 trait_index: 0,
                 index: x,
             });

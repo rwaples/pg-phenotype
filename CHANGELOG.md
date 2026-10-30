@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- pedigree-graph-core is pinned at pedigree-graph's v0.14.0 tag, and the
+  Python test dependency takes `pedigree-graph>=0.14,<0.15`. PA-FGRS
+  `prepare` builds one `KinshipIndex` and every worker's walker comes from
+  `index.walker()` (pedigree-graph #45), replacing the separate
+  `AncestorSignatures` and `KinshipRows`. pedigree-graph's full and half
+  categories are now decided by path count (its ADR 0018), so on pedigrees
+  with double connections pairs move to the closer category.
+
+- PA-FGRS breaks an exact tie in the conditioning order by id, not row
+  (ADR 0004, amended).  Two relatives tied on `w`, kinship to the proband
+  and row sum used to keep their row order, so permuting the input rows
+  could change a score: on a test pedigree under pedigree-graph 0.14, one
+  proband by 1.2e-4.  Scores now follow ids under any row order.  Scores
+  with such a tie can differ from v0.5.0's; the R PAFGRS goldens were
+  regenerated with each problem's relatives in id order, and on the
+  ndegree-1 fixture, whose relatives are unchanged, 3 of 82 probands move
+  by at most 0.0103, which R reproduces.
+
 - The Rust core's API changes; Python and R are unchanged.
   `ace::AceRequest.estimate` is `Option<Estimate>`, and `None` resolves in
   the core, as `weights` does (ADR 0014): stratified when any relatives

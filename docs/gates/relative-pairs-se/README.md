@@ -1,5 +1,10 @@
 # Relative-Pair Correlation SE: cluster-design calibration (issue #18)
 
+> Recorded on pedigree-graph 0.13 and not rerun on 0.14, whose path-count
+> full and half categories (its ADR 0018) move a few 1C and Av-family pairs
+> on these random-mating pedigrees (about 0.1-0.4% of 1C). The result is not
+> expected to change; a rerun on 0.14 would restate it.
+
 Result: **the MRCA designs calibrate; the Mate Network designs do not.**
 Clustering by the pair's most recent common ancestor (`mrca`), alone or
 joined with shared members (`mrca_person`), gives SD(r̂)/SE within about 5%

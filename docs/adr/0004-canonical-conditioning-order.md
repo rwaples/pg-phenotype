@@ -1,7 +1,7 @@
 # ADR 0004: The canonical PA-FGRS conditioning order
 
 **Status:** accepted
-**Date:** 2026-10-06
+**Date:** 2026-10-06; amended 2026-10-30 (the final key is the id, not the row)
 **Context:** simACE `plans/pg-phenotype-extraction-v3.md`, decision #16
 
 ## Context
@@ -18,14 +18,15 @@ and agree to 6e-16 where no key ties.
 ## Decision
 
 Observations are sorted most informative first and conditioned from the
-least informative end, by R's lexicographic key plus a unique final key.
+least informative end, by R's lexicographic key plus the id as a unique
+final key.
 
 - **Univariate**, relative `r` among the informative relatives: `w`
   descending, `C[r, p]` descending, `sum_j C[r, j]` descending (proband
-  column and diagonal included, as R's `rowSums(covmat[-1, ])`), row
+  column and diagonal included, as R's `rowSums(covmat[-1, ])`), id
   ascending.
 - **Bivariate**, observation `o = (r, t)`: `w` descending, `|C[o, p1]| +
-  |C[o, p2]|` descending, `sum_j |C[o, j]|` descending, row ascending,
+  |C[o, p2]|` descending, `sum_j |C[o, j]|` descending, id ascending,
   trait ascending.
 
 ### Exact keys
@@ -33,7 +34,7 @@ least informative end, by R's lexicographic key plus a unique final key.
 Off the diagonal `C = 2 h2 phi` with `h2 > 0`, so the univariate keys are
 compared as `phi(r, p)` and `phi(r, p) + sum_{j != r} phi(r, j)`.  Float32
 kinship values are dyadic and their float64 sums are exact, so a tie in
-exact arithmetic is a tie in the key and falls to the row.  The bivariate
+exact arithmetic is a tie in the key and falls to the id.  The bivariate
 row sum is `2 phi_rp (h2_t + |cov_g|) + 1 + |rho_within| [(r, t') observed]
 + 2 (h2_t A + |cov_g| B)`, with `A` and `B` the exact kinship sums over the
 other people observed on `t` and on `t'`: one fixed expression over exact
@@ -42,8 +43,13 @@ parts.
 ## Consequences
 
 - Scores do not depend on input order, sort stability or thread count.
+  Until 2026-10-30 the final key was the row, which is input order: two
+  relatives tied on every other key swapped places when the rows were
+  permuted, and on a pedigree-graph 0.14 fixture one proband's score moved
+  by 1.2e-4.  The id is fixed under permutation.
 - This is a deliberate change from numba's key.  The fitACE gate reports
   the order step separately and does not gate on it.
 - Against R PAFGRS the order is the same whenever R's floating keys are
-  exact; the golden fixtures use `h2` in {0.25, 0.5, 0.75} for that reason
-  and agree to 1.1e-15.
+  exact; the golden fixtures use `h2` in {0.25, 0.5, 0.75} for that reason,
+  and give R each problem's relatives in id order so its stable `order`
+  breaks ties by id.

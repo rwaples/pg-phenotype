@@ -12,8 +12,8 @@ repository = "https://github.com/rwaples/pg-phenotype"
 
 [workspace.dependencies]
 # Re-pinned on purpose only (ADR 0001): pg-core is unpublished until 1.0.
-# This rev is pedigree-graph's v0.13.0 tag.
-pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "0a79c4e72f124c78144be2ad7074a9ba3558ba90" }
+# This rev is pedigree-graph's v0.14.0 tag.
+pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "722282a7dafee5bd5cad163c35a113e6daec9f47" }
 rayon = "1.10"
 rustc-hash = "2.1"
 

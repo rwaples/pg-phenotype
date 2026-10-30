@@ -15,15 +15,15 @@ test_that("every share and cross value is Python's bit for bit", {
   expect_s3_class(fit, "pgphenotype_ace")
   shares <- function(t) c(t$A, t$C, t$E)
   expect_identical(shares(fit$traits[[1L]]), as.numeric(c(
-    "0x1.fc8100937c6d9p-3", "0x1.0dade082b5139p-4", "0x1.5f2a03caca423p-1"
+    "0x1.c6aedb2e90cb0p-3", "0x1.3c7efa0654752p-4", "0x1.66c469f3913eap-1"
   )))
   expect_identical(shares(fit$traits[[2L]]), as.numeric(c(
-    "0x1.64b480fb3ddecp-2", "0x1.a70115a24ec98p-3", "0x1.c7caf4339abc8p-2"
+    "0x1.64ec128c9152cp-2", "0x1.a6d0bf56be4ddp-3", "0x1.c7ab8dc80f866p-2"
   )))
   cross <- vapply(c("sA", "sC", "sE", "rA", "rC", "rE"), function(k) fit$cross[[k]], 0, USE.NAMES = FALSE)
   expect_identical(cross, as.numeric(c(
-    "0x1.58f9827525a36p-3", "0x1.7ab1f7a202ebdp-4", "0x1.4c8ff7e74093dp-2",
-    "0x1.254066770b240p-1", "0x1.95ed7bd103127p-1", "0x1.2cf24d4a858e1p-1"
+    "0x1.40173e982888ap-3", "0x1.905739ada3788p-4", "0x1.5397c952d6fdfp-2",
+    "0x1.1faa3d7026b4fp-1", "0x1.8c35b542125ebp-1", "0x1.30136a239f555p-1"
   )))
   expect_false(fit$cross$rA_out_of_range)
   expect_identical(vapply(fit$traits, `[[`, 0L, "trait"), 1:2)
@@ -117,7 +117,8 @@ test_that("the fit prints", {
 two_cov <- relative_pairs_correlation(ped, list(trait(x), trait(y)), categories = cats, se = TRUE, covariance = TRUE)
 ses <- function(fit) {
   c(unlist(lapply(fit$traits, function(t) c(t$A_se, t$C_se, t$E_se))),
-    vapply(c("sA", "sC", "sE", "rA", "rC", "rE"), function(k) fit$cross[[paste0(k, "_se")]], 0, USE.NAMES = FALSE))
+    vapply(c("sA", "sC", "sE", "rA", "rC", "rE"), function(k) fit$cross[[paste0(k, "_se")]] %||% NA_real_, 0,
+           USE.NAMES = FALSE))
 }
 
 test_that("with the covariance every SE is Python's bit for bit", {
@@ -126,20 +127,21 @@ test_that("with the covariance every SE is Python's bit for bit", {
   pairs <- relative_pairs_ace(two_cov, shared_environment = shared, weights = "pairs")
   expect_identical(pairs$traits[[1L]]$A, relative_pairs_ace(two, shared_environment = shared)$traits[[1L]]$A)
   expect_identical(ses(pairs), as.numeric(c(
-    "0x1.70e9b7cf9dccdp-4", "0x1.8b260e7ed7d04p-3", "0x1.cf5fb8bd3cc14p-4",
-    "0x1.19c2fcf6e50b0p-3", "0x1.260dd0710268cp-3", "0x1.364d472a4f0aep-3",
-    "0x1.10fda5b467ca7p-3", "0x1.1cbd47c313122p-3", "0x1.ec50ee7b8fd2cp-4",
-    "0x1.24aad101cdbf4p-2", "0x1.b413ce0893402p-2", "0x1.0c675b8b7d442p-4"
+    "0x1.682439d197635p-4", "0x1.8ff95c18a5dc0p-3", "0x1.b538b3cddd351p-4",
+    "0x1.05c97700cf294p-3", "0x1.1739e4341d1cdp-3", "0x1.3e1d06e735df6p-3",
+    "0x1.0658022c5ff58p-3", "0x1.1b3574ec7f618p-3", "0x1.e83d347345b65p-4",
+    "0x1.2f86dde2747c8p-2", "0x1.5a7ee3225b130p-2", "0x1.f7753fff1df0cp-5"
   )))
   iv <- relative_pairs_ace(two_cov, shared_environment = shared, weights = "inverse_variance")
-  expect_identical(iv$traits[[1L]]$A, as.numeric("0x1.7314a2d66ba1bp-2"))
+  expect_identical(iv$traits[[1L]]$A, as.numeric("0x1.47337de2865f4p-2"))
   expect_identical(ses(iv), as.numeric(c(
-    "0x1.05f6cc111cc98p-3", "0x1.0e2f03db1f658p-3", "0x1.9c6e580a74c78p-5",
-    "0x1.0436c5106a1a8p-3", "0x1.01b5df9d8c919p-3", "0x1.69ee468978810p-5",
-    "0x1.66b4e73ad61cdp-4", "0x1.115a5b895d42fp-3", "0x1.58d0987d9505fp-4",
-    "0x1.bd27f18a099eep-3", "0x1.fbfff30721fa6p-3", "0x1.847a7ca4749b5p-1"
+    "0x1.fadc5360f4d6fp-4", "0x1.03f86f1101f34p-3", "0x1.9f13a0829f609p-5",
+    "0x1.f5ce968d12507p-4", "0x1.f0bf62e8ee47ap-4", "0x1.6a9ffcb6b4c06p-5",
+    NA, "0x1.abfcf11013fa9p-4", "0x1.b2ec5e4c50c41p-4",
+    "0x1.386f1efc14a16p-3", "0x1.e332db905c729p-3", "0x1.a7be3bac5e599p-1"
   )))
   expect_identical(iv$settings$weights, "inverse_variance")
+  expect_identical(iv$cross$sA_se_reason, "negative_variance")
   # The fixture's covariance is not positive definite over the cells each solve reads.
   gls <- relative_pairs_ace(two_cov, shared_environment = shared, weights = "gls")
   expect_null(gls$traits[[1L]]$A)

@@ -174,6 +174,8 @@ def test_every_cell_is_row_order_free_without_loops(seed, kind):
 def _loop() -> dict[str, np.ndarray]:
     """x and y are each other's half-aunt: x's father p is y's maternal half-sib, y's father q is x's.
 
+    One path each way makes two, so the pair is ``Av`` (pedigree-graph ADR 0018).
+
     Rows: M1 1, M2 2, F2 3, F4 4, p 5 (M2, F4), q 6 (M1, F2), x 7 (M1, p), y 8 (M2, q).
     """
     return {
@@ -186,10 +188,10 @@ def _loop() -> dict[str, np.ndarray]:
 def test_a_pair_directed_both_ways_enters_in_the_lower_rows_orientation():
     ped = _loop()
     values = np.array([np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, 1.0, 0.0])
-    x_first = rp.correlation(ped, Trait(values, kind="binary"), categories=["HAv"]).cells[0]
+    x_first = rp.correlation(ped, Trait(values, kind="binary"), categories=["Av"]).cells[0]
     swap = np.array([0, 1, 2, 3, 4, 5, 7, 6])
     y_first = rp.correlation(
-        {k: v[swap] for k, v in ped.items()}, Trait(values[swap], kind="binary"), categories=["HAv"]
+        {k: v[swap] for k, v in ped.items()}, Trait(values[swap], kind="binary"), categories=["Av"]
     ).cells[0]
     # x (1) first: the pair is (niece x, aunt y), row 1 column 0.  y first: (y, x).
     assert x_first.table == ((0, 0), (1, 0))
