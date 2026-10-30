@@ -409,8 +409,11 @@ def test_without_a_covariance_the_default_keeps_the_values_of_the_fit_before_the
         if sys.platform == "linux":
             assert got == _BEFORE_THE_SE[name], name
         else:
-            expected = [None if h is None else float.fromhex(h) for h in _BEFORE_THE_SE[name]]
-            assert [None if h is None else float.fromhex(h) for h in got] == pytest.approx(expected, rel=1e-12), name
+            expected = _BEFORE_THE_SE[name]
+            assert [h is None for h in got] == [h is None for h in expected], name
+            values_got = [float.fromhex(h) for h in got if h is not None]
+            values_expected = [float.fromhex(h) for h in expected if h is not None]
+            assert values_got == pytest.approx(values_expected, rel=1e-12), name
         assert all(reason == "no_covariance" for value, _, reason in values.values() if value is not None)
 
 
