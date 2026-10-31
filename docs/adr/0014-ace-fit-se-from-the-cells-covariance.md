@@ -1,6 +1,7 @@
 # ADR 0014: The ACE Fit's SE reads the cells' covariance, and GLS weights are the default per solve where the result carries it
 
-**Status:** accepted
+**Status:** accepted; amended 2026-10-31 (the continuous A-side SEs are
+understated, issue #22)
 **Date:** 2026-10-17
 **Context:** issue #19; ADR 0012 (the ACE Fit, count weights), ADR 0013
 (the per-estimate SE); `docs/gates/relative-pairs-ace-se/`; amends ADR
@@ -317,9 +318,9 @@ Rejected:
   depend on which categories the call requested, at the price of a
   degree-2 traversal on narrow calls.
 - Continuous A, E, sA and rA SEs are short of the across-rep spread by
-  7-21% on simACE reps.  They describe the error around the sample's
-  realized truth.  A caller who needs the across-population spread should
-  widen them; the cause is open.
+  7-21% on simACE reps.  The cause is dependence between related
+  families that the cells' covariance leaves out; see the amendment
+  below, which says how to widen them.
 - In Rust, `correlation` takes `Se`, which `Se::from_flags` makes from a
   host's two flags; `ace::fit` takes `Option<&Covariance>`;
   `Covariance::new` returns `covariance_shape_mismatch` for a matrix of
@@ -327,3 +328,50 @@ Rejected:
   and `weights`; `AceRequest` gains `weights: Option<Weights>`; `Row` gains
   `variance`; `Error` gains `missing_covariance` and
   `covariance_shape_mismatch`.
+
+## Amendment (2026-10-31): the continuous A-side SEs are understated (issue #22)
+
+- The SEs of the continuous (Pearson) A, E, sA and rA understate their
+  spread across simACE populations, and this stays so. C, sC, sE and rE
+  calibrate, and so does each cell's own SE (ADR 0013). The binary
+  estimators were not probed: their SEs are 2-6 times the continuous
+  ones, so the same extra variance shows less in their ratios.
+- The cause is dependence between related families. Two entries whose
+  MRCAs are close relatives, such as a mother and her daughter, or two
+  sisters who each head a sibship, are correlated. The covariance treats
+  them as independent, because ADR 0013 joins entries only through a
+  shared MRCA or a shared member. The missing covariance acts on the ACE
+  Fit almost entirely between cells, so it does not show in any one
+  cell's SE. Counting MRCA relatives up to degree 3 together closes about
+  two thirds of the gap (`docs/gates/relative-pairs-ace-se/README.md`,
+  "Why the continuous A, E, sA and rA SEs are short").
+- The SE is not changed. No kernel tried calibrates. Each leaves A2 and E2
+  at least 16% short when six generations are phenotyped, and each
+  over-corrects sE and rE (to 0.78-0.91). A design that calibrates every
+  quantity is open.
+- Measured on 10 simACE configurations (the six se_calibration
+  scenarios, and four depth scenarios with three or six phenotyped
+  generations and 0-6 recorded generations above them), SD(θ̂)/SE:
+
+  | `weights` | A1 | A2 | E1 | E2 | sA, rA |
+  |---|---|---|---|---|---|
+  | `gls` (the default with the covariance), median | 1.11 | 1.09 | 1.09 | 1.11 | 1.10 |
+  | `gls`, largest | 1.17 | 1.26 | 1.20 | 1.19 | 1.27 |
+  | `inverse_variance`, median | 1.15 | 1.14 | 1.12 | 1.17 | 1.15 |
+  | `inverse_variance`, largest | 1.21 | 1.40 | 1.19 | 1.31 | 1.33 |
+  | `pairs`, median | 1.13 | 1.14 | 1.10 | 1.17 | 1.16 |
+  | `pairs`, largest | 1.20 | 1.40 | 1.17 | 1.31 | 1.34 |
+
+  The ratio rises with the phenotyped generations. The largest values are
+  trait 2's with six phenotyped generations.
+- **Widening.** A caller who needs coverage across populations, not only
+  around the sample's realized truth, should multiply the A, E, sA and rA
+  SEs by a factor. 1.3 covers every configuration measured under `gls`.
+  Under `pairs` and `inverse_variance` the largest ratio measured is
+  1.40, so use at least 1.4. The factors come from these simulations:
+  serial mating (`mating_lambda` 0.5 and 3), A 0.4-0.8, C 0-0.3, and 3-6
+  phenotyped generations of 20k rows. Deeper or more inbred pedigrees may
+  need more. C, sC, sE and rE need no factor.
+- The probe (`tools/relative_pairs_ace_se_probe.py`), its tables and the
+  depth grid (simACE `config/ace_se_depth.yaml`) stay for any later SE
+  design to be measured against.

@@ -517,12 +517,18 @@ Without the covariance of the estimate read, every SE is `None` with
 On 600 simACE reps C, sC, sE and rE calibrate under every weighting:
 median SD/SE 0.89-1.03, coverage 0.96-0.98.  Continuous A, E, sA and rA
 spread 7-21% more than their SE under every weighting (coverage
-0.89-0.94).  Against each rep's realized truth their SE is not too small;
-the realized truth itself varies across reps by 0.4-1.1 SE.  That fits a
-rep-level common shock, such as the realized genetic variance, which no
-within-sample SE covers.  The mechanism is unverified, and E2 is short
-against its realized truth too.  The SE describes the error around the
-sample's realized truth; widen it for the spread across populations.
+0.89-0.94).  The cause is dependence between related families: two
+entries whose MRCAs are close relatives are correlated, and the cells'
+covariance treats them as independent.  It acts between cells, so each
+cell's own SE still calibrates.  The gap grows with the phenotyped
+generations: on 10 simACE configurations SD/SE reaches 1.27 under the
+default `gls` weights and 1.40 under `pairs` and `inverse_variance`.  The
+SE is not corrected.  For coverage across populations, multiply the A, E,
+sA and rA SEs by 1.3 under `gls`, or by at least 1.4 under the other
+weights; C, sC, sE and rE need no factor.  The factors come from these
+simulations, and deeper or more inbred pedigrees may need more
+([ADR 0014](adr/0014-ace-fit-se-from-the-cells-covariance.md), amended
+2026-10-31; issue #22).
 
 ### Recipes
 
@@ -639,9 +645,12 @@ of its values, and `correlation` for `covariance=True` without
 - The SE is a Wald SE: no CI is reported, and in a sparse binary cell (under
   about one expected concordant pair) the Wald interval fails under every
   cluster design ([ADR 0013](adr/0013-relative-pair-se-clusters-by-common-ancestor.md)).
-- The ACE Fit's continuous A, E, sA and rA SEs are 7-21% short of the
-  spread across simACE reps, though calibrated against each rep's realized
-  truth ([ADR 0014](adr/0014-ace-fit-se-from-the-cells-covariance.md)).
+- The ACE Fit's continuous A, E, sA and rA SEs understate the spread
+  across simACE populations by up to 40% (median 9-17%), because they
+  leave out the
+  dependence between related families; widen them by 1.3 (`gls`) or 1.4
+  (other weights) for coverage across populations
+  ([ADR 0014](adr/0014-ace-fit-se-from-the-cells-covariance.md)).
   Its SEs treat the weights as fixed.
 - The ACE model assumes no assortative mating, no dominance, and C shared
   in full by the declared categories and not at all by the others.

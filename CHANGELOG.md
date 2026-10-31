@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The ACE Fit's continuous A, E, sA and rA SEs are documented as
+  understated (ADR 0014, amended; issue #22). The cells' covariance
+  leaves out the dependence between families whose MRCAs are close
+  relatives, so on simACE configurations their spread is up to 1.40
+  times the SE (median 1.09-1.17). The SE is unchanged. The docs give a widening factor: 1.3
+  under `gls`, at least 1.4 under `pairs` and `inverse_variance`.
+
 - `relative_pairs.correlation(..., se=True, influence=True)` (R:
   `relative_pairs_correlation(..., se = TRUE, influence = TRUE)`) gives
   each cell its `entries` (`first_id`, `second_id`, `mrca_id`) and each
