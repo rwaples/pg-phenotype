@@ -428,3 +428,137 @@ An estimator-dependent default (`"gls"` for the primary estimator,
 make the default depend on another argument, and it would change the
 tetrachoric's values and calibration for a small gain. It is not
 recommended without a further look at the tetrachoric case.
+
+## Why the continuous A, E, sA and rA SEs are short (issue #22)
+
+Result: **most of the gap is dependence between related families that
+ADR 0013's clusters treat as independent.** Entries whose MRCAs are close
+relatives are correlated. Counting MRCA relatives up to degree 3 together
+closes about two thirds of the gap on these reps. The kernel acts on the
+ACE Fit almost entirely through the covariance between cells: the median
+cell's own SE stays calibrated, and the ACE Fit pools many cells. Some gap
+remains, largest when every recorded generation is phenotyped. This is a
+diagnosis, not a fix: no SE has changed.
+
+`tools/relative_pairs_ace_se_probe.py` (its docstring has the method) runs
+on each rep. It takes `relative_pairs.correlation(..., se=True,
+covariance=True, influence=True)` and the per-entry influences (issue
+#25), and rebuilds the cells' stratified covariance at several *levels*.
+It refits `relative_pairs.ace` on each, stratified Pearson, under each
+weighting. Levels:
+
+- `base` is ADR 0013's design. On every rep it reproduces the result's own
+  covariance to within 1e-9 of its largest entry.
+- `deg<d>` also counts two entries together when their MRCAs are distinct
+  relatives of degree at most d (MZ at degree 0). It subtracts the pairs
+  that already count through a shared member, so each pair of entries
+  counts once.
+- `kin3` weights the degree-at-most-3 MRCA pairs by 2φ: a pair joined
+  through a member keeps weight 1, and one joined only through related
+  MRCAs gets 2φ.
+- `_diag` and `_off` add a level's extra term to the diagonal alone or to
+  the off-diagonal alone.
+
+On small simulated pedigrees, every level's covariance matches a
+brute-force sum over every two entries to within 9e-16 of its largest
+entry, kin3's weights included.
+
+A coarser partition is no alternative. The pedigree is one connected
+component, so joining each MRCA with its parents leaves about 200 of 44k
+clusters, and two generations up leaves one or two.
+
+Outputs: `probe/se_calibration.tsv` (the 600 reps above) and
+`probe/depth.tsv` (simACE's `config/ace_se_depth.yaml`), with their
+`run.json`. The depth grid holds se_cal_lam3_K10 and varies the recorded
+pedigree. ped3, ped6 and ped9 (G_ped 3, 6, 9; G_pheno 3) share G_sim 11
+and their seeds, so rep k of each has the same phenotyped rows and only
+its recorded ancestry is truncated. pheno6 (G_ped 6, G_pheno 6) has its
+own seeds.
+
+Every fit gave a finite value and SE at every level, except rC, which has
+no value when a trait's C is 0 (`nonpositive_component`). The smallest
+eigenvalue of the stratified covariance over the cells with an SE,
+relative to the largest, was at least 0.0014 in every se_calibration rep
+and 0.0003 in every depth rep (median over scenarios 0.0018-0.0031 by
+level).
+
+Median over the six se_calibration scenarios of SD(θ̂)/mean SE, `pairs`
+(the estimator is fixed, so only the SE moves):
+
+| quantity | base | deg1 | deg3 | kin3 | deg1 off-diagonal only | deg1 diagonal only |
+|---|---|---|---|---|---|---|
+| A1 | 1.10 | 1.00 | 0.98 | 1.04 | 1.01 | 1.08 |
+| A2 | 1.15 | 1.05 | 1.03 | 1.09 | 1.06 | 1.14 |
+| E1 | 1.08 | 1.00 | 0.97 | 1.03 | 1.00 | 1.06 |
+| E2 | 1.18 | 1.09 | 1.07 | 1.13 | 1.10 | 1.17 |
+| sA | 1.21 | 1.10 | 1.06 | 1.14 | 1.10 | 1.20 |
+| rA | 1.21 | 1.09 | 1.06 | 1.14 | 1.10 | 1.20 |
+| C1 | 0.95 | 0.93 | 0.93 | 0.94 | 0.96 | 0.91 |
+| C2 | 0.91 | 0.89 | 0.89 | 0.90 | 0.90 | 0.90 |
+| sE | 0.97 | 0.88 | 0.85 | 0.91 | 0.88 | 0.96 |
+| rE | 0.97 | 0.88 | 0.86 | 0.91 | 0.89 | 0.96 |
+| median cell's own SE | 1.01 | 1.00 | 0.99 | 1.00 | 1.01 | 1.00 |
+
+Per scenario at deg3, A1 is 0.88-1.05, A2 1.00-1.05, E2 1.06-1.10 and sA
+0.93-1.14 (base: 1.02-1.17, 1.14-1.22, 1.16-1.23 and 1.07-1.34). MZ MRCA
+pairs (deg0) change nothing at this precision. Under `gls`, deg3 narrows
+A1 from 1.09 to 1.04 and sA from 1.17 to 1.04. The cells' own ratios
+spread around their median: 0.84-1.23 over every cell and scenario at
+base, 0.79-1.21 at deg3.
+
+The depth grid, base → deg1 → deg3, 100 reps a scenario:
+
+| quantity | ped3 | ped6 | ped9 | pheno6 |
+|---|---|---|---|---|
+| A1 | 1.11 → 1.05 → 1.05 | 1.16 → 1.06 → 1.03 | 1.16 → 1.06 → 1.03 | 1.20 → 1.06 → 0.99 |
+| A2 | 1.08 → 1.02 → 1.02 | 1.09 → 0.99 → 0.97 | 1.09 → 0.99 → 0.98 | 1.40 → 1.24 → 1.17 |
+| E2 | 0.98 → 0.93 → 0.93 | 1.01 → 0.94 → 0.93 | 1.01 → 0.94 → 0.93 | 1.31 → 1.20 → 1.16 |
+| sA | 1.11 → 1.04 → 1.03 | 1.16 → 1.05 → 1.02 | 1.16 → 1.05 → 1.02 | 1.16 → 1.02 → 0.95 |
+| sE | 0.93 → 0.87 → 0.87 | 0.93 → 0.84 → 0.82 | 0.93 → 0.84 → 0.82 | 0.93 → 0.83 → 0.78 |
+| median cell's own SE | 1.02 → 1.01 → 1.01 | 1.02 → 1.00 → 0.99 | 1.02 → 1.00 → 0.99 | 1.06 → 1.01 → 1.00 |
+
+What the numbers show:
+
+- **The kernel acts on the ACE Fit almost entirely off the diagonal.** The
+  off-diagonal terms alone give almost all of a level's effect, and the
+  diagonal alone almost none. The median cell's own SD/SE stays at about
+  1, as ADR 0013 found, though single cells range from 0.84 to 1.23 at
+  base (up to 1.28 for pheno6's GGP). The kernel is one model of the added
+  covariance, so this does not show that every missing term lies between
+  cells.
+- **The gap is there without recorded ancestry above the phenotyped rows**
+  (ped3). The related MRCAs that matter sit in and just above the
+  phenotyped generations. For these estimators and kernels, recording more
+  than three generations above changes nothing: ped6 and ped9 differ in
+  about 450 of 487k related MRCA pairs and agree to within 0.01. The
+  paired design holds the simulated ancestry fixed, so this says nothing
+  about deeper ancestry's own contribution.
+- **Phenotyping more generations widens the gap**, most for trait 2 (A2
+  1.40 and E2 1.31 in pheno6). There, the degree-3 kernel leaves A2 and E2
+  at 1.16-1.17. Its source is open: relationships beyond degree 3, or
+  structure the kernel does not model (trait 2 has C 0.2).
+- **sE and rE over-correct** under every kernel (0.78-0.91), so no level
+  is a calibrated SE as it stands.
+- **Recorded generation 0's genetic moments predict nothing.** Its realized
+  variances of A per trait and their covariance predict none of the spread
+  out of sample: 5-fold cross-validated R², median over scenarios −0.08 to
+  −0.02 for A, E, sA and rA (single scenarios −0.16 to 0.06). That rules
+  out these three summaries, not every founder-level effect: effects
+  through particular lineages or unrecorded ancestors are untested. The
+  phenotyped generations' realized variances and cross-trait covariances
+  of A, C and E predict, as medians over scenarios, 28-33% of A and E and
+  44% of sA and rA out of sample (41-53% in sample). Those covariates are
+  themselves a product of the same family dependence, so they do not
+  separate a population shock from it.
+- **Around the realized truth** (base, medians over scenarios),
+  SD(θ̂ − θ_realized)/SE is 0.71-0.84 for A1, A2, E1, sA and rA, and 1.14
+  for E2. The realized truth's own spread is 0.83-0.96 SE. The two parts
+  covary negatively (2 Cov/SE² −0.55 to −0.18; about 0 for sA and rA), so
+  they do not simply add.
+
+Next is a decision between two directions. One is an MRCA-kinship term in
+ADR 0014's covariance; the degree and weighting would first need to
+calibrate sE and rE and the deeper-phenotyped case. The other is for ADR
+0014 to record that the SE understates the across-rep spread of the
+A-side quantities by about 5-20% in multi-generation pedigrees, with a
+documented way to widen it.

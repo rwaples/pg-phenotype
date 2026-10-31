@@ -1,0 +1,14 @@
+{
+  "command": "tools/relative_pairs_ace_se_probe.py /data/Documents/simACE/results/se_calibration --jobs 4 --out /home/ryanw/.claude/jobs/d8b21087/tmp/probe2_cal --reps /home/ryanw/.claude/jobs/d8b21087/tmp/probe2_cal.tsv",
+  "head": "33e4baac981ea736ff8bb98b8e32cba0a065538c",
+  "dirty": true,
+  "finished": "2026-10-31T09:35:11+00:00",
+  "wall_s": 3461.5,
+  "threads": {
+    "PG_PHENOTYPE_THREADS": "1",
+    "RAYON_NUM_THREADS": "1",
+    "POLARS_MAX_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1"
+  }
+}
