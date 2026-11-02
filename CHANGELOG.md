@@ -9,6 +9,14 @@
   mappingproxy and the pool died with `TypeError: cannot pickle
   'mappingproxy' object` (issue #28).
 
+- Every result can be pickled, so a worker process can return one
+  (issue #29).  Their read-only mappings (`settings`, `method`,
+  `metadata`, `strata`, `within_person`, `failure_reasons`) and errors'
+  `fields` are now one picklable read-only mapping type in place of
+  `types.MappingProxyType`; reading, comparing, `reversed()`, `copy()`
+  and `|` work as before.  `isinstance(x, types.MappingProxyType)` is now
+  false; check `isinstance(x, collections.abc.Mapping)` instead.
+
 - The ACE Fit's continuous A, E, sA and rA SEs are documented as
   understated (ADR 0014, amended; issue #22). The cells' covariance
   leaves out the dependence between families whose MRCAs are close

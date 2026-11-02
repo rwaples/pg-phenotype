@@ -44,13 +44,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from pg_phenotype import _native
 from pg_phenotype._input import count, strata
+from pg_phenotype._mapping import ReadOnlyMapping
 from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._trait import as_traits
 
@@ -485,7 +485,7 @@ def _cell(raw: dict, entries: dict | None = None) -> Cell:
         crude=pooled.crude,
         strata=None
         if by_stratum is None
-        else MappingProxyType({s["stratum"]: _stratum_cell(s, influences) for s in by_stratum}),
+        else ReadOnlyMapping({s["stratum"]: _stratum_cell(s, influences) for s in by_stratum}),
         n_cross_stratum=raw["n_cross_stratum"],
         n_unknown_stratum=raw["n_unknown_stratum"],
         stratified=None
@@ -635,9 +635,9 @@ def correlation(
         cells=tuple(_cell(c, e) for c, e in zip(raw["cells"], cell_entries, strict=True)),
         within_person=None if within is None else _cell(within),
         covariance=_cell_covariance(raw["covariance"]),
-        settings=MappingProxyType(dict(raw["settings"])),
-        method=MappingProxyType(dict(raw["method"])),
-        metadata=MappingProxyType(raw["metadata"]),
+        settings=ReadOnlyMapping(raw["settings"]),
+        method=ReadOnlyMapping(raw["method"]),
+        metadata=ReadOnlyMapping(raw["metadata"]),
     )
 
 
@@ -1036,7 +1036,7 @@ def ace(
         traits=tuple(TraitShares(**_rows_as_tuple(t)) for t in raw["traits"]),
         cross=None if cross is None else CrossShares(**_rows_as_tuple(cross)),
         rows=tuple(AceRow(**r) for r in raw["rows"]),
-        settings=MappingProxyType(dict(raw["settings"])),
-        method=MappingProxyType(dict(raw["method"])),
-        metadata=MappingProxyType(raw["metadata"]),
+        settings=ReadOnlyMapping(raw["settings"]),
+        method=ReadOnlyMapping(raw["method"]),
+        metadata=ReadOnlyMapping(raw["metadata"]),
     )

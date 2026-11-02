@@ -13,13 +13,13 @@ method follows pedsum #13; :attr:`MateCorrelation.method` describes it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from pg_phenotype import _native
 from pg_phenotype._input import count, strata
+from pg_phenotype._mapping import ReadOnlyMapping
 from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._trait import as_traits
 
@@ -207,7 +207,7 @@ class MateCorrelation:
 def _draws(raw: dict | None) -> Draws | None:
     if raw is None:
         return None
-    return Draws(raw["requested"], raw["valid"], raw["failed"], MappingProxyType(dict(raw["failure_reasons"])))
+    return Draws(raw["requested"], raw["valid"], raw["failed"], ReadOnlyMapping(raw["failure_reasons"]))
 
 
 def _permutation(raw: dict | None) -> Permutation | None:
@@ -353,8 +353,8 @@ def mate_correlation(
         cells=tuple(_cell(c) for c in raw["cells"]),
         within_person=None
         if within is None
-        else MappingProxyType({sex: WithinPerson(**w) for sex, w in within.items()}),
-        settings=MappingProxyType(dict(raw["settings"])),
-        method=MappingProxyType(dict(raw["method"])),
-        metadata=MappingProxyType(raw["metadata"]),
+        else ReadOnlyMapping({sex: WithinPerson(**w) for sex, w in within.items()}),
+        settings=ReadOnlyMapping(raw["settings"]),
+        method=ReadOnlyMapping(raw["method"]),
+        metadata=ReadOnlyMapping(raw["metadata"]),
     )

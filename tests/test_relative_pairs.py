@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from types import MappingProxyType
 
 import numpy as np
 import pytest
 
 from pg_phenotype import ParameterError, ResourceError, Trait, ValidationError
 from pg_phenotype import relative_pairs as rp
+from pg_phenotype._mapping import ReadOnlyMapping
 from tests.oracle.relative_pairs_reference import (
     SYMMETRIC,
     reference,
@@ -459,7 +459,7 @@ def test_stratified_cells_have_their_shape():
     trait = Trait([0.0, 1, 1, 0, 1, 1, 0, 1, 0], kind="binary")
     res = rp.correlation(ped, trait, categories=["MO", "FS"], stratum=stratum)
     mo, fs = res.cells
-    assert isinstance(mo.strata, MappingProxyType)
+    assert isinstance(mo.strata, ReadOnlyMapping)
     assert list(mo.strata) == [10, 20, 30, 31]
     s30 = mo.strata[30]
     assert isinstance(s30, rp.StratumCell)

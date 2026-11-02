@@ -10,8 +10,9 @@ from __future__ import annotations
 
 __all__ = ["ParameterError", "PgPhenotypeError", "ResourceError", "ValidationError"]
 
-from types import MappingProxyType
 from typing import TYPE_CHECKING
+
+from pg_phenotype._mapping import ReadOnlyMapping
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -32,7 +33,7 @@ class PgPhenotypeError(Exception):
     def __init__(self, code: str, message: str, /, **fields: object) -> None:
         super().__init__(message)
         self.code = code
-        self.fields = MappingProxyType(dict(fields))
+        self.fields = ReadOnlyMapping(fields)
 
     def __reduce__(self) -> tuple[object, ...]:
         # Exception unpickles as cls(*args), which this __init__ cannot take;

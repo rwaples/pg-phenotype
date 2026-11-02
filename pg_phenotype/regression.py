@@ -13,13 +13,13 @@ and a single-parent slope h2/2, on the observed scale for a 0/1 trait.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from pg_phenotype import _native
 from pg_phenotype._input import strata
+from pg_phenotype._mapping import ReadOnlyMapping
 from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._trait import checked
 
@@ -197,9 +197,9 @@ def parent_offspring(
     by_stratum = raw["strata"]
     return ParentOffspring(
         pooled=_subset(raw["pooled"]),
-        strata=None if by_stratum is None else MappingProxyType({s["stratum"]: _subset(s) for s in by_stratum}),
+        strata=None if by_stratum is None else ReadOnlyMapping({s["stratum"]: _subset(s) for s in by_stratum}),
         n_unknown_stratum=raw["n_unknown_stratum"],
-        settings=MappingProxyType(dict(raw["settings"], lines=tuple(raw["settings"]["lines"]))),
-        method=MappingProxyType(dict(raw["method"])),
-        metadata=MappingProxyType(raw["metadata"]),
+        settings=ReadOnlyMapping(dict(raw["settings"], lines=tuple(raw["settings"]["lines"]))),
+        method=ReadOnlyMapping(raw["method"]),
+        metadata=ReadOnlyMapping(raw["metadata"]),
     )

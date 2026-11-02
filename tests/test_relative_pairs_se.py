@@ -9,7 +9,6 @@ import sys
 import textwrap
 from collections import Counter
 from dataclasses import replace
-from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -19,6 +18,7 @@ from pedigree_graph import RELATIONSHIPS
 from pg_phenotype import Trait, _native
 from pg_phenotype import correlation as pgc
 from pg_phenotype import relative_pairs as rp
+from pg_phenotype._mapping import ReadOnlyMapping
 from tests.oracle.relative_pairs_reference import SYMMETRIC, _reader, graph
 from tests.oracle.relative_pairs_se import (
     Units,
@@ -251,7 +251,7 @@ def test_the_se_is_opt_in_and_leaves_the_estimates_unchanged(kind):
     assert any(e.se is not None for e in estimates(with_se))
     assert [replace(e, se=None, se_reason=None) for e in estimates(with_se)] == estimates(plain)
     assert (plain.settings["se"], with_se.settings["se"]) == (False, True)
-    settings = MappingProxyType({**with_se.settings, "se": False})
+    settings = ReadOnlyMapping({**with_se.settings, "se": False})
     assert replace(with_se, cells=plain.cells, within_person=plain.within_person, settings=settings) == plain
 
     def raw(se):

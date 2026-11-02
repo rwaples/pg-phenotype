@@ -9,13 +9,13 @@ are passed beside it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
 from pg_phenotype import _native
 from pg_phenotype._input import floats, id_array
+from pg_phenotype._mapping import ReadOnlyMapping
 from pg_phenotype._pedigree import native_pedigree
 from pg_phenotype._trait import checked
 
@@ -200,7 +200,7 @@ def score_univariate(prep: _native.Prep, trait: Trait, *, age: object, cip: Cip,
         est=raw["est"],
         var=raw["var"],
         n_relatives=raw["n_relatives"],
-        metadata=MappingProxyType(raw["metadata"]),
+        metadata=ReadOnlyMapping(raw["metadata"]),
     )
 
 
@@ -249,4 +249,4 @@ def score_bivariate(
     metadata = raw["metadata"]
     metadata["controls_without_age"] = tuple(metadata["controls_without_age"])
     columns = ("id", "est1", "est2", "var1", "var2", "cov12", "n_relatives", "n_obs1", "n_obs2")
-    return BivariateScores(**{c: raw[c] for c in columns}, metadata=MappingProxyType(metadata))
+    return BivariateScores(**{c: raw[c] for c in columns}, metadata=ReadOnlyMapping(metadata))
