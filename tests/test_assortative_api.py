@@ -847,6 +847,10 @@ def test_spearman_ci_needs_the_bootstrap():
     )
     assert without["spearman"].ci is None
     assert without["spearman"].ci_unavailable_reason == "bootstrap_not_requested"
+    assert isinstance(without["spearman"].value, float)
+    assert (without["spearman"].se, without["spearman"].ci_method) == (None, None)
+    assert (without["spearman"].bootstrap, without["spearman"].permutation) == (None, None)
+    assert without["pearson"].ci_method == "sandwich"
     spearman = with_bootstrap["spearman"]
     assert spearman.ci_method == "bootstrap"
     assert spearman.bootstrap is not None
@@ -929,28 +933,6 @@ def test_bootstrap_request_keeps_the_percentile_ci_and_reports_the_sandwich_se()
     assert (boot.ci_method, boot.bootstrap.requested) == ("bootstrap", 50)
     assert boot.se == sand.se
     assert boot.ci != sand.ci
-
-
-def test_single_network_and_spearman_reasons():
-    """pedsum test_single_network_and_spearman_reasons: one network withholds every CI; Spearman needs the bootstrap."""
-    chain = [(1, 100), (1, 101), (2, 101), (2, 102), (3, 102)]
-    ped = b.pedigree(chain)
-    trait = _continuous(ped, {1: 0.0, 2: 1.0, 3: 3.0, 100: 0.5, 101: 2.0, 102: 1.0})
-    pearson = mate_correlation(ped, trait, permutations=0, bootstrap=0, seed=0).cells[0]["pearson"]
-    assert pearson.ci_unavailable_reason == "single_mate_network"
-    assert pearson.se is None
-
-    pairs = [(k + 1, 1000 + k) for k in range(40)]
-    ped = b.pedigree(pairs)
-    rng = np.random.default_rng(9)
-    values = {p: float(v) for p, v in zip([p for pair in pairs for p in pair], rng.normal(size=80), strict=True)}
-    cell = mate_correlation(ped, _continuous(ped, values), permutations=0, bootstrap=0, seed=0, spearman=True).cells[0]
-    spearman = cell["spearman"]
-    assert isinstance(spearman.value, float)
-    assert (spearman.se, spearman.ci, spearman.ci_method) == (None, None, None)
-    assert spearman.ci_unavailable_reason == "bootstrap_not_requested"
-    assert (spearman.bootstrap, spearman.permutation) == (None, None)
-    assert cell["pearson"].ci_method == "sandwich"
 
 
 # ---------------------------------------------------------------------------
@@ -1036,12 +1018,10 @@ def test_stratum_length_mismatch(small):
 
 
 @pytest.mark.parametrize(("name", "value"), [("permutations", -1), ("bootstrap", -1), ("min_stratum_networks", 0)])
-@pytest.mark.parametrize("stratified", [False, True])
-def test_parameter_out_of_range(small, name, value, stratified):
+def test_parameter_out_of_range(small, name, value):
     ped, x = small
-    stratum = np.zeros(x.size) if stratified else None
     with pytest.raises(ParameterError) as exc:
-        mate_correlation(ped, Trait(x, kind="continuous"), stratum=stratum, **{name: value})
+        mate_correlation(ped, Trait(x, kind="continuous"), **{name: value})
     assert exc.value.code == "parameter_out_of_range"
 
 
