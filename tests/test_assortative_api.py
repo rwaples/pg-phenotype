@@ -47,12 +47,6 @@ BOOTSTRAP_METHOD = (
 )
 
 
-#: pg_phenotype/assortative.py:223 builds an undefined estimate (``reason`` set) from 4 values and
-#: ``[None] * 9`` for a 12-field ``EstimatorResult``, so every result holding an undefined estimator
-#: raises ``TypeError: EstimatorResult.__init__() takes 13 positional arguments but 14 were given``.
-#: With ``[None] * 8`` each marked test passes; strict, so the fix turns them into failures to unmark.
-
-
 def _continuous(ped: b.Pedigree, by_id: dict) -> Trait:
     return Trait(b.column(ped, by_id), kind="continuous")
 

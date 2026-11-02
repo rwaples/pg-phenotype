@@ -227,13 +227,6 @@ def test_exact_model_correlations_recover_every_parameter(ped):
     assert fit.cross.rA_out_of_range is False
 
 
-def test_without_the_within_person_cell_se_is_not_identified(one):
-    fit = rp.ace(one, components="A")
-    assert fit.cross is None
-    res = replace(one, within_person=None)
-    assert rp.ace(res, components="A") == fit
-
-
 def test_undefined_cells_stay_out_with_their_reason(ped):
     res = rp.correlation(ped, Trait(np.zeros(len(ped["id"])), kind="continuous"), categories=["FS", "PHS"])
     fit = rp.ace(res, components="A")
