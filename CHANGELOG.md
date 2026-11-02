@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.6.1
 
 - pg-phenotype's errors (`PgPhenotypeError` and its subclasses) can be
   pickled, so one raised in a worker process (`ProcessPoolExecutor`,
