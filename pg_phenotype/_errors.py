@@ -34,6 +34,18 @@ class PgPhenotypeError(Exception):
         self.code = code
         self.fields = MappingProxyType(dict(fields))
 
+    def __reduce__(self) -> tuple[object, ...]:
+        # Exception unpickles as cls(*args), which this __init__ cannot take;
+        # rebuild from code, message and fields.  The rest of __dict__ (e.g.
+        # __notes__) rides along as state; __cause__ and __traceback__ do not.
+        state = {k: v for k, v in self.__dict__.items() if k not in ("code", "fields")}
+        args = (type(self), self.code, str(self), dict(self.fields))
+        return (_rebuild, args, state or None)
+
+
+def _rebuild(cls: type[PgPhenotypeError], code: str, message: str, fields: dict[str, object]) -> PgPhenotypeError:
+    return cls(code, message, **fields)
+
 
 class ValidationError(PgPhenotypeError, ValueError):
     """The pedigree, a trait, or the proband list violates the input contract."""

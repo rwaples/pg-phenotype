@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- pg-phenotype's errors (`PgPhenotypeError` and its subclasses) can be
+  pickled, so one raised in a worker process (`ProcessPoolExecutor`,
+  multiprocessing, joblib, dask) reaches the caller with its class,
+  `code` and read-only `fields`. Before, pickling failed on the `fields`
+  mappingproxy and the pool died with `TypeError: cannot pickle
+  'mappingproxy' object` (issue #28).
+
 - The ACE Fit's continuous A, E, sA and rA SEs are documented as
   understated (ADR 0014, amended; issue #22). The cells' covariance
   leaves out the dependence between families whose MRCAs are close
