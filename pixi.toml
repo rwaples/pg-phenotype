@@ -24,6 +24,10 @@ build-dev = "maturin develop --release --features test-hooks"
 test = { cmd = "pytest -n 6 --dist worksteal -m 'not slow'", depends-on = ["build-dev"], env = { PG_PHENOTYPE_REQUIRE_TEST_HOOKS = "1" } }
 test-all = { cmd = "pytest -n 6 --dist worksteal", depends-on = ["build-dev"], env = { PG_PHENOTYPE_REQUIRE_TEST_HOOKS = "1" } }
 test-rust = "cargo test --release"
+# The core's property tests at release depth: 16384 cases per property
+# (crates/core/tests/common/mod.rs `check`) in place of the ordinary 32 to
+# 256, ~23 s.
+test-rust-thorough = { cmd = "cargo test --release -p pg-phenotype-core --test aalen_johansen_properties --test relative_pairs_properties --test tetrachoric_properties", env = { PROPTEST_CASES = "16384" } }
 # `ci-local` runs the checks the CI push jobs run (.github/workflows/ci.yml),
 # before a push. CI-only: the Python 3.13 job, the offline R tarball check
 # (needs sudo unshare), the pedigree-graph main job (`test-against-pg`), and the

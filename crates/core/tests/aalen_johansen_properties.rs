@@ -4,9 +4,17 @@
 //! Bit-for-bit comparisons are between two calls in one process, never
 //! against a stored value, so they hold on every platform.
 
+mod common;
+
+use std::sync::atomic::Ordering;
+
+use common::check;
 use pg_phenotype_core::pafgrs::Cip;
 use pg_phenotype_core::Error;
 use proptest::prelude::*;
+
+/// Cases per property in an ordinary run.
+const CASES: u32 = 256;
 
 /// One row: age, status, and an entry age before it.
 #[derive(Clone, Copy, Debug)]
@@ -127,60 +135,105 @@ fn rows_and_entry() -> impl Strategy<Value = (Vec<Row>, bool)> {
     ]
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
-
-    #[test]
-    fn row_order_does_not_matter(
-        (rows, shuffled, with_entry) in rows_and_entry()
-            .prop_flat_map(|(r, e)| (Just(r.clone()), Just(r).prop_shuffle(), Just(e)))
-    ) {
-        let (a, b) = (aj(&rows, with_entry), aj(&shuffled, with_entry));
-        match (a, b) {
-            (Ok((ages_a, cip_a)), Ok((ages_b, cip_b))) => {
-                prop_assert_eq!(ages_a, ages_b);
-                let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-                prop_assert_eq!(bits(&cip_a), bits(&cip_b));
-            }
-            (a, b) => prop_assert_eq!(a.err(), b.err()),
-        }
-    }
-
-    /// Also: valid rows never give a table `Cip::new` refuses (decreasing,
-    /// out of range, ages not increasing), only a not-estimable reason.
-    #[test]
-    fn matches_the_documented_recurrence((rows, with_entry) in rows_and_entry()) {
-        match (aj(&rows, with_entry), oracle(&rows, with_entry)) {
-            (Ok((ages, cip)), Ok((want_ages, want_cip))) => {
-                prop_assert_eq!(ages, want_ages);
-                prop_assert_eq!(cip.len(), want_cip.len());
-                for (got, want) in cip.iter().zip(&want_cip) {
-                    prop_assert!((got - want).abs() <= 1e-12 * want.abs(), "{} vs {}", got, want);
+#[test]
+fn row_order_does_not_matter() {
+    let strategy =
+        rows_and_entry().prop_flat_map(|(r, e)| (Just(r.clone()), Just(r).prop_shuffle(), Just(e)));
+    check(
+        "row order",
+        CASES,
+        0.3,
+        strategy,
+        |(rows, shuffled, with_entry), checked| {
+            match (aj(&rows, with_entry), aj(&shuffled, with_entry)) {
+                (Ok((ages_a, cip_a)), Ok((ages_b, cip_b))) => {
+                    prop_assert_eq!(ages_a, ages_b);
+                    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+                    prop_assert_eq!(bits(&cip_a), bits(&cip_b));
+                    checked.fetch_add(1, Ordering::Relaxed);
                 }
+                (a, b) => prop_assert_eq!(a.err(), b.err()),
             }
-            (Err(reason), Err(want)) => prop_assert_eq!(reason, want),
-            (got, want) => prop_assert!(false, "got {:?}, oracle {:?}", got, want),
-        }
-    }
+            Ok(())
+        },
+    );
+}
 
-    /// Entry 0 removes no one from a risk set at a positive age.
-    #[test]
-    fn zero_entries_match_no_entry(rows in prop::collection::vec(row_no_entry(), 1..60)) {
+/// Also: valid rows never give a table `Cip::new` refuses (decreasing,
+/// out of range, ages not increasing), only a not-estimable reason.
+#[test]
+fn matches_the_documented_recurrence() {
+    check(
+        "recurrence",
+        CASES,
+        0.3,
+        rows_and_entry(),
+        |(rows, with_entry), checked| {
+            match (aj(&rows, with_entry), oracle(&rows, with_entry)) {
+                (Ok((ages, cip)), Ok((want_ages, want_cip))) => {
+                    prop_assert_eq!(ages, want_ages);
+                    prop_assert_eq!(cip.len(), want_cip.len());
+                    for (got, want) in cip.iter().zip(&want_cip) {
+                        prop_assert!(
+                            (got - want).abs() <= 1e-12 * want.abs(),
+                            "{} vs {}",
+                            got,
+                            want
+                        );
+                    }
+                    checked.fetch_add(1, Ordering::Relaxed);
+                }
+                (Err(reason), Err(want)) => prop_assert_eq!(reason, want),
+                (got, want) => prop_assert!(false, "got {:?}, oracle {:?}", got, want),
+            }
+            Ok(())
+        },
+    );
+}
+
+/// Entry 0 removes no one from a risk set at a positive age.
+#[test]
+fn zero_entries_match_no_entry() {
+    let strategy = prop::collection::vec(row_no_entry(), 1..60);
+    check("zero entries", CASES, 0.3, strategy, |rows, checked| {
         let rows: Vec<Row> = rows.into_iter().filter(|r| r.age > 0.0).collect();
         prop_assume!(!rows.is_empty());
-        prop_assert_eq!(aj(&rows, false), aj(&rows, true));
-    }
+        let without = aj(&rows, false);
+        prop_assert_eq!(&without, &aj(&rows, true));
+        if without.is_ok() {
+            checked.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
+    });
+}
 
-    /// A row censored at its entry age is at risk nowhere.
-    #[test]
-    fn rows_censored_at_entry_change_nothing(
-        rows in prop::collection::vec(row(), 1..60),
-        extra in prop::collection::vec((0u32..=80).prop_map(|h| f64::from(h) / 2.0), 1..10),
-    ) {
-        let mut more = rows.clone();
-        more.extend(extra.into_iter().map(|a| Row { age: a, status: 0.0, entry: a }));
-        prop_assert_eq!(aj(&rows, true), aj(&more, true));
-    }
+/// A row censored at its entry age is at risk nowhere.
+#[test]
+fn rows_censored_at_entry_change_nothing() {
+    let strategy = (
+        prop::collection::vec(row(), 1..60),
+        prop::collection::vec((0u32..=80).prop_map(|h| f64::from(h) / 2.0), 1..10),
+    );
+    check(
+        "censored at entry",
+        CASES,
+        0.3,
+        strategy,
+        |(rows, extra), checked| {
+            let mut more = rows.clone();
+            more.extend(extra.into_iter().map(|a| Row {
+                age: a,
+                status: 0.0,
+                entry: a,
+            }));
+            let fewer = aj(&rows, true);
+            prop_assert_eq!(&fewer, &aj(&more, true));
+            if fewer.is_ok() {
+                checked.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(())
+        },
+    );
 }
 
 /// `K = 1 - 2^-40`, within any fixed tolerance of 1 but estimable: 40

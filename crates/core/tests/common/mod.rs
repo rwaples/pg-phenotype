@@ -4,8 +4,13 @@
 //! 0 once used up, so every shrunk case is still a valid pedigree: shrinking
 //! makes it smaller and its choices the first ones.
 
+#![allow(dead_code, reason = "each test binary uses a subset")]
+
+use std::sync::atomic::AtomicUsize;
+
 use pg_phenotype_core::{PedigreeInput, Trait, TraitKind};
 use proptest::prelude::*;
+use proptest::test_runner::TestRunner;
 
 #[derive(Clone, Debug)]
 pub struct Ped {
@@ -239,4 +244,47 @@ pub fn trait_of(values: &[f64], kind: TraitKind) -> Trait<'_> {
         kind,
         n_levels: None,
     }
+}
+
+/// Cases for a property whose ordinary run draws `ordinary`:
+/// `PROPTEST_CASES` when set (proptest's own variable, which its config
+/// would ignore here because the runner sets `cases`), else `ordinary`.
+fn cases(ordinary: u32) -> u32 {
+    std::env::var("PROPTEST_CASES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(ordinary)
+}
+
+/// Run `test` on `ordinary` draws of `strategy`, or `PROPTEST_CASES`, then
+/// require that it found something to check at least `per_case` times per
+/// case on average: `test` adds what it checked to the counter, so a
+/// strategy that stops making such cases fails instead of passing
+/// vacuously.  A failing case is saved beside the calling test file, as
+/// `proptest!` does.
+#[track_caller]
+pub fn check<S: Strategy>(
+    name: &str,
+    ordinary: u32,
+    per_case: f64,
+    strategy: S,
+    test: impl Fn(S::Value, &AtomicUsize) -> Result<(), TestCaseError>,
+) {
+    let cases = cases(ordinary);
+    let floor = (per_case * f64::from(cases)).ceil() as usize;
+    let checked = AtomicUsize::new(0);
+    // A hand-built runner knows no source file unless told, and then
+    // neither saves nor replays a failure.
+    let mut runner = TestRunner::new(ProptestConfig {
+        cases,
+        source_file: Some(std::panic::Location::caller().file()),
+        ..ProptestConfig::default()
+    });
+    let result = runner.run(&strategy, |value| test(value, &checked));
+    assert!(result.is_ok(), "{name}: {result:?}");
+    let checked = checked.into_inner();
+    assert!(
+        checked >= floor,
+        "{name}: checked {checked} times in {cases} cases, expected at least {floor}"
+    );
 }

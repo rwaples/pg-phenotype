@@ -11,16 +11,15 @@
 mod common;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
-use common::{codes, kind, outbred_pedigree, pedigree, trait_of, values, Ped};
+use common::{check, codes, kind, outbred_pedigree, pedigree, trait_of, values, Ped};
 use pg_phenotype_core::relative_pairs::{
-    correlation, correlation_with, Estimate, RelativePairCorrelation, Se,
+    correlation, correlation_with, Cell, Estimate, RelativePairCorrelation, Se,
     DEFAULT_MEMORY_BUDGET_BYTES,
 };
 use pg_phenotype_core::{PedigreeArg, TraitKind};
 use proptest::prelude::*;
-use proptest::test_runner::TestRunner;
 
 fn run(ped: &Ped, values: &[f64], kind: TraitKind, se: Se) -> RelativePairCorrelation {
     correlation_with(
@@ -42,12 +41,13 @@ fn estimates(res: &RelativePairCorrelation) -> impl Iterator<Item = (&str, &Esti
 }
 
 /// `a` and `b` have the same cells and estimates, each with one undefined
-/// reason or values within `tol` of each other.
+/// reason or values within `tol` of each other.  Returns how many defined
+/// values it compared.
 fn assert_same_values(
     a: &RelativePairCorrelation,
     b: &RelativePairCorrelation,
     tol: f64,
-) -> Result<(), TestCaseError> {
+) -> Result<usize, TestCaseError> {
     let shape = |r: &RelativePairCorrelation| {
         r.cells
             .iter()
@@ -60,21 +60,34 @@ fn assert_same_values(
             .collect::<Vec<_>>()
     };
     prop_assert_eq!(shape(a), shape(b));
+    let mut compared = 0;
     for ((cat, x), (_, y)) in estimates(a).zip(estimates(b)) {
         match (x.value, y.value) {
-            (Ok(p), Ok(q)) => prop_assert!(
-                (p - q).abs() <= tol,
-                "{} {:?}: {} vs {}",
-                cat,
-                x.estimator,
-                p,
-                q
-            ),
+            (Ok(p), Ok(q)) => {
+                prop_assert!(
+                    (p - q).abs() <= tol,
+                    "{} {:?}: {} vs {}",
+                    cat,
+                    x.estimator,
+                    p,
+                    q
+                );
+                compared += 1;
+            }
             (p, q) => prop_assert_eq!(p.err(), q.err(), "{}", cat),
         }
         prop_assert_eq!(x.boundary, y.boundary, "{}", cat);
     }
-    Ok(())
+    Ok(compared)
+}
+
+/// Defined estimates in `cells`.
+fn defined(cells: &[Cell]) -> usize {
+    cells
+        .iter()
+        .flat_map(|c| &c.estimates)
+        .filter(|e| e.value.is_ok())
+        .count()
 }
 
 /// A pedigree, values on its rows, and a shuffled row order.
@@ -87,74 +100,131 @@ fn shuffled(
     })
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(64))]
+/// Cases per property in an ordinary run: each fits every cell of a
+/// pedigree, so fewer than a cheap property draws.
+const CASES: u32 = 64;
 
-    /// Every defined correlation is in [-1, 1].
-    #[test]
-    fn estimates_are_correlations(ped in pedigree(), codes in codes(), kind in kind()) {
-        let v = values(&codes, ped.len(), kind);
-        let res = run(&ped, &v, kind, Se::Off);
-        for (cat, e) in estimates(&res) {
-            if let Ok(r) = e.value {
-                prop_assert!((-1.0..=1.0).contains(&r), "{} {:?}: {}", cat, e.estimator, r);
+/// Every defined correlation is in [-1, 1].
+#[test]
+fn estimates_are_correlations() {
+    let strategy = (pedigree(), codes(), kind());
+    check(
+        "in range",
+        CASES,
+        2.0,
+        strategy,
+        |(ped, codes, kind), checked| {
+            let v = values(&codes, ped.len(), kind);
+            let res = run(&ped, &v, kind, Se::Off);
+            for (cat, e) in estimates(&res) {
+                if let Ok(r) = e.value {
+                    prop_assert!(
+                        (-1.0..=1.0).contains(&r),
+                        "{} {:?}: {}",
+                        cat,
+                        e.estimator,
+                        r
+                    );
+                    checked.fetch_add(1, Ordering::Relaxed);
+                }
             }
-        }
-    }
+            Ok(())
+        },
+    );
+}
 
-    /// A symmetric cell does not depend on the row order: its pairs are
-    /// unordered.  A directed cell can, where a loop puts one pair in its
-    /// category both ways round; see the outbred property.
-    #[test]
-    fn symmetric_cells_do_not_depend_on_row_order((ped, codes, kind, order) in shuffled(pedigree())) {
-        let v = values(&codes, ped.len(), kind);
-        let shuffled_v: Vec<f64> = order.iter().map(|&r| v[r]).collect();
-        let a = run(&ped, &v, kind, Se::Off);
-        let b = run(&ped.permuted(&order), &shuffled_v, kind, Se::Off);
-        for (x, y) in a.cells.iter().zip(&b.cells) {
-            if x.symmetric {
-                prop_assert_eq!(x, y);
+/// A symmetric cell does not depend on the row order: its pairs are
+/// unordered.  A directed cell can, where a loop puts one pair in its
+/// category both ways round; see the outbred property.
+#[test]
+fn symmetric_cells_do_not_depend_on_row_order() {
+    check(
+        "symmetric cells",
+        CASES,
+        1.3,
+        shuffled(pedigree()),
+        |(ped, codes, kind, order), checked| {
+            let v = values(&codes, ped.len(), kind);
+            let shuffled_v: Vec<f64> = order.iter().map(|&r| v[r]).collect();
+            let a = run(&ped, &v, kind, Se::Off);
+            let b = run(&ped.permuted(&order), &shuffled_v, kind, Se::Off);
+            for (x, y) in a.cells.iter().zip(&b.cells) {
+                if x.symmetric {
+                    prop_assert_eq!(x, y);
+                    checked.fetch_add(defined(std::slice::from_ref(x)), Ordering::Relaxed);
+                }
             }
-        }
-    }
+            Ok(())
+        },
+    );
+}
 
-    /// Without loops, every cell is row-order free.
-    #[test]
-    fn every_cell_is_row_order_free_without_loops((ped, codes, kind, order) in shuffled(outbred_pedigree())) {
-        let v = values(&codes, ped.len(), kind);
-        let shuffled_v: Vec<f64> = order.iter().map(|&r| v[r]).collect();
-        let a = run(&ped, &v, kind, Se::Off);
-        let b = run(&ped.permuted(&order), &shuffled_v, kind, Se::Off);
-        prop_assert_eq!(a.cells, b.cells);
-    }
+/// Without loops, every cell is row-order free.
+#[test]
+fn every_cell_is_row_order_free_without_loops() {
+    let strategy = shuffled(outbred_pedigree());
+    check(
+        "outbred cells",
+        CASES,
+        3.0,
+        strategy,
+        |(ped, codes, kind, order), checked| {
+            let v = values(&codes, ped.len(), kind);
+            let shuffled_v: Vec<f64> = order.iter().map(|&r| v[r]).collect();
+            let a = run(&ped, &v, kind, Se::Off);
+            let b = run(&ped.permuted(&order), &shuffled_v, kind, Se::Off);
+            prop_assert_eq!(&a.cells, &b.cells);
+            checked.fetch_add(defined(&a.cells), Ordering::Relaxed);
+            Ok(())
+        },
+    );
+}
 
-    /// `a x + b` on the trait transforms both members, so Pearson keeps its
-    /// sign as well as its value.  `a` a power of two and `b` an integer keep
-    /// the quarter-integer values exact.
-    #[test]
-    fn an_affine_map_keeps_pearson(
-        ped in pedigree(),
-        codes in codes(),
-        a in prop_oneof![Just(-4.0), Just(-0.5), Just(0.5), Just(2.0), Just(8.0)],
-        b in -3i32..=3,
-    ) {
-        let v = values(&codes, ped.len(), TraitKind::Continuous);
-        let mapped: Vec<f64> = v.iter().map(|x| a * x + f64::from(b)).collect();
-        let x = run(&ped, &v, TraitKind::Continuous, Se::Off);
-        let y = run(&ped, &mapped, TraitKind::Continuous, Se::Off);
-        assert_same_values(&x, &y, 1e-12)?;
-    }
+/// `a x + b` on the trait transforms both members, so Pearson keeps its
+/// sign as well as its value.  `a` a power of two and `b` an integer keep
+/// the quarter-integer values exact.
+#[test]
+fn an_affine_map_keeps_pearson() {
+    let strategy = (
+        pedigree(),
+        codes(),
+        prop_oneof![Just(-4.0), Just(-0.5), Just(0.5), Just(2.0), Just(8.0)],
+        -3i32..=3,
+    );
+    check(
+        "affine",
+        CASES,
+        1.8,
+        strategy,
+        |(ped, codes, a, b), checked| {
+            let v = values(&codes, ped.len(), TraitKind::Continuous);
+            let mapped: Vec<f64> = v.iter().map(|x| a * x + f64::from(b)).collect();
+            let x = run(&ped, &v, TraitKind::Continuous, Se::Off);
+            let y = run(&ped, &mapped, TraitKind::Continuous, Se::Off);
+            checked.fetch_add(assert_same_values(&x, &y, 1e-12)?, Ordering::Relaxed);
+            Ok(())
+        },
+    );
+}
 
-    /// `1 - x` flips both members' levels, which rotates every 2 x 2 table
-    /// by 180 degrees: the tetrachoric and phi correlations stay.
-    #[test]
-    fn flipping_the_levels_keeps_the_binary_correlations(ped in pedigree(), codes in codes()) {
-        let v = values(&codes, ped.len(), TraitKind::Binary);
-        let flipped: Vec<f64> = v.iter().map(|x| 1.0 - x).collect();
-        let x = run(&ped, &v, TraitKind::Binary, Se::Off);
-        let y = run(&ped, &flipped, TraitKind::Binary, Se::Off);
-        assert_same_values(&x, &y, 1e-12)?;
-    }
+/// `1 - x` flips both members' levels, which rotates every 2 x 2 table
+/// by 180 degrees: the tetrachoric and phi correlations stay.
+#[test]
+fn flipping_the_levels_keeps_the_binary_correlations() {
+    check(
+        "flipped levels",
+        CASES,
+        2.8,
+        (pedigree(), codes()),
+        |(ped, codes), checked| {
+            let v = values(&codes, ped.len(), TraitKind::Binary);
+            let flipped: Vec<f64> = v.iter().map(|x| 1.0 - x).collect();
+            let x = run(&ped, &v, TraitKind::Binary, Se::Off);
+            let y = run(&ped, &flipped, TraitKind::Binary, Se::Off);
+            checked.fetch_add(assert_same_values(&x, &y, 1e-12)?, Ordering::Relaxed);
+            Ok(())
+        },
+    );
 }
 
 /// The inclusion-exclusion meat of ADR 0013 over one cell's entries, and
@@ -190,49 +260,45 @@ fn meat(first: &[i64], second: &[i64], mrca: &[i64], phi: &[f64]) -> (f64, f64) 
 /// asking for the SE and influences changes no estimate.
 #[test]
 fn the_se_is_the_meat_of_its_influences() {
-    let checked = AtomicUsize::new(0);
-    // A hand-built runner knows no source file unless told, and then
-    // neither saves nor replays a failure.
-    let mut runner = TestRunner::new(ProptestConfig {
-        source_file: Some(file!()),
-        ..ProptestConfig::with_cases(32)
-    });
-    let cases = (pedigree(), codes(), kind());
-    let result = runner.run(&cases, |(ped, codes, kind)| {
-        let v = values(&codes, ped.len(), kind);
-        let res = run(&ped, &v, kind, Se::Estimates);
-        let entries = res.entries.as_ref().expect("influences were asked for");
-        for (cell, ent) in res.cells.iter().zip(entries) {
-            for (e, phi) in cell.estimates.iter().zip(&ent.influence) {
-                let (Some(Ok(se)), Some(phi)) = (e.se, phi) else {
-                    continue;
-                };
-                let (meat, scale) = meat(&ent.first_id, &ent.second_id, &ent.mrca_id, phi);
-                let tol = 4096.0 * f64::EPSILON * scale;
-                prop_assert!(
-                    (se * se - meat).abs() <= tol,
-                    "{} {:?}: se² {} vs meat {}",
-                    cell.category,
-                    e.estimator,
-                    se * se,
-                    meat
-                );
-                checked.fetch_add(1, Ordering::Relaxed);
+    // Half the cases of the other properties: each fits with the SE.
+    let strategy = (pedigree(), codes(), kind());
+    check(
+        "se meat",
+        CASES / 2,
+        1.2,
+        strategy,
+        |(ped, codes, kind), checked| {
+            let v = values(&codes, ped.len(), kind);
+            let res = run(&ped, &v, kind, Se::Estimates);
+            let entries = res.entries.as_ref().expect("influences were asked for");
+            for (cell, ent) in res.cells.iter().zip(entries) {
+                for (e, phi) in cell.estimates.iter().zip(&ent.influence) {
+                    let (Some(Ok(se)), Some(phi)) = (e.se, phi) else {
+                        continue;
+                    };
+                    let (meat, scale) = meat(&ent.first_id, &ent.second_id, &ent.mrca_id, phi);
+                    let tol = 4096.0 * f64::EPSILON * scale;
+                    prop_assert!(
+                        (se * se - meat).abs() <= tol,
+                        "{} {:?}: se² {} vs meat {}",
+                        cell.category,
+                        e.estimator,
+                        se * se,
+                        meat
+                    );
+                    checked.fetch_add(1, Ordering::Relaxed);
+                }
             }
-        }
-        let plain = correlation(
-            PedigreeArg::Columns(ped.input()),
-            &[trait_of(&v, kind)],
-            None,
-            None,
-            DEFAULT_MEMORY_BUDGET_BYTES,
-            Se::Off,
-        )
-        .expect("a valid pedigree and trait");
-        assert_same_values(&plain, &res, 0.0)
-    });
-    result.unwrap();
-    // Not vacuous: most cases have SEs to check.
-    let checked = checked.into_inner();
-    assert!(checked >= 32, "{checked} SEs checked");
+            let plain = correlation(
+                PedigreeArg::Columns(ped.input()),
+                &[trait_of(&v, kind)],
+                None,
+                None,
+                DEFAULT_MEMORY_BUDGET_BYTES,
+                Se::Off,
+            )
+            .expect("a valid pedigree and trait");
+            assert_same_values(&plain, &res, 0.0).map(|_| ())
+        },
+    );
 }
