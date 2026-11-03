@@ -160,7 +160,7 @@ impl<'p> Ancestry<'p> {
     /// when `down` is 0): the first `x` whose parent is `b` (lineal), or
     /// whose mother (else father) is also `y`'s, gives the MRCA.  Role for
     /// role is enough: pedigree-graph refuses an id that is one row's mother
-    /// and another's father (its ADR 0019).  Sibs share a parent by id, so an
+    /// and another's father (its ADR 0020).  Sibs share a parent by id, so an
     /// external parent is an MRCA too.  This is the SE calibration tool's
     /// `top_keys`.
     fn walk(&self, cat: Category, a: u32, b: u32) -> Option<Cluster> {
