@@ -69,8 +69,12 @@ type Table = (Vec<f64>, Vec<f64>);
 /// rows at risk (`entry < t <= age`), `d1` cases and `d2` deaths, and `S`
 /// the all-cause survival before `t`, the CIP rises by `S d1 / Y` and `S`
 /// falls by the factor `1 - (d1 + d2) / Y`.  Not estimable when the
-/// lifetime CIP `K` is 0 (`zero_prevalence`) or 1 (`prevalence_one`), here
-/// 1 to within rounding.
+/// lifetime CIP `K` is 0 (`zero_prevalence`) or 1 (`prevalence_one`).
+///
+/// Which of those holds is decided from counts, not from the rounded `K`:
+/// `S` is exactly 0 from the first age where everyone at risk has an
+/// event, so `K = 1` exactly when that happens with no death before it,
+/// and `K = 0` exactly when no case comes before it.
 fn oracle(rows: &[Row], with_entry: bool) -> Result<Table, &'static str> {
     let mut times: Vec<f64> = rows
         .iter()
@@ -81,6 +85,7 @@ fn oracle(rows: &[Row], with_entry: bool) -> Result<Table, &'static str> {
     times.dedup();
     let (mut ages, mut cip) = (Vec::new(), Vec::new());
     let (mut s, mut cases) = (1.0, 0.0);
+    let (mut exhausted, mut case_seen, mut death_seen) = (false, false, false);
     for t in times {
         let at_risk = rows
             .iter()
@@ -94,6 +99,11 @@ fn oracle(rows: &[Row], with_entry: bool) -> Result<Table, &'static str> {
             .iter()
             .filter(|r| r.age == t && r.status == 2.0)
             .count() as f64;
+        if !exhausted {
+            case_seen |= d1 > 0.0;
+            death_seen |= d2 > 0.0;
+            exhausted = d1 + d2 == at_risk;
+        }
         cases += s * d1 / at_risk;
         s *= 1.0 - (d1 + d2) / at_risk;
         if d1 > 0.0 {
@@ -101,10 +111,10 @@ fn oracle(rows: &[Row], with_entry: bool) -> Result<Table, &'static str> {
             cip.push(cases);
         }
     }
-    if cases >= 1.0 - 1e-12 {
+    if exhausted && !death_seen {
         return Err("prevalence_one");
     }
-    if cases <= 0.0 {
+    if !case_seen {
         return Err("zero_prevalence");
     }
     Ok((ages, cip))
@@ -171,4 +181,26 @@ proptest! {
         more.extend(extra.into_iter().map(|a| Row { age: a, status: 0.0, entry: a }));
         prop_assert_eq!(aj(&rows, true), aj(&more, true));
     }
+}
+
+/// `K = 1 - 2^-40`, within any fixed tolerance of 1 but estimable: 40
+/// cases that each halve survival, then one death.
+#[test]
+fn a_prevalence_just_below_one_is_estimable() {
+    let mut rows: Vec<Row> = (1..=40)
+        .map(|i| Row {
+            age: f64::from(i) / 2.0,
+            status: 1.0,
+            entry: f64::from(i - 1) / 2.0,
+        })
+        .collect();
+    rows.push(Row {
+        age: 20.5,
+        status: 2.0,
+        entry: 0.0,
+    });
+    let (_, cip) = aj(&rows, true).expect("estimable");
+    let k = cip[cip.len() - 1];
+    assert!(k < 1.0 && 1.0 - k < 1e-12, "{k}");
+    assert_eq!(oracle(&rows, true).map(|t| t.1.len()), Ok(40));
 }
