@@ -19,12 +19,13 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from pg_phenotype import ParameterError, Pedigree, Trait, ValidationError, pafgrs
 from pg_phenotype.assortative import mate_correlation
 from tests import assortative_builders as b
+from tests._support import property_budget
 from tests.pedigrees import random_pedigree
 from tests.scoring_fixtures import random_trait
 
@@ -42,7 +43,7 @@ def _run(pedigree: object, traits: list[Trait], stratum: np.ndarray | None, **kw
     return b.plain(mate_correlation(pedigree, traits, stratum=stratum, **kw))
 
 
-@settings(deadline=None, max_examples=20)
+@property_budget(20)
 @given(
     seed=st.integers(0, 10_000),
     n_pairs=st.integers(20, 80),
@@ -248,7 +249,7 @@ def test_inputs_are_checked_against_the_pedigree_rows():
     assert err.value.code == "trait_length_mismatch"
 
 
-@settings(deadline=None, max_examples=30)
+@property_budget(30)
 @given(seed=st.integers(0, 10_000), keep=st.floats(0.0, 1.0))
 def test_align_moves_values_to_the_rows_their_ids_name(seed, keep):
     ped = random_pedigree(seed)

@@ -20,13 +20,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 from scipy.stats import norm
 
 from pg_phenotype import ParameterError, Pedigree, PgPhenotypeError, Trait, ValidationError
 from pg_phenotype.assortative import MateCorrelation, WithinPerson, mate_correlation
 from tests import assortative_builders as b
+from tests._support import property_budget
 from tests.oracle import assortative_reference as ref
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -217,7 +218,7 @@ def _outcome(ped: b.Pedigree, trait: Trait, stratum: np.ndarray | None, draws: i
         return exc.code
 
 
-@settings(deadline=None, max_examples=25)
+@property_budget(25)
 @given(
     n_pairs=st.integers(2, 25),
     remate_every=st.integers(1, 4),
@@ -1080,7 +1081,7 @@ def _without_inference(full: dict, permutations: int = 0, bootstrap: int = 0) ->
     return full
 
 
-@settings(deadline=None, max_examples=100)
+@property_budget(100)
 @given(
     seed=st.integers(0, 2**32 - 1),
     n_pairs=st.integers(1, 80),
