@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- pedigree-graph-core is pinned at pedigree-graph main (`cfdd5bf`), which
-  adds the `relationships::query` module (pedigree-graph #52). The
+- pedigree-graph-core is pinned at pedigree-graph main (`8a0df08`), which
+  adds the `relationships::query` module (pedigree-graph #52) and refuses an
+  id that is both a mother and a father (pedigree-graph #58). The
   Relative-Pair Correlation reads its pair blocks and moments through
   `query::pairs` and `query::moments` instead of the legacy `pair_blocks`
   and `relationship_moments`. Results are unchanged.

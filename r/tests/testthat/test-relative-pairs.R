@@ -172,7 +172,7 @@ test_that("influence = TRUE gives each cell's entries and influences, the meat o
 test_that("an external MRCA id past the id storage widens mrca_id instead of truncating", {
   # Integer row ids, and a double father column whose external id is past R's integer range.
   big <- 4294967297
-  ped <- data.frame(id = 1:5, mother = c(NA, NA, 1L, 2L, 1L), father = c(NA, NA, big, big, 2))
+  ped <- data.frame(id = 1:5, mother = c(NA, NA, 1L, 2L, 1L), father = c(NA, NA, big, big, 7))
   r <- relative_pairs_correlation(ped, trait(c(0.1, 0.5, 0.9, -0.3, 1.2)), categories = c("PHS", "MHS"),
                                   se = TRUE, influence = TRUE)
   phs <- r$cells[[1L]]$entries
