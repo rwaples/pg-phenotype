@@ -5,7 +5,7 @@
 //!
 //! The pairs come from one pass of pedigree-graph-core's engine, which
 //! reduces them to exact per-cell sums and never stores them: its
-//! `relationship_moments` table and, when the SE is asked for, beside it
+//! `query::moments` table and, when the SE is asked for, beside it
 //! the per-cluster sums the cluster sandwich reads (ADR 0013, `clusters`),
 //! which with the covariance are also joined across estimates (ADR 0014,
 //! `covariance`).
@@ -32,9 +32,8 @@ use influence::{Influence, StratifiedBlock, Weights};
 use mrca::Ancestry;
 use pedigree_graph_core::error::Error as PgError;
 use pedigree_graph_core::relationships::{
-    host_bytes, quantize_column, relationship_moments, Category, CategorySet, MaxDegree,
-    MomentsInput, MomentsTable, Operand, Product, Progress, Receiver, Side, Statistic, Symmetric,
-    N_CATEGORIES,
+    host_bytes, quantize_column, query, Category, CategorySet, MaxDegree, MomentsInput,
+    MomentsTable, Operand, Product, Progress, Side, Statistic, Symmetric, N_CATEGORIES,
 };
 use rayon::prelude::*;
 use std::borrow::Cow;
@@ -464,7 +463,7 @@ struct Request {
 /// fit.  With `se` other than [`Se::Off`], every estimate's cluster
 /// sandwich SE (ADR 0013), and with [`Se::Covariance`] the covariance of
 /// the estimates the ACE Fit reads (ADR 0014); with [`Se::Off`] the call is
-/// `relationship_moments` and the fits alone.
+/// `query::moments` and the fits alone.
 ///
 /// # Errors
 ///
@@ -652,11 +651,10 @@ pub fn correlation_with(
         }
         None => {
             let input = members.input();
-            let moments = relationship_moments(
+            let moments = query::moments(
                 &ped,
-                max_degree,
                 union,
-                Receiver::Graph,
+                query::Receiver::Graph,
                 &input,
                 Symmetric::Both,
                 lanes,

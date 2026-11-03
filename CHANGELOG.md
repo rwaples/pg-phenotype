@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- pedigree-graph-core is pinned at pedigree-graph main (`cfdd5bf`), which
+  adds the `relationships::query` module (pedigree-graph #52). The
+  Relative-Pair Correlation reads its pair blocks and moments through
+  `query::pairs` and `query::moments` instead of the legacy `pair_blocks`
+  and `relationship_moments`. Results are unchanged.
+
 ## v0.6.1
 
 - pg-phenotype's errors (`PgPhenotypeError` and its subclasses) can be

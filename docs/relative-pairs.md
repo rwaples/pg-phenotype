@@ -69,7 +69,7 @@ rows by position; see [Rows and alignment](../README.md#rows-and-alignment).
 ## Pairs
 
 A Relative Pair is two rows in one Relationship Category, as
-pedigree-graph's `relationship_moments` finds them.  The pairs are reduced
+pedigree-graph's `query::moments` finds them.  The pairs are reduced
 to exact sums as they are found and never stored.
 
 A symmetric category's pairs (MZ, FS, MHS, PHS, 1C, ...) enter in both
