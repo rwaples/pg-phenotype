@@ -4,7 +4,7 @@
 use pedigree_graph_core::graph::{self, Columns, Limits, SexEncoding};
 use pedigree_graph_core::kinship::{KinshipIndex, KinshipPedigree};
 use pedigree_graph_core::relationships::{
-    pair_blocks, Category, CategorySet, Execution, MaxDegree, Pedigree, Progress, Receiver,
+    query, Category, CategorySet, Execution, Pedigree, Progress,
 };
 use pedigree_graph_core::topology;
 
@@ -38,14 +38,13 @@ fn build_pairs_and_walk_compose_from_outside_the_crate() {
         &built.father_ids,
     )
     .expect("engine input");
-    let view: Vec<i32> = (0..ids.len() as i32).collect();
-    let blocks = pair_blocks(
+    let graph_rows: Vec<i32> = (0..ids.len() as i32).collect();
+    let blocks = query::pairs(
         &ped,
-        MaxDegree::try_new(2).expect("degree"),
         CategorySet::up_to_degree(2),
-        Receiver::View {
-            rows: &view,
-            compact: true,
+        query::Receiver::View {
+            graph_rows: &graph_rows,
+            compaction: query::Compaction::Compact,
         },
         Execution::Speed,
         &Progress::default(),

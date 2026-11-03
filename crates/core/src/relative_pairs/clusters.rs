@@ -1,7 +1,7 @@
 //! The one engine pass of a Relative-Pair Correlation, with exact per-key
 //! sufficient statistics for the cluster sandwich SE (ADR 0013).
 //!
-//! [`Pass::run`] is `relationship_moments` for `Receiver::Graph`, its
+//! [`Pass::run`] is `query::moments` for `Receiver::Graph`, its
 //! table byte for byte, with a key store riding the same lanes.  Each
 //! entry (one oriented pair) the engine reduces adds two rows, one per
 //! member: "member `i`, on this side of an entry of this engine cell, whose
@@ -474,7 +474,7 @@ pub(super) struct Store<'a, const K: usize> {
 }
 
 impl<'a> Pass<'a> {
-    /// `relationship_moments` for `Receiver::Graph` (`input.check`, the
+    /// `query::moments` for `Receiver::Graph` (`input.check`, the
     /// engine plan, `CellReducer::new`, `reduce_pairs_in` in family order
     /// with `view = None` and `Symmetric::Both`, `CellReducer::finish`), its
     /// table identical, with the store riding the same lanes.  `reserve` is
@@ -982,7 +982,7 @@ mod tests {
     use super::*;
     use crate::input::{Trait, TraitKind};
     use crate::pedigree::Pedigree;
-    use pedigree_graph_core::relationships::{relationship_moments, Receiver};
+    use pedigree_graph_core::relationships::query;
     use std::collections::BTreeMap;
 
     const BUDGET: u64 = 1 << 30;
@@ -1138,8 +1138,7 @@ mod tests {
     }
 
     #[test]
-    fn the_store_is_every_entry_by_key_and_twice_the_engine_lane_and_the_table_is_relationship_moments(
-    ) {
+    fn the_store_is_every_entry_by_key_and_twice_the_engine_lane_and_the_table_is_query_moments() {
         let cols = generated(2400, 4, 7);
         assert!(cols.ids.len() > 4 * 2048, "{} rows", cols.ids.len());
         let pedigree = cols.pedigree();
@@ -1159,11 +1158,10 @@ mod tests {
             (TraitKind::Continuous, 2, true),
         ] {
             let members = members(&cols, kind, n_traits, strata);
-            let moments = relationship_moments(
+            let moments = query::moments(
                 &ped,
-                max_degree,
                 union,
-                Receiver::Graph,
+                query::Receiver::Graph,
                 &members.input(),
                 Symmetric::Both,
                 NonZeroUsize::MIN,
