@@ -19,3 +19,6 @@ pedigree-graph-core.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
 libm = "0.2"
+
+[dev-dependencies]
+proptest = { version = "~1.11", default-features = false, features = ["std"] }
