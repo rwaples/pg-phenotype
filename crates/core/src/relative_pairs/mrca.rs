@@ -158,11 +158,11 @@ impl<'p> Ancestry<'p> {
     /// Each ancestor `x` of `a` `up - 1` meioses up, in path order, and for
     /// each the ancestors `y` of `b` `down - 1` meioses up (or `b` itself
     /// when `down` is 0): the first `x` whose parent is `b` (lineal), or
-    /// whose mother (else father) is also a parent of `y`, gives the MRCA.
-    /// Either role of `y`: the engine's cousin paths go up through both
-    /// parents, so an id that is one row's mother and another's father
-    /// joins them.  Sibs share a parent by id, so an external parent is an
-    /// MRCA too.  This is the SE calibration tool's `top_keys`.
+    /// whose mother (else father) is also `y`'s, gives the MRCA.  Role for
+    /// role is enough: pedigree-graph refuses an id that is one row's mother
+    /// and another's father (its ADR 0020).  Sibs share a parent by id, so an
+    /// external parent is an MRCA too.  This is the SE calibration tool's
+    /// `top_keys`.
     fn walk(&self, cat: Category, a: u32, b: u32) -> Option<Cluster> {
         let (up, down) = MEIOSES[cat.index()];
         if up == 0 {
@@ -185,12 +185,13 @@ impl<'p> Ancestry<'p> {
                 }
                 continue;
             }
+            let (m, f) = (self.mother[x], self.father[x]);
             for y in self.ancestors(b, down - 1).filter(|&y| y != x) {
-                let shared = [self.mother[x], self.father[x]]
-                    .into_iter()
-                    .find(|&p| p != NONE && (p == self.mother[y] || p == self.father[y]));
-                if let Some(p) = shared {
-                    return Some(Cluster(p));
+                if m != NONE && m == self.mother[y] {
+                    return Some(Cluster(m));
+                }
+                if f != NONE && f == self.father[y] {
+                    return Some(Cluster(f));
                 }
             }
         }
@@ -512,32 +513,5 @@ pub(super) mod tests {
         assert_eq!(ancestry.mrca(Category::FS, 15, 16), Cluster(n));
         assert_eq!(ancestry.mrca(Category::Av, 17, 16), Cluster(n));
         assert_eq!(ancestry.mrca(Category::GP, 13, 5), Cluster(5));
-    }
-
-    #[test]
-    fn a_parent_in_both_roles_is_an_mrca() {
-        // G 0 is the father of the full sibs P1 2 and P2 3, whose child is
-        // a 4, and the mother of Q2 5, whose child is b 6.  The engine's
-        // cousin paths go up through either parent, so a and b are 1C
-        // through G alone (two paths from a, ADR 0018).
-        let cols = Columns {
-            ids: (0..7).collect(),
-            mother: vec![-1, -1, 1, 1, 2, 0, 5],
-            father: vec![-1, -1, 0, 0, 3, -1, -1],
-            twin: vec![-1; 7],
-            generation: vec![0, 0, 1, 1, 2, 1, 2],
-        };
-        let pedigree = cols.pedigree();
-        let ancestry = Ancestry::of(&pedigree, u64::MAX).unwrap();
-        let pairs = engine_pairs(&pedigree, Symmetric::Canonical);
-        assert!(pairs.contains(&(Category::C1, 4, 6)), "{pairs:?}");
-        for &(cat, a, b) in &pairs {
-            assert!(
-                ancestry.walk(cat, a, b).is_some(),
-                "{} ({a}, {b})",
-                cat.code()
-            );
-        }
-        assert_eq!(ancestry.mrca(Category::C1, 6, 4), Cluster(0));
     }
 }

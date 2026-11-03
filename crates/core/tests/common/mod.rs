@@ -127,9 +127,8 @@ pub fn pedigree() -> impl Strategy<Value = Ped> {
                 };
                 let (mut females, mut males) = (of(0), of(1));
                 // A generation of one sex mates with a new founder of the
-                // other, so no id is a mother and a father: pedigree-graph
-                // labels a cross-role half sib pair 1C (pg-phenotype
-                // 63af680, pedigree-graph issue on dual-role parents).
+                // other, so no id is a mother and a father, which
+                // pedigree-graph refuses (its ADR 0020).
                 for (side, s) in [(&mut females, 0), (&mut males, 1)] {
                     if side.is_empty() {
                         side.push(mother.len());
