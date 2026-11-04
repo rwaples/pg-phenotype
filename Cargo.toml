@@ -12,10 +12,10 @@ repository = "https://github.com/rwaples/pg-phenotype"
 
 [workspace.dependencies]
 # Re-pinned on purpose only (ADR 0001): pg-core is unpublished until 1.0.
-# This rev is pedigree-graph's main (8a0df08: the relationships::query module,
-# pedigree-graph #52, and the one-parent-role rule, #58); re-pin to the release
-# tag that carries it.
-pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "8a0df08833c92e2fe0c56e421e6e9d9d0643322b" }
+# This rev is pedigree-graph's main (ec54656: the relationships::query module,
+# pedigree-graph #52; the one-parent-role rule, #58; and a moments table that
+# carries its symmetric rule, #55); re-pin to the release tag that carries it.
+pedigree-graph-core = { git = "https://github.com/rwaples/pedigree-graph", rev = "ec546562c2ab644a2fffbfa90a8caa4235958f11" }
 rayon = "1.10"
 rustc-hash = "2.1"
 

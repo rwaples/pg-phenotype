@@ -638,6 +638,7 @@ impl<'a> Pass<'a> {
             members.shape(shape.n_categories),
             input.n_columns,
             input.products.to_vec(),
+            Symmetric::Both,
             members.exponents.clone(),
             width,
             Cow::Owned(bytes),

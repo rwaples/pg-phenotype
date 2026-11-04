@@ -665,6 +665,7 @@ pub fn correlation_with(
                 members.shape(order.len()),
                 input.n_columns,
                 input.products.to_vec(),
+                Symmetric::Both,
                 members.exponents.clone(),
                 moments.width,
                 Cow::Owned(moments.table),
@@ -1454,6 +1455,7 @@ impl Members {
             vec![n_codes, n_labels, n_codes, n_labels],
             k,
             products.to_vec(),
+            Symmetric::Both,
             self.exponents.clone(),
             &acc,
         )?)
@@ -2923,9 +2925,15 @@ mod tests {
         assert!(check_mirrored("FS", &[4, 2, 0, 2, 6, 0, 0, 0, 0], 3).is_ok());
         // A directed category takes any table.
         let counts: [i64; 9] = [5, 3, 0, 2, 6, 0, 0, 0, 0];
-        let table =
-            MomentsTable::from_i128(vec![1, 3, 1, 3], 0, vec![], vec![], &counts.map(i128::from))
-                .unwrap();
+        let table = MomentsTable::from_i128(
+            vec![1, 3, 1, 3],
+            0,
+            vec![],
+            Symmetric::Both,
+            vec![],
+            &counts.map(i128::from),
+        )
+        .unwrap();
         let layout = Layout {
             kind: TraitKind::Binary,
             n_traits: 1,

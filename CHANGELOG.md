@@ -5,9 +5,10 @@
 - Packaging: releases no longer build a macOS x86_64 wheel. Four abi3 wheels
   remain (Linux x86_64 and aarch64, macOS arm64, Windows x86_64); on an Intel
   Mac pip builds the sdist, which needs a Rust toolchain.
-- pedigree-graph-core is pinned at pedigree-graph main (`8a0df08`), which
-  adds the `relationships::query` module (pedigree-graph #52) and refuses an
-  id that is both a mother and a father (pedigree-graph #58). The
+- pedigree-graph-core is pinned at pedigree-graph main (`ec54656`), which
+  adds the `relationships::query` module (pedigree-graph #52), refuses an
+  id that is both a mother and a father (pedigree-graph #58), and gives
+  each moments table its symmetric rule (pedigree-graph #55). The
   Relative-Pair Correlation reads its pair blocks and moments through
   `query::pairs` and `query::moments` instead of the legacy `pair_blocks`
   and `relationship_moments`. Results are unchanged.

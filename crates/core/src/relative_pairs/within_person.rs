@@ -815,7 +815,9 @@ mod tests {
         kernel.add(&mut lane, [row, row], [code, code], 1);
         other.sums[0] = i128::MAX;
         (&kernel).merge(&mut lane, other);
-        let table = MomentsTable::from_i128(vec![1], 0, Vec::new(), Vec::new(), &[0]).unwrap();
+        let table =
+            MomentsTable::from_i128(vec![1], 0, Vec::new(), Symmetric::Both, Vec::new(), &[0])
+                .unwrap();
         assert!(matches!(
             kernel.meats(Some(lane), &table, &[]),
             Err(Error::Pedigree(PgError::ArithmeticOverflow { .. }))
@@ -829,7 +831,9 @@ mod tests {
         let (_, kernel) = kernel(&members, categories());
         let mut lane = kernel.empty_lane();
         lane.terms[0] = MAX_TERMS;
-        let table = MomentsTable::from_i128(vec![1], 0, Vec::new(), Vec::new(), &[0]).unwrap();
+        let table =
+            MomentsTable::from_i128(vec![1], 0, Vec::new(), Symmetric::Both, Vec::new(), &[0])
+                .unwrap();
         assert!(kernel.meats(Some(lane), &table, &[]).is_ok());
         let mut lane = kernel.empty_lane();
         lane.terms[0] = MAX_TERMS + 1;

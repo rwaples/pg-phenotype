@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 /// The pedigree-graph revision this build links, as `Cargo.toml` pins it.
-pub const PG_CORE_REV: &str = "8a0df08833c92e2fe0c56e421e6e9d9d0643322b";
+pub const PG_CORE_REV: &str = "ec546562c2ab644a2fffbfa90a8caa4235958f11";
 
 pub mod ace;
 pub mod assortative;
