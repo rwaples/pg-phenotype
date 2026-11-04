@@ -1,8 +1,7 @@
 # How to release pg-phenotype
 
 A tag `vX.Y.Z` on `main` runs `.github/workflows/publish.yml`.  It builds
-five abi3 wheels (Linux x86_64 and aarch64, macOS x86_64 and arm64, Windows
-x86_64) and the sdist, and runs the whole test suite on each wheel on its own
+four abi3 wheels (Linux x86_64 and aarch64, macOS arm64, Windows x86_64) and the sdist, and runs the whole test suite on each wheel on its own
 platform and on an install from the sdist.  It builds the R source tarball
 and checks it offline with `R CMD check --as-cran`.  If everything passes,
 it publishes the wheels and sdist to PyPI and creates a GitHub release with
