@@ -68,7 +68,10 @@ for line in open(core_in).read().splitlines():
     if header:
         section = header.group(1)
     # [lints] is clippy's, inherited from a workspace the tarball lacks.
-    if section == "lints":
+    # Dev-dependency tables serve the core's tests, which the tarball omits.
+    # Staged under src/rust, the core is a member of the binding's workspace,
+    # so cargo would resolve them into its lock and `--locked` would refuse.
+    if section == "lints" or re.search(r"(^|\.)dev-dependencies($|\.)", section or ""):
         continue
     inherited = re.match(r"^([A-Za-z0-9_-]+)\.workspace = true$", line)
     if inherited:
