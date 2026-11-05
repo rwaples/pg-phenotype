@@ -283,7 +283,7 @@ fn a_bivariate_score_ignores_the_probands_own_record() {
     check(
         "biv own record",
         CASES / 2,
-        1.0,
+        0.4,
         biv_case(),
         |(ped, ndegree, dice, steps, h2, rg, changes), checked| {
             let prep = prep(&ped, ndegree);
@@ -353,7 +353,7 @@ fn univariate_scores_are_finite() {
     check(
         "uni finite",
         CASES,
-        0.6,
+        1.0,
         uni_case(),
         |(ped, ndegree, dice, step, h2, _), checked| {
             let (prep, cip) = (prep(&ped, ndegree), cip(step));

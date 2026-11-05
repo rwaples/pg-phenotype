@@ -311,7 +311,7 @@ fn the_covariance_follows_the_cells() {
     check(
         "covariance",
         CASES / 4,
-        250.0,
+        100.0,
         two_traits(kind()),
         |(ped, x, y, kind), checked| {
             let a = run(&ped, &x, &y, kind, Se::Covariance);
