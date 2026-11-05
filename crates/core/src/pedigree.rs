@@ -4,6 +4,7 @@
 use crate::error::{Error, Position};
 use crate::input::PedigreeInput;
 use crate::mate_network::{mating_pairs, MatingPairs, Networks, ParentNetworks};
+use pedigree_graph_core::columns::GraphColumns;
 use pedigree_graph_core::graph::{self, Columns, IdIndex, Limits, SexEncoding};
 use pedigree_graph_core::relationships;
 use std::borrow::Cow;
@@ -168,9 +169,14 @@ impl Pedigree {
         &self.father_ids
     }
 
-    /// MZ co-twin row per row, `-1` when missing or external.
-    pub(crate) fn twin_rows(&self) -> &[i32] {
-        &self.twin_rows
+    /// The parent and twin rows, the one borrow pedigree-graph-core draws
+    /// every kernel input from.
+    pub(crate) fn columns(&self) -> GraphColumns<'_> {
+        GraphColumns {
+            mother: &self.mother_rows,
+            father: &self.father_rows,
+            twin: &self.twin_rows,
+        }
     }
 
     /// The pedigree as pedigree-graph-core's relationship engine reads it.
@@ -180,13 +186,9 @@ impl Pedigree {
     /// None for a validated pedigree; pedigree-graph-core's column checks
     /// pass through.
     pub(crate) fn relationships(&self) -> Result<relationships::Pedigree<'_>, Error> {
-        Ok(relationships::Pedigree::try_new(
-            &self.mother_rows,
-            &self.father_rows,
-            &self.twin_rows,
-            &self.mother_ids,
-            &self.father_ids,
-        )?)
+        Ok(self
+            .columns()
+            .relationships(&self.mother_ids, &self.father_ids)?)
     }
 
     /// Every Mating Pair, built on first use.

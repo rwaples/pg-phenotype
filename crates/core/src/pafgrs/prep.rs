@@ -260,12 +260,7 @@ pub fn prepare(
     let groups = sibship_groups(&built, &probands);
 
     let depth = topology::structural_depth(built.mother_rows(), built.father_rows());
-    let kped = KinshipPedigree::try_new(
-        built.mother_rows(),
-        built.father_rows(),
-        built.twin_rows(),
-        &depth,
-    )?;
+    let kped = built.columns().kinship(&depth)?;
     let chunks = walk_chunks(
         kped,
         &Walk {

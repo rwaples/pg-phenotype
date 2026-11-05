@@ -1,11 +1,10 @@
 //! pg-phenotype composes pedigree-graph-core's public items from outside the
 //! crate: validation, relationship pairs, and the pairwise kinship walk.
 
+use pedigree_graph_core::columns::GraphColumns;
 use pedigree_graph_core::graph::{self, Columns, Limits, SexEncoding};
-use pedigree_graph_core::kinship::{KinshipIndex, KinshipPedigree};
-use pedigree_graph_core::relationships::{
-    query, Category, CategorySet, Execution, Pedigree, Progress,
-};
+use pedigree_graph_core::kinship::KinshipIndex;
+use pedigree_graph_core::relationships::{query, Category, CategorySet, Execution, Progress};
 use pedigree_graph_core::topology;
 
 #[test]
@@ -30,14 +29,14 @@ fn build_pairs_and_walk_compose_from_outside_the_crate() {
     )
     .expect("valid pedigree");
 
-    let ped = Pedigree::try_new(
-        &built.mother_rows,
-        &built.father_rows,
-        &built.twin_rows,
-        &built.mother_ids,
-        &built.father_ids,
-    )
-    .expect("engine input");
+    let columns = GraphColumns {
+        mother: &built.mother_rows,
+        father: &built.father_rows,
+        twin: &built.twin_rows,
+    };
+    let ped = columns
+        .relationships(&built.mother_ids, &built.father_ids)
+        .expect("engine input");
     let graph_rows: Vec<i32> = (0..ids.len() as i32).collect();
     let blocks = query::pairs(
         &ped,
@@ -54,13 +53,7 @@ fn build_pairs_and_walk_compose_from_outside_the_crate() {
     assert_eq!(blocks.get(Category::Av).len(), 1);
 
     let depth = topology::structural_depth(&built.mother_rows, &built.father_rows);
-    let kped = KinshipPedigree::try_new(
-        &built.mother_rows,
-        &built.father_rows,
-        &built.twin_rows,
-        &depth,
-    )
-    .expect("kinship input");
+    let kped = columns.kinship(&depth).expect("kinship input");
     let index = KinshipIndex::new(&kped).expect("index");
     let mut walker = index.walker().expect("walker");
     assert_eq!(walker.resolve(2, 3).expect("sibs"), 0.25);
