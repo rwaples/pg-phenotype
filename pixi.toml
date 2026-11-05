@@ -26,8 +26,9 @@ test-all = { cmd = "pytest -n 6 --dist worksteal", depends-on = ["build-dev"], e
 test-rust = "cargo test --release"
 # The core's property tests at release depth: 16384 cases per property
 # (crates/core/tests/common/mod.rs `check`) in place of the ordinary 32 to
-# 256, ~23 s.
-test-rust-thorough = { cmd = "cargo test --release -p pg-phenotype-core --test aalen_johansen_properties --test relative_pairs_properties --test tetrachoric_properties", env = { PROPTEST_CASES = "16384" } }
+# 256, ~23 s.  The two-trait relative-pair properties fit every cell twice or
+# three times with the SE per case, ~150 s at 16384, so they run 4096.
+test-rust-thorough = { cmd = "cargo test --release -p pg-phenotype-core --test aalen_johansen_properties --test relative_pairs_properties --test tetrachoric_properties && PROPTEST_CASES=4096 cargo test --release -p pg-phenotype-core --test relative_pairs_two_trait_properties", env = { PROPTEST_CASES = "16384" } }
 # Release depth: the whole Python suite, slow tests included, with every
 # Hypothesis budget ten times its ordinary size (tests/_support.py
 # property_budget), then the Rust property tests at 16384 cases.
