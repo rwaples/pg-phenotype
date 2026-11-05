@@ -516,3 +516,94 @@ fn swapping_the_traits_swaps_the_bivariate_scores() {
         },
     );
 }
+
+/// A valid CIP table of 1 to 8 knots, its interpolation, and two ages as
+/// fractions of a knot interval (or below the first, or past the last).
+fn cip_case() -> impl Strategy<Value = (Vec<f64>, Vec<f64>, bool, usize, [f64; 2])> {
+    (1usize..=8)
+        .prop_flat_map(|n| {
+            (
+                prop::collection::vec(0.01f64..20.0, n),
+                prop::collection::vec(0.0f64..1.0, n),
+                0.0f64..100.0,
+                0.01f64..0.99,
+                any::<bool>(),
+                0..=n,
+                [0.0f64..1.0, 0.0f64..1.0],
+            )
+        })
+        .prop_map(|(gaps, rises, start, prevalence, step, interval, at)| {
+            let ages: Vec<f64> = gaps
+                .iter()
+                .scan(start, |a, g| {
+                    *a += g;
+                    Some(*a)
+                })
+                .collect();
+            let total: f64 = rises.iter().sum::<f64>().max(1e-3);
+            let cip: Vec<f64> = rises
+                .iter()
+                .scan(0.0, |c, r| {
+                    *c += r;
+                    Some(*c)
+                })
+                .map(|c: f64| (prevalence * c / total).min(prevalence))
+                .collect();
+            let mut cip = cip;
+            let last = cip.len() - 1;
+            cip[last] = prevalence;
+            (ages, cip, step, interval, at)
+        })
+}
+
+/// `Cip::at` is the table's value at each knot and monotone within each
+/// interval between knots (below the first and past the last included),
+/// and `w` is in `[0, 1]`.  Across a knot it can fall by a few ulps, as a
+/// NumPy mimic of the linear arm does (issue #31), so that is not asserted.
+#[test]
+fn the_cip_is_monotone_within_each_interval() {
+    check(
+        "cip intervals",
+        256,
+        1.0,
+        cip_case(),
+        |(ages, values, step, interval, at), checked| {
+            let interpolation = if step {
+                Interpolation::Step
+            } else {
+                Interpolation::Linear
+            };
+            let cip = Cip::new(ages.clone(), values.clone(), interpolation).expect("a valid table");
+            for (a, v) in ages.iter().zip(&values) {
+                prop_assert_eq!(cip.at(*a).to_bits(), v.to_bits(), "at the knot {}", a);
+            }
+            let n = ages.len();
+            let (lo, hi) = match interval {
+                0 => (ages[0] - 50.0, ages[0]),
+                i if i == n => (ages[n - 1], ages[n - 1] + 50.0),
+                i => (ages[i - 1], ages[i]),
+            };
+            // Ages in `[lo, hi)`: the interval's own knot, not the next.
+            let [p, q] = at.map(|u| (lo + u * (hi - lo)).min(hi.next_down()).max(lo));
+            let (p, q) = (p.min(q), p.max(q));
+            prop_assert!(
+                cip.at(p) <= cip.at(q),
+                "at({}) = {} > at({}) = {}",
+                p,
+                cip.at(p),
+                q,
+                cip.at(q)
+            );
+            for age in [p, q] {
+                prop_assert!(
+                    (0.0..=1.0).contains(&cip.w(age)),
+                    "w({}) = {}",
+                    age,
+                    cip.w(age)
+                );
+            }
+            checked.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        },
+    );
+}
