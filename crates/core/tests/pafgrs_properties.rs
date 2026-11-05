@@ -407,3 +407,112 @@ fn a_cases_age_changes_no_bivariate_score() {
         },
     );
 }
+
+/// Whether two scores agree to `1e-10`, NaN matching NaN.
+fn close(p: f64, q: f64) -> bool {
+    (p.is_nan() && q.is_nan()) || (p - q).abs() <= 1e-10
+}
+
+/// With `rg = 0` (so `rho_within = 0`) and both traits observed, each
+/// trait's bivariate `est` and `var` are its univariate score, within a
+/// tolerance (the bivariate conditions in another order), and `cov12` is
+/// 0.
+#[test]
+fn a_bivariate_score_with_rg_zero_is_two_univariate_scores() {
+    check(
+        "biv rg 0",
+        CASES / 2,
+        10.0,
+        biv_case(),
+        |(ped, ndegree, dice, steps, h2, _, _), checked| {
+            let prep = prep(&ped, ndegree);
+            let cips = steps.map(cip);
+            let params = BivParams::new(h2, 0.0, None).expect("valid parameters");
+            let records = [record(&dice[0], ped.len()), record(&dice[1], ped.len())];
+            let joint = biv(&prep, &records, &cips, params);
+            let unis = [0, 1].map(|t| uni(&prep, &records[t].0, &records[t].1, &cips[t], h2[t]));
+            // A proband one trait scores NaN on (the finding of
+            // `univariate_scores_are_finite`) scores NaN on both jointly.
+            let finite = |k: usize| {
+                unis.iter()
+                    .all(|u| u.est[k].is_finite() && u.var[k].is_finite())
+            };
+            for (t, one) in unis.iter().enumerate() {
+                for k in (0..one.est.len()).filter(|&k| finite(k)) {
+                    prop_assert!(
+                        close(joint.est[t][k], one.est[k]) && close(joint.var[t][k], one.var[k]),
+                        "trait {} proband {}: biv ({}, {}) vs uni ({}, {})",
+                        t,
+                        one.ids[k],
+                        joint.est[t][k],
+                        joint.var[t][k],
+                        one.est[k],
+                        one.var[k]
+                    );
+                    prop_assert_eq!(joint.n_obs[t][k], one.n_relatives[k]);
+                    checked.fetch_add(usize::from(one.n_relatives[k] > 0), Ordering::Relaxed);
+                }
+            }
+            prop_assert!(
+                joint.cov12.iter().all(|&c| c == 0.0 || c.is_nan()),
+                "{:?}",
+                joint.cov12
+            );
+            Ok(())
+        },
+    );
+}
+
+/// Swapping the traits, with their ages, CIP tables and `h2`, swaps each
+/// proband's `est`, `var` and `n_obs` and keeps `cov12` and `n_relatives`.
+/// Equal heritabilities are left out: ties in the conditioning order then
+/// break by trait index (`order.rs`), and the order changes the scores.
+#[test]
+fn swapping_the_traits_swaps_the_bivariate_scores() {
+    check(
+        "biv swap",
+        CASES / 2,
+        6.0,
+        biv_case().prop_filter("distinct h2", |c| c.4[0] != c.4[1]),
+        |(ped, ndegree, dice, steps, h2, rg, _), checked| {
+            let prep = prep(&ped, ndegree);
+            let cips = steps.map(cip);
+            let records = [record(&dice[0], ped.len()), record(&dice[1], ped.len())];
+            let a = biv(
+                &prep,
+                &records,
+                &cips,
+                BivParams::new(h2, rg, None).expect("valid"),
+            );
+            let [r0, r1] = records;
+            let [c0, c1] = cips;
+            let swapped = BivParams::new([h2[1], h2[0]], rg, None).expect("valid");
+            let b = biv(&prep, &[r1, r0], &[c1, c0], swapped);
+            for k in 0..a.ids.len() {
+                for t in 0..2 {
+                    prop_assert!(
+                        close(a.est[t][k], b.est[1 - t][k]) && close(a.var[t][k], b.var[1 - t][k]),
+                        "trait {} proband {}: ({}, {}) vs ({}, {})",
+                        t,
+                        a.ids[k],
+                        a.est[t][k],
+                        a.var[t][k],
+                        b.est[1 - t][k],
+                        b.var[1 - t][k]
+                    );
+                    prop_assert_eq!(a.n_obs[t][k], b.n_obs[1 - t][k]);
+                }
+                prop_assert!(
+                    close(a.cov12[k], b.cov12[k]),
+                    "cov12 of {}: {} vs {}",
+                    a.ids[k],
+                    a.cov12[k],
+                    b.cov12[k]
+                );
+                prop_assert_eq!(a.n_relatives[k], b.n_relatives[k]);
+                checked.fetch_add(usize::from(a.n_relatives[k] > 0), Ordering::Relaxed);
+            }
+            Ok(())
+        },
+    );
+}
