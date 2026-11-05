@@ -1,0 +1,26 @@
+# pg-phenotype #21: fresh, disjoint-seed reps of se_cal_lam3_K10 (config/se_calibration.yaml).
+#
+# The se_calibration grid seeds rep k with `seed + k - 1` from base seeds 10 apart, so its six
+# scenarios share most seeds and the three lam-3 scenarios are mostly the same pedigrees.  These
+# 400 reps use seeds 910000-910399, disjoint from that grid's 55010-55159, to test whether trait1's
+# father-offspring SD(r̂)/SE of 1.26-1.28 in generation 5 replicates.  Only simulate and cohort
+# are needed: run with `simace run se_calibration_fo21 --until cohort`.
+
+se_cal_fo21_lam3_K10:
+  seed: 910000
+  replicates: 400
+  N: 20000
+  pedigree:
+    mating_lambda: 3.0
+    p_mztwin: 0.02 # the default when se_calibration ran (its reps' params.yaml)
+    trait1: {A: 0.5, C: 0.0, E: 0.5}
+    trait2: {A: 0.4, C: 0.2, E: 0.4}
+  phenotype:
+    trait1:
+      model: adult
+      params: {method: ltm, cip_x0: 50, cip_k: 0.2, prevalence: 0.10}
+      beta: 1.0
+    trait2:
+      model: adult
+      params: {method: ltm, cip_x0: 50, cip_k: 0.2, prevalence: 0.10}
+      beta: 1.0

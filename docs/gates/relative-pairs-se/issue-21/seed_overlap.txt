@@ -1,0 +1,80 @@
+seed range per scenario:
+shape: (6, 4)
+┌──────────────────────┬───────┬───────┬─────┐
+│ scenario             ┆ min   ┆ max   ┆ len │
+│ ---                  ┆ ---   ┆ ---   ┆ --- │
+│ str                  ┆ i64   ┆ i64   ┆ u32 │
+╞══════════════════════╪═══════╪═══════╪═════╡
+│ se_cal_lam05_K10     ┆ 55010 ┆ 55109 ┆ 100 │
+│ se_cal_lam05_K02     ┆ 55020 ┆ 55119 ┆ 100 │
+│ se_cal_lam3_K10      ┆ 55030 ┆ 55129 ┆ 100 │
+│ se_cal_lam3_K02      ┆ 55040 ┆ 55139 ┆ 100 │
+│ se_cal_lam05_K10_hiA ┆ 55050 ┆ 55149 ┆ 100 │
+│ se_cal_lam3_K10_hiA  ┆ 55060 ┆ 55159 ┆ 100 │
+└──────────────────────┴───────┴───────┴─────┘
+
+shared seeds between scenarios:
+  se_cal_lam05_K02 & se_cal_lam05_K10: 90
+  se_cal_lam05_K02 & se_cal_lam05_K10_hiA: 70
+  se_cal_lam05_K02 & se_cal_lam3_K02: 80
+  se_cal_lam05_K02 & se_cal_lam3_K10: 90
+  se_cal_lam05_K02 & se_cal_lam3_K10_hiA: 60
+  se_cal_lam05_K10 & se_cal_lam05_K10_hiA: 60
+  se_cal_lam05_K10 & se_cal_lam3_K02: 70
+  se_cal_lam05_K10 & se_cal_lam3_K10: 80
+  se_cal_lam05_K10 & se_cal_lam3_K10_hiA: 50
+  se_cal_lam05_K10_hiA & se_cal_lam3_K02: 90
+  se_cal_lam05_K10_hiA & se_cal_lam3_K10: 80
+  se_cal_lam05_K10_hiA & se_cal_lam3_K10_hiA: 90
+  se_cal_lam3_K02 & se_cal_lam3_K10: 90
+  se_cal_lam3_K02 & se_cal_lam3_K10_hiA: 80
+  se_cal_lam3_K10 & se_cal_lam3_K10_hiA: 70
+
+distinct seeds over the 600 reps: 150
+distinct seeds over the three lam-3 scenarios: 130
+
+trait1 FO gen5: K10 vs K02 on 90 shared seeds, max |r10 - r02| = 0.00e+00
+  hiA vs K10 on 70 shared seeds: cor(r) = 0.944
+  K10 vs K02 matched by rep index: cor(r) = 0.021
+  lam3, A 0.5, distinct seeds: 110, SD(r)/mean SE = 1.258
+  se_cal_lam3_K10: 100 reps, SD(r)/mean SE = 1.280
+  se_cal_lam3_K02: 100 reps, SD(r)/mean SE = 1.284
+  se_cal_lam3_K10_hiA: 100 reps, SD(r)/mean SE = 1.176
+
+trait1 MO gen5: K10 vs K02 on 90 shared seeds, max |r10 - r02| = 0.00e+00
+  hiA vs K10 on 70 shared seeds: cor(r) = 0.893
+  K10 vs K02 matched by rep index: cor(r) = -0.097
+  lam3, A 0.5, distinct seeds: 110, SD(r)/mean SE = 0.983
+  se_cal_lam3_K10: 100 reps, SD(r)/mean SE = 1.007
+  se_cal_lam3_K02: 100 reps, SD(r)/mean SE = 0.982
+  se_cal_lam3_K10_hiA: 100 reps, SD(r)/mean SE = 1.031
+
+trait2 FO gen5: K10 vs K02 on 90 shared seeds, max |r10 - r02| = 0.00e+00
+  hiA vs K10 on 70 shared seeds: cor(r) = 0.960
+  K10 vs K02 matched by rep index: cor(r) = -0.122
+  lam3, A 0.5, distinct seeds: 110, SD(r)/mean SE = 1.006
+  se_cal_lam3_K10: 100 reps, SD(r)/mean SE = 1.019
+  se_cal_lam3_K02: 100 reps, SD(r)/mean SE = 1.021
+  se_cal_lam3_K10_hiA: 100 reps, SD(r)/mean SE = 1.039
+
+P(SD of 110 N(0,1) >= 1.258) = 1.30e-04
+gate Pearson cells: 816; with ratio >= 1.18: 5
+shape: (5, 5)
+┌─────────────────────┬─────────────────┬──────┬─────────┬────────────┐
+│ scenario            ┆ trait           ┆ cell ┆ stratum ┆ ratio_rust │
+│ ---                 ┆ ---             ┆ ---  ┆ ---     ┆ ---        │
+│ str                 ┆ str             ┆ str  ┆ str     ┆ f64        │
+╞═════════════════════╪═════════════════╪══════╪═════════╪════════════╡
+│ se_cal_lam3_K10_hiA ┆ trait1_x_trait2 ┆ PO   ┆ pooled  ┆ 1.1994     │
+│ se_cal_lam3_K02     ┆ trait1          ┆ FO   ┆ pooled  ┆ 1.2218     │
+│ se_cal_lam3_K10     ┆ trait1          ┆ FO   ┆ pooled  ┆ 1.2344     │
+│ se_cal_lam3_K10     ┆ trait1          ┆ FO   ┆ gen5    ┆ 1.2803     │
+│ se_cal_lam3_K02     ┆ trait1          ┆ FO   ┆ gen5    ┆ 1.2841     │
+└─────────────────────┴─────────────────┴──────┴─────────┴────────────┘
+
+trait1 FO gen5, 110 lam-3 pedigrees: largest |r - mean| / SE: [2.75, 2.72, 2.54, 2.48, 2.43]
+  dropping the 0 farthest: SD(r)/mean SE = 1.258
+  dropping the 1 farthest: SD(r)/mean SE = 1.237
+  dropping the 2 farthest: SD(r)/mean SE = 1.213
+  dropping the 3 farthest: SD(r)/mean SE = 1.193
+  dropping the 5 farthest: SD(r)/mean SE = 1.156

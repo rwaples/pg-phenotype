@@ -183,7 +183,12 @@ Rejected:
   as above.  One cell type lies outside the band under every design tried,
   local or Mate Network: the father-offspring Pearson
   of trait1 at mating_lambda 3 in generation 5 (1.18-1.28 in three
-  scenarios); its source is open.
+  scenarios).  Issue #21 traced it to the grid's seeds: the three scenarios
+  share most of their pedigrees, and on 400 fresh pedigrees with the same
+  parameters the cell calibrates (1.018 from the reps' simACE source, 0.968
+  from the current simACE, whose `--rust` run gives the same 0.968).  It is
+  not a missing link, and the clusters stand (gate README, finding 5 of the
+  shipped SE).
 
 ## Amendment (2026-10-17): ADR 0014
 

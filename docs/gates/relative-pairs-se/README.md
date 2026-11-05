@@ -57,6 +57,14 @@ per generation, 6 pedigree generations of which the last 3 are phenotyped
 | `se_cal_lam05_K10_hiA` | 0.5 | 0.10 | 0.8, 0 | 0.5, 0.3 |
 | `se_cal_lam3_K10_hiA` | 3.0 | 0.10 | 0.8, 0 | 0.5, 0.3 |
 
+The scenarios share seeds (issue #21).  simACE seeds rep k with `seed + k -
+1`, and the base seeds are 10 apart (55010-55060), so the 600 reps hold 150
+distinct seeds.  Scenarios with the same pedigree parameters and a different
+K (the two λ 0.5 and the two λ 3 scenarios at A 0.5) share 90 seeds, and on
+those reps the pedigree and every liability are identical.  Contrasts across
+K therefore compare largely the same pedigrees, and the six scenarios are not
+independent replicates of a cell (`issue-21/seed_overlap.txt`).
+
 Cells: the 12 categories up to degree 3, plus the groups PO (MO, FO) and HS
 (MHS, PHS); each pooled and in each generation's stratum (ADR 0012's rule);
 trait1, trait2 and their cross-trait combinations (both orientations of a
@@ -241,13 +249,43 @@ columns to 4 decimals.
    (`boundary`; 3083 of them in MZ cells, the rest with no concordant
    pair), 421 of them stratified fits.  33 are `degenerate_meat` (phi = 1
    in an MZ stratum).  None is `sandwich_undefined` or `negative_meat`.
-5. **One cell type sits above the band.**  The father-offspring Pearson of
-   trait1 at λ 3 in generation 5: 1.28 at K 0.10 and at K 0.02 (independent
-   seeds) and 1.18 at high A, coverage 0.86-0.92; pooled 1.11-1.23.  Its
-   mother-offspring counterpart is 0.98-1.03, and trait2's FO 1.02-1.04.
-   It is the same in `calibration.tsv` under `person`, `mrca` and
-   `mrca_person`, which coincide for a lineal stratum cell, so it is not
-   the implementation.  A probe that also joins pairs through the child's
-   mother, or through the father's mother or father, leaves the ratio at
-   1.27-1.29: the extra spread does not come from those links.  Its source
-   is open.
+5. **One cell type sits above the band, by chance in one draw of
+   pedigrees** (issue #21).  The father-offspring Pearson of trait1 at λ 3
+   in generation 5 reads 1.28 at K 0.10 and at K 0.02 and 1.18 at high A,
+   coverage 0.86-0.92; pooled 1.11-1.23.  Its mother-offspring counterpart
+   is 0.98-1.03, and trait2's FO 1.02-1.04.  It is the same in
+   `calibration.tsv` under `person`, `mrca` and `mrca_person`, which
+   coincide for a lineal stratum cell, so it is not the implementation.  A
+   probe that also joins pairs through the child's mother, or through the
+   father's mother or father, leaves the ratio at 1.27-1.29.
+
+   The three scenarios are not three runs (see [Inputs](#inputs)).  K 0.10
+   and K 0.02 share 90 seeds, on which the cell's r̂ is identical; high A
+   shares 70 with K 0.10, on which r̂ correlates 0.944.  Matched by rep
+   index the K 0.10 and K 0.02 r̂ correlate 0.021, which made them look
+   independent.  Over the 110 distinct A 0.5 pedigrees the ratio is 1.258.
+   A calibrated cell reaches that with probability 1.3e-4 over 110 reps,
+   against 816 Pearson cells in this gate.  The excess is spread over many
+   reps: no rep lies more than 2.75 SE from the mean, and dropping the five
+   farthest leaves 1.156 (`issue-21/seed_overlap.txt`).
+
+   It does not replicate on fresh pedigrees with the same parameters:
+
+   | 400 reps of `se_cal_lam3_K10`, seeds | simACE | trait1 FO gen5 (bootstrap 95%) |
+   |---|---|---|
+   | 920000-920399 | the reps' source, `b2181f9` | 1.018 (0.950-1.082) |
+   | 910000-910399 | current (`se_calibration_fo21.yaml`) | 0.968 (0.899-1.036) |
+
+   `b2181f9` rebuilds the stored reps 1-3 of `se_cal_lam3_K10` seed for
+   seed; the current simACE does not, since simACE #78 changed the random
+   stream.  In both runs trait1's MO and trait2's FO in generation 5 sit at
+   0.961-0.992
+   (`issue-21/fo21_old_summary.txt`, `issue-21/fo21_summary.txt`, from the
+   parent-cluster SE of `issue-21/fo_probe.py`, which reproduces this cell's
+   `rust` ratio to 4 decimals).  The shipped SE through `--rust` on the 400
+   current reps gives the cell 0.968 with coverage 0.958, and medians per
+   category type, estimator and fit of 0.998-1.032 with coverage
+   0.940-0.953 (`issue-21/fo21_rust_summary.tsv`).  So the excess belongs to
+   the pedigrees the λ 3 scenarios share, not to the cluster design or to
+   serial mating, and ADR 0013 needs no new link.  `issue-21/reproduce.sh`
+   regenerates the probe outputs; its header gives the simulation commands.
