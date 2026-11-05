@@ -78,6 +78,7 @@ fn every_mrca_is_a_common_ancestor_at_the_categorys_meioses() {
             let res = run(&ped, &v, kind);
             let parents = parents(&ped);
             let entries = res.entries.as_ref().expect("influences were asked for");
+            prop_assert_eq!(res.cells.len(), entries.len());
             for (cell, ent) in res.cells.iter().zip(entries) {
                 let code = cell.members[0].code();
                 let (u, d) = meioses[code];

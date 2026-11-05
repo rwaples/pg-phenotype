@@ -94,11 +94,32 @@ fn uni_case() -> impl Strategy<Value = UniCase> {
     (
         pedigree(),
         1i64..=3,
-        prop::collection::vec(any::<u8>(), 64),
+        prop::collection::vec(any::<u8>(), 256),
         any::<bool>(),
         prop_oneof![Just(0.2), Just(0.5), Just(0.8), Just(1.0)],
         perturbations(),
     )
+}
+
+/// A result's estimates as bits, whichever its kind.
+fn est_bits<S: Ests>(s: &S) -> Vec<u64> {
+    s.ests().iter().flat_map(|e| bits(e)).collect()
+}
+
+trait Ests {
+    fn ests(&self) -> Vec<&[f64]>;
+}
+
+impl Ests for UniScores {
+    fn ests(&self) -> Vec<&[f64]> {
+        vec![&self.est]
+    }
+}
+
+impl Ests for BivScores {
+    fn ests(&self) -> Vec<&[f64]> {
+        vec![&self.est[0], &self.est[1]]
+    }
 }
 
 /// Floats as bits, so NaN equals NaN.
@@ -190,7 +211,10 @@ fn a_univariate_score_ignores_the_probands_own_record() {
                     row
                 );
                 // Counted where the change moved a relative's score.
-                checked.fetch_add(usize::from(got.est != base.est), Ordering::Relaxed);
+                checked.fetch_add(
+                    usize::from(est_bits(&got) != est_bits(&base)),
+                    Ordering::Relaxed,
+                );
             }
             Ok(())
         },
@@ -205,7 +229,7 @@ fn a_cases_age_changes_no_univariate_score() {
         "uni case ages",
         CASES,
         0.3,
-        (uni_case(), prop::collection::vec(any::<u8>(), 64)),
+        (uni_case(), prop::collection::vec(any::<u8>(), 256)),
         |((ped, ndegree, dice, step, h2, _), new_ages), checked| {
             let (prep, cip) = (prep(&ped, ndegree), cip(step));
             let (status, age) = record(&dice, ped.len());
@@ -247,8 +271,8 @@ fn biv_case() -> impl Strategy<Value = BivCase> {
         pedigree(),
         1i64..=3,
         [
-            prop::collection::vec(any::<u8>(), 64),
-            prop::collection::vec(any::<u8>(), 64),
+            prop::collection::vec(any::<u8>(), 256),
+            prop::collection::vec(any::<u8>(), 256),
         ],
         [any::<bool>(), any::<bool>()],
         [h2(), h2()],
@@ -335,7 +359,10 @@ fn a_bivariate_score_ignores_the_probands_own_record() {
                     row
                 );
                 // Counted where the change moved a relative's score.
-                checked.fetch_add(usize::from(got.est != base.est), Ordering::Relaxed);
+                checked.fetch_add(
+                    usize::from(est_bits(&got) != est_bits(&base)),
+                    Ordering::Relaxed,
+                );
             }
             Ok(())
         },
@@ -384,7 +411,7 @@ fn a_cases_age_changes_no_bivariate_score() {
         "biv case ages",
         CASES / 2,
         0.3,
-        (biv_case(), prop::collection::vec(any::<u8>(), 64)),
+        (biv_case(), prop::collection::vec(any::<u8>(), 256)),
         |((ped, ndegree, dice, steps, h2, rg, _), new_ages), checked| {
             let prep = prep(&ped, ndegree);
             let cips = steps.map(cip);
@@ -433,13 +460,15 @@ fn a_bivariate_score_with_rg_zero_is_two_univariate_scores() {
             let records = [record(&dice[0], ped.len()), record(&dice[1], ped.len())];
             let joint = biv(&prep, &records, &cips, params);
             let unis = [0, 1].map(|t| uni(&prep, &records[t].0, &records[t].1, &cips[t], h2[t]));
-            // A proband one trait scores NaN on (the finding of
-            // `univariate_scores_are_finite`) scores NaN on both jointly.
+            // Probands a trait scores NaN on alone (the finding of
+            // `univariate_scores_are_finite`) are left out: the joint
+            // score can be NaN on the other trait too.
             let finite = |k: usize| {
                 unis.iter()
                     .all(|u| u.est[k].is_finite() && u.var[k].is_finite())
             };
             for (t, one) in unis.iter().enumerate() {
+                prop_assert_eq!(&joint.ids, &one.ids);
                 for k in (0..one.est.len()).filter(|&k| finite(k)) {
                     prop_assert!(
                         close(joint.est[t][k], one.est[k]) && close(joint.var[t][k], one.var[k]),
@@ -586,7 +615,11 @@ fn the_cip_is_monotone_within_each_interval() {
                 i => (ages[i - 1], ages[i]),
             };
             // Ages in `[lo, hi)`: the interval's own knot, not the next.
-            let [p, q] = at.map(|u| (lo + u * (hi - lo)).min(hi.next_down()).max(lo));
+            let [p, q] = at.map(|u| {
+                (lo + u * (hi - lo))
+                    .min(f64::from_bits(hi.to_bits() - 1))
+                    .max(lo)
+            });
             let (p, q) = (p.min(q), p.max(q));
             prop_assert!(
                 cip.at(p) <= cip.at(q),

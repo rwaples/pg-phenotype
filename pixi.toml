@@ -31,7 +31,7 @@ test-rust = "cargo test --release"
 test-rust-thorough = { cmd = "cargo test --release -p pg-phenotype-core --test aalen_johansen_properties --test pafgrs_properties --test relative_pairs_mrca_properties --test regression_properties --test relative_pairs_properties --test tetrachoric_properties && PROPTEST_CASES=4096 cargo test --release -p pg-phenotype-core --test relative_pairs_two_trait_properties", env = { PROPTEST_CASES = "16384" } }
 # Release depth: the whole Python suite, slow tests included, with every
 # Hypothesis budget ten times its ordinary size (tests/_support.py
-# property_budget), then the Rust property tests at 16384 cases.
+# property_budget), then the Rust property tests (test-rust-thorough).
 test-thorough = { cmd = "pytest -n 6 --dist worksteal", depends-on = ["build-dev", "test-rust-thorough"], env = { PG_PHENOTYPE_REQUIRE_TEST_HOOKS = "1", HYPOTHESIS_PROFILE = "thorough" } }
 # `ci-local` runs the checks the CI push jobs run (.github/workflows/ci.yml),
 # before a push. CI-only: the Python 3.13 job, the offline R tarball check

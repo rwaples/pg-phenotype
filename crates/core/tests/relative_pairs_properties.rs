@@ -372,6 +372,11 @@ fn a_group_cell_sums_its_members() {
                 .expect("a valid pedigree, trait and request")
             };
             let (grouped, single) = (call(&groups), call(&singles));
+            prop_assert_eq!(grouped.cells.len(), GROUPS.len());
+            prop_assert_eq!(
+                single.cells.len(),
+                GROUPS.iter().map(|(_, m)| m.len()).sum::<usize>()
+            );
             for (cell, (name, members)) in grouped.cells.iter().zip(GROUPS) {
                 prop_assert_eq!(&cell.category, name);
                 let parts: Vec<&Cell> = single
