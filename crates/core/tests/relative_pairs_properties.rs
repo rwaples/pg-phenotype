@@ -15,7 +15,7 @@ use std::sync::atomic::Ordering;
 
 use common::{check, codes, kind, outbred_pedigree, pedigree, trait_of, values, Ped};
 use pg_phenotype_core::relative_pairs::{
-    correlation, correlation_with, Cell, Estimate, RelativePairCorrelation, Se,
+    correlation, correlation_with, Cell, Counts, Entry, Estimate, RelativePairCorrelation, Se,
     DEFAULT_MEMORY_BUDGET_BYTES,
 };
 use pg_phenotype_core::{PedigreeArg, TraitKind};
@@ -299,6 +299,96 @@ fn the_se_is_the_meat_of_its_influences() {
             )
             .expect("a valid pedigree and trait");
             assert_same_values(&plain, &res, 0.0).map(|_| ())
+        },
+    );
+}
+
+/// The groups the additivity property requests: each a run of categories
+/// of one kind (symmetric, or directed with one pair of roles).
+const GROUPS: [(&str, &[&str]); 5] = [
+    ("parents", &["MO", "FO"]),
+    ("sibs", &["FS", "MHS", "PHS"]),
+    ("ancestors", &["GP", "GGP", "GGGP"]),
+    ("avuncular", &["Av", "HAv", "GAv"]),
+    ("cousins", &["1C", "H1C", "2C"]),
+];
+
+/// The sum of `cells`' counts, which share a kind.
+fn summed(cells: &[&Cell]) -> Counts {
+    cells
+        .iter()
+        .map(|c| c.counts)
+        .reduce(|a, b| match (a, b) {
+            (Counts::Table(s), Counts::Table(t)) => {
+                Counts::Table([0, 1].map(|i| [0, 1].map(|j| s[i][j] + t[i][j])))
+            }
+            (Counts::Concordance(s), Counts::Concordance(t)) => {
+                Counts::Concordance([0, 1, 2].map(|i| s[i] + t[i]))
+            }
+            (a, _) => a,
+        })
+        .expect("a group has members")
+}
+
+/// A Category Group's cell counts what its member categories' cells count:
+/// `n`, `n_dropped`, `n_entries` and the binary counts are their sums.
+#[test]
+fn a_group_cell_sums_its_members() {
+    let entry = |name: &str, members: &[&str], position| Entry::Group {
+        name: name.to_string(),
+        members: members.iter().map(|m| m.to_string()).collect(),
+        position,
+    };
+    let groups: Vec<Entry> = GROUPS
+        .iter()
+        .enumerate()
+        .map(|(i, (name, members))| entry(name, members, i))
+        .collect();
+    let singles: Vec<Entry> = GROUPS
+        .iter()
+        .flat_map(|(_, members)| members.iter())
+        .enumerate()
+        .map(|(i, code)| Entry::Category {
+            code: code.to_string(),
+            position: i,
+        })
+        .collect();
+    check(
+        "groups",
+        CASES,
+        0.9,
+        (pedigree(), codes(), kind()),
+        |(ped, codes, kind), checked| {
+            let v = values(&codes, ped.len(), kind);
+            let call = |entries: &[Entry]| {
+                correlation(
+                    PedigreeArg::Columns(ped.input()),
+                    &[trait_of(&v, kind)],
+                    None,
+                    Some(entries),
+                    DEFAULT_MEMORY_BUDGET_BYTES,
+                    Se::Off,
+                )
+                .expect("a valid pedigree, trait and request")
+            };
+            let (grouped, single) = (call(&groups), call(&singles));
+            for (cell, (name, members)) in grouped.cells.iter().zip(GROUPS) {
+                prop_assert_eq!(&cell.category, name);
+                let parts: Vec<&Cell> = single
+                    .cells
+                    .iter()
+                    .filter(|c| members.contains(&c.category.as_str()))
+                    .collect();
+                prop_assert_eq!(parts.len(), members.len());
+                let sum = |f: fn(&Cell) -> u64| parts.iter().map(|c| f(c)).sum::<u64>();
+                prop_assert_eq!(cell.n, sum(|c| c.n), "{} n", name);
+                prop_assert_eq!(cell.n_dropped, sum(|c| c.n_dropped), "{} n_dropped", name);
+                let entries: Option<u64> = parts.iter().map(|c| c.n_entries).sum();
+                prop_assert_eq!(cell.n_entries, entries, "{} n_entries", name);
+                prop_assert_eq!(cell.counts, summed(&parts), "{} counts", name);
+                checked.fetch_add(usize::from(cell.n > 0), Ordering::Relaxed);
+            }
+            Ok(())
         },
     );
 }
