@@ -125,7 +125,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "pedigree-graph-core"
 version = "0.14.0"
-source = "git+https://github.com/rwaples/pedigree-graph?rev=ec546562c2ab644a2fffbfa90a8caa4235958f11#ec546562c2ab644a2fffbfa90a8caa4235958f11"
+source = "git+https://github.com/rwaples/pedigree-graph?rev=7c533dd81c245ee996bd73af137e4bd1462c0404#7c533dd81c245ee996bd73af137e4bd1462c0404"
 dependencies = [
  "num-bigint",
  "num-integer",

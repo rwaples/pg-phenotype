@@ -458,6 +458,7 @@ impl Error {
                         PgField::Str(v) => Str(v),
                         PgField::Ints(v) => Ints(v),
                         PgField::Strs(v) => FieldValue::Strs(v),
+                        PgField::Texts(v) => FieldValue::Texts(v),
                     };
                     (name, value)
                 })
