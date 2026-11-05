@@ -342,13 +342,15 @@ fn a_bivariate_score_ignores_the_probands_own_record() {
     );
 }
 
-/// Every univariate score is finite.  Fails: under inbreeding an MZ
-/// pair's kinship is `(1 + F) / 2`, so its covariance `2 phi h2` exceeds
-/// the liabilities' variance 1 once `h2 (1 + F) > 1`, and the twins'
-/// relatives score NaN (two generations of full-sib mating, `F = 3/8`,
-/// at `h2 = 0.8`).
+/// Every univariate score is finite.  Fails: the PA covariance puts `h2`
+/// on the proband's diagonal and 1 on each relative's whatever their
+/// inbreeding (`uni.rs`), while its off-diagonal `2 phi h2` carries it, so
+/// with inbred MZ twins (kinship `(1 + F) / 2`) the matrix is not positive
+/// semidefinite.  After two generations of full-sib mating (`F = 3/8`) a
+/// concordant MZ case pair's own variance clamps to 0 from `h2 = 0.7`, and
+/// their parents and sib score NaN from `h2 = 0.8`.
 #[test]
-#[ignore = "finding: NaN scores when inbreeding pushes 2 phi h2 past 1; notes/handoff-pgp-issue-31.md"]
+#[ignore = "finding: NaN scores with inbred MZ twins at high h2; notes/handoff-pgp-issue-31.md"]
 fn univariate_scores_are_finite() {
     check(
         "uni finite",
