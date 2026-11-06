@@ -245,17 +245,37 @@ pub fn trait_of(values: &[f64], kind: TraitKind) -> Trait<'_> {
     }
 }
 
-/// Cases for a property whose ordinary run draws `ordinary`:
-/// `PROPTEST_CASES` when set (proptest's own variable, which its config
-/// would ignore here because the runner sets `cases`), else `ordinary`.
-fn cases(ordinary: u32) -> u32 {
-    std::env::var("PROPTEST_CASES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(ordinary)
+/// A positive integer from the environment variable `name`, if set.
+fn env_count(name: &str) -> Option<u32> {
+    let value = std::env::var(name).ok()?;
+    let n = value.parse::<u32>().unwrap_or(0);
+    assert!(n > 0, "{name}={value:?}: expected a positive integer");
+    Some(n)
 }
 
-/// Run `test` on `ordinary` draws of `strategy`, or `PROPTEST_CASES`, then
+/// Cases for a property whose ordinary run draws `ordinary`: `ordinary`
+/// times `PROPTEST_SCALE` (default 1; `test-rust-thorough` sets 64, as the
+/// Python suite's `property_budget` scales its budgets), so a costly
+/// property keeps its smaller share at every depth.  `PROPTEST_CASES`,
+/// proptest's own variable, which its config would ignore here because
+/// the runner sets `cases`, overrides both with one count for every
+/// property.
+fn cases(ordinary: u32) -> u32 {
+    env_count("PROPTEST_CASES")
+        .unwrap_or_else(|| ordinary.saturating_mul(env_count("PROPTEST_SCALE").unwrap_or(1)))
+}
+
+/// Floats as bits, so NaN equals NaN.
+pub fn bits(v: &[f64]) -> Vec<u64> {
+    v.iter().map(|x| x.to_bits()).collect()
+}
+
+/// Two floats computed in two orders agree: both NaN, or within `1e-10`.
+pub fn close(p: f64, q: f64) -> bool {
+    (p.is_nan() && q.is_nan()) || (p - q).abs() <= 1e-10
+}
+
+/// Run `test` on [`cases`]`(ordinary)` draws of `strategy`, then
 /// require that it found something to check at least `per_case` times per
 /// case on average: `test` adds what it checked to the counter, so a
 /// strategy that stops making such cases fails instead of passing
