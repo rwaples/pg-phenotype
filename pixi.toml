@@ -26,9 +26,9 @@ test-all = { cmd = "pytest -n 6 --dist worksteal", depends-on = ["build-dev"], e
 test-rust = "cargo test --release"
 # The core's property tests at release depth: each property's ordinary case
 # count (16 to 256) times PROPTEST_SCALE (crates/core/tests/common/mod.rs
-# `cases`), so 1024 to 16384.  --no-fail-fast runs every binary even when one
+# `cases`), so 4096 to 65536.  --no-fail-fast runs every binary even when one
 # fails.
-test-rust-thorough = { cmd = "cargo test --release --no-fail-fast -p pg-phenotype-core --test aalen_johansen_properties --test pafgrs_properties --test regression_properties --test relative_pairs_mrca_properties --test relative_pairs_properties --test relative_pairs_two_trait_properties --test tetrachoric_properties", env = { PROPTEST_SCALE = "64" } }
+test-rust-thorough = { cmd = "cargo test --release --no-fail-fast -p pg-phenotype-core --test aalen_johansen_properties --test pafgrs_properties --test regression_properties --test relative_pairs_mrca_properties --test relative_pairs_properties --test relative_pairs_two_trait_properties --test tetrachoric_properties", env = { PROPTEST_SCALE = "256" } }
 # Release depth: the whole Python suite, slow tests included, with every
 # Hypothesis budget ten times its ordinary size (tests/_support.py
 # property_budget), then the Rust property tests (test-rust-thorough).
