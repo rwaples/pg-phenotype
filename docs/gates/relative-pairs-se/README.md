@@ -71,7 +71,11 @@ scenario at its λ, and there its r̂ correlates 0.909-0.944 with theirs.
 Seeds shared across λ give unrelated pedigrees (r̂ correlates -0.162 to
 -0.056).  Contrasts across K therefore compare largely the same pedigrees,
 contrasts across A partly so, and the six scenarios are not independent
-replicates of a cell (`issue-21/seed_overlap.txt`).
+replicates of a cell (`issue-21/seed_overlap.txt`).  simACE's
+`config/se_calibration.yaml` has since moved the base seeds to
+555000-555500, 100 apart, and `simace run` now warns about such overlaps.
+These tables are still the 55010-55060 reps; a rerun on the new seeds would
+replace them.
 
 Cells: the 12 categories up to degree 3, plus the groups PO (MO, FO) and HS
 (MHS, PHS); each pooled and in each generation's stratum (ADR 0012's rule);
