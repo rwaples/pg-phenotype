@@ -24,13 +24,14 @@ build-dev = "maturin develop --release --features test-hooks"
 test = { cmd = "pytest -n 6 --dist worksteal -m 'not slow'", depends-on = ["build-dev"], env = { PG_PHENOTYPE_REQUIRE_TEST_HOOKS = "1" } }
 test-all = { cmd = "pytest -n 6 --dist worksteal", depends-on = ["build-dev"], env = { PG_PHENOTYPE_REQUIRE_TEST_HOOKS = "1" } }
 test-rust = "cargo test --release"
-# The core's property tests at release depth: 16384 cases per property
-# (crates/core/tests/common/mod.rs `check`) in place of the ordinary 32 to
-# 256, ~23 s.
-test-rust-thorough = { cmd = "cargo test --release -p pg-phenotype-core --test aalen_johansen_properties --test relative_pairs_properties --test tetrachoric_properties", env = { PROPTEST_CASES = "16384" } }
+# The core's property tests at release depth: each property's ordinary case
+# count (16 to 256) times PROPTEST_SCALE (crates/core/tests/common/mod.rs
+# `cases`), so 4096 to 65536.  --no-fail-fast runs every binary even when one
+# fails.
+test-rust-thorough = { cmd = "cargo test --release --no-fail-fast -p pg-phenotype-core --test aalen_johansen_properties --test pafgrs_properties --test regression_properties --test relative_pairs_mrca_properties --test relative_pairs_properties --test relative_pairs_two_trait_properties --test tetrachoric_properties", env = { PROPTEST_SCALE = "256" } }
 # Release depth: the whole Python suite, slow tests included, with every
 # Hypothesis budget ten times its ordinary size (tests/_support.py
-# property_budget), then the Rust property tests at 16384 cases.
+# property_budget), then the Rust property tests (test-rust-thorough).
 test-thorough = { cmd = "pytest -n 6 --dist worksteal", depends-on = ["build-dev", "test-rust-thorough"], env = { PG_PHENOTYPE_REQUIRE_TEST_HOOKS = "1", HYPOTHESIS_PROFILE = "thorough" } }
 # `ci-local` runs the checks the CI push jobs run (.github/workflows/ci.yml),
 # before a push. CI-only: the Python 3.13 job, the offline R tarball check
