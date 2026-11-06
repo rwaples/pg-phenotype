@@ -2,7 +2,11 @@
 //! never its own, and a case's age (its weight is 1 at any age) changes
 //! nothing (issue #31 item 2).
 //!
-//! Every comparison is between two calls in one process, bit for bit.
+//! Then the bivariate score at `rg = 0` and under a trait swap (item 3),
+//! within a tolerance, and the CIP table's interpolation.  Comparisons
+//! are between two calls in one process: bit for bit where the issue
+//! says the scores are equal, within [`close`] where the two calls
+//! condition in different orders.
 
 #![expect(
     clippy::expect_used,
@@ -13,7 +17,7 @@ mod common;
 
 use std::sync::atomic::Ordering;
 
-use common::{check, pedigree, Ped};
+use common::{bits, check, close, pedigree, Ped};
 use pg_phenotype_core::pafgrs::{
     prepare, score_bivariate, score_univariate, BivParams, BivScores, Cip, Interpolation, Prep,
     UniScores,
@@ -122,11 +126,6 @@ impl Ests for BivScores {
     }
 }
 
-/// Floats as bits, so NaN equals NaN.
-fn bits(v: &[f64]) -> Vec<u64> {
-    v.iter().map(|x| x.to_bits()).collect()
-}
-
 /// A univariate result's scores and counts, bit for bit.
 fn uni_bits(s: &UniScores) -> (&[i64], Vec<u64>, Vec<u64>, &[u32], usize) {
     (
@@ -191,6 +190,7 @@ fn a_univariate_score_ignores_the_probands_own_record() {
                 status2[row] = self::status(s);
                 age2[row] = self::age(a);
                 let got = uni(&prep, &status2, &age2, &cip, h2);
+                prop_assert_eq!(&got.ids, &base.ids);
                 let k = position(&base.ids, &ped, row);
                 prop_assert_eq!(
                     got.est[k].to_bits(),
@@ -322,6 +322,7 @@ fn a_bivariate_score_ignores_the_probands_own_record() {
                 changed[t].0[row] = status(s);
                 changed[t].1[row] = age(a);
                 let got = biv(&prep, &changed, &cips, params);
+                prop_assert_eq!(&got.ids, &base.ids);
                 let k = position(&base.ids, &ped, row);
                 for t in 0..2 {
                     prop_assert_eq!(
@@ -437,15 +438,11 @@ fn a_cases_age_changes_no_bivariate_score() {
     );
 }
 
-/// Whether two scores agree to `1e-10`, NaN matching NaN.
-fn close(p: f64, q: f64) -> bool {
-    (p.is_nan() && q.is_nan()) || (p - q).abs() <= 1e-10
-}
-
-/// With `rg = 0` (so `rho_within = 0`) and both traits observed, each
-/// trait's bivariate `est` and `var` are its univariate score, within a
-/// tolerance (the bivariate conditions in another order), and `cov12` is
-/// 0.
+/// With `rg = 0` (so `rho_within = 0`), each trait's bivariate `est`
+/// and `var` are its univariate score, within a tolerance (the
+/// bivariate conditions in another order), and `cov12` is 0.  Each
+/// trait has its own missing statuses, so a relative may be observed on
+/// one trait, both or neither.
 #[test]
 fn a_bivariate_score_with_rg_zero_is_two_univariate_scores() {
     check(

@@ -17,7 +17,7 @@ mod common;
 
 use std::sync::atomic::Ordering;
 
-use common::{check, codes, kind, pedigree, trait_of, values, Ped};
+use common::{check, close, codes, kind, pedigree, trait_of, values, Ped};
 use pg_phenotype_core::ace::{
     self, AceCell, AceRequest, Components, CrudeEstimate, Estimator as AceEstimator, Pairs,
     Reason as AceReason, Solved, TraitFit, Weights,
@@ -229,13 +229,6 @@ fn reordering_the_traits_permutes_the_cells() {
             Ok(())
         },
     );
-}
-
-/// Whether two floats from one quantity computed in two summation orders
-/// agree: both NaN, or within `1e-10` (the covariances and SEs here are
-/// at most about 1).
-fn close(p: f64, q: f64) -> bool {
-    (p.is_nan() && q.is_nan()) || (p - q).abs() <= 1e-10
 }
 
 /// Each estimate's SE matches: within [`close`] when both are defined,
@@ -472,7 +465,11 @@ fn ace_fit_swaps(weights: Option<Weights>) {
             .into_iter()
             .enumerate()
             {
-                if a.traits.iter().all(|t| component(t, i) > 1e-9) {
+                if a.traits
+                    .iter()
+                    .chain(&b.traits)
+                    .all(|t| component(t, i) > 1e-9)
+                {
                     compared += assert_same_solved(s, u, name)?;
                 }
             }

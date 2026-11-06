@@ -313,21 +313,21 @@ const GROUPS: [(&str, &[&str]); 5] = [
     ("cousins", &["1C", "H1C", "2C"]),
 ];
 
-/// The sum of `cells`' counts, which share a kind.
-fn summed(cells: &[&Cell]) -> Counts {
-    cells
-        .iter()
-        .map(|c| c.counts)
-        .reduce(|a, b| match (a, b) {
-            (Counts::Table(s), Counts::Table(t)) => {
-                Counts::Table([0, 1].map(|i| [0, 1].map(|j| s[i][j] + t[i][j])))
-            }
-            (Counts::Concordance(s), Counts::Concordance(t)) => {
-                Counts::Concordance([0, 1, 2].map(|i| s[i] + t[i]))
-            }
-            (a, _) => a,
-        })
-        .expect("a group has members")
+/// The sum of `cells`' counts; `None` for no cells or cells whose
+/// counts differ in kind.
+fn summed(cells: &[&Cell]) -> Option<Counts> {
+    let mut counts = cells.iter().map(|c| c.counts);
+    let first = counts.next()?;
+    counts.try_fold(first, |a, b| match (a, b) {
+        (Counts::Table(s), Counts::Table(t)) => Some(Counts::Table(
+            [0, 1].map(|i| [0, 1].map(|j| s[i][j] + t[i][j])),
+        )),
+        (Counts::Concordance(s), Counts::Concordance(t)) => {
+            Some(Counts::Concordance([0, 1, 2].map(|i| s[i] + t[i])))
+        }
+        (Counts::None, Counts::None) => Some(Counts::None),
+        _ => None,
+    })
 }
 
 /// A Category Group's cell counts what its member categories' cells count:
@@ -390,7 +390,7 @@ fn a_group_cell_sums_its_members() {
                 prop_assert_eq!(cell.n_dropped, sum(|c| c.n_dropped), "{} n_dropped", name);
                 let entries: Option<u64> = parts.iter().map(|c| c.n_entries).sum();
                 prop_assert_eq!(cell.n_entries, entries, "{} n_entries", name);
-                prop_assert_eq!(cell.counts, summed(&parts), "{} counts", name);
+                prop_assert_eq!(Some(cell.counts), summed(&parts), "{} counts", name);
                 checked.fetch_add(usize::from(cell.n > 0), Ordering::Relaxed);
             }
             Ok(())

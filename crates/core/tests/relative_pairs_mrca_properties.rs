@@ -1,6 +1,7 @@
 //! The MRCA of each exported entry checked against its definition (ADR
 //! 0013, issue #31 item 4): an ancestor of both members at the category's
-//! meioses, through either parent, rather than the walk's first hit.
+//! meioses, through either parent, whose paths down to the members part
+//! at it (two distinct children of it), rather than the walk's first hit.
 
 #![expect(
     clippy::expect_used,
@@ -57,12 +58,30 @@ fn up(parents: &HashMap<i64, Vec<i64>>, id: i64, k: u8) -> BTreeSet<i64> {
     level
 }
 
+/// Whether `m` is where the paths from `a` (`up` meioses) and `b` (`down`,
+/// at least 1) meet: a parent of two distinct ancestors `x` of `a`
+/// `up - 1` meioses up and `y` of `b` `down - 1` up.  A grandparent
+/// reached through one child, both members' ancestor, is not.
+fn parts_at(parents: &HashMap<i64, Vec<i64>>, m: i64, a: i64, b: i64, up_: u8, down: u8) -> bool {
+    let children = |v: BTreeSet<i64>| -> BTreeSet<i64> {
+        v.into_iter()
+            .filter(|x| parents.get(x).is_some_and(|p| p.contains(&m)))
+            .collect()
+    };
+    let (xs, ys) = (
+        children(up(parents, a, up_ - 1)),
+        children(up(parents, b, down - 1)),
+    );
+    xs.iter().any(|x| ys.iter().any(|y| x != y))
+}
+
 /// Cases in an ordinary run: each fits every cell with its SE and
 /// influences.
 const CASES: u32 = 32;
 
 /// Every entry's MRCA is `up` meioses above its first member and `down`
-/// above its second (the second itself for a lineal category); an MZ
+/// above its second (the second itself for a lineal category), where
+/// the two paths part; an MZ
 /// pair's is a parent of both, or `-1` when it has none.  A symmetric
 /// pair's two orientations share one MRCA.
 #[test]
@@ -112,6 +131,13 @@ fn every_mrca_is_a_common_ancestor_at_the_categorys_meioses() {
                             where_,
                             d
                         );
+                        if d > 0 {
+                            prop_assert!(
+                                parts_at(&parents, m, a, b, u, d),
+                                "{}: the paths do not part at it",
+                                where_
+                            );
+                        }
                     }
                     if cell.symmetric {
                         let key = (a.min(b), a.max(b));
