@@ -19,4 +19,4 @@ for root in runs:
     for k in (1, 2, 3):
         new = pl.read_parquet(root / f"rep{k}/pedigree.parquet").select(cols)
         old = pl.read_parquet(stored / f"rep{k}/pedigree.parquet").select(cols)
-        print(f"{root} rep{k}: identical to the stored pedigree: {new.equals(old)}")
+        print(f"{root.parent.name}/{root.name} rep{k}: identical to the stored pedigree: {new.equals(old)}")

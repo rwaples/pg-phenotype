@@ -186,7 +186,7 @@ Rejected:
   scenarios).  Issue #21 traced it to the grid's seeds: the three scenarios
   share most of their pedigrees, and on 400 fresh pedigrees with the same
   parameters the cell calibrates (1.018 from the reps' simACE source, 0.968
-  from the current simACE, whose `--rust` run gives the same 0.968).  It is
+  from simACE 8b46ab4, whose `--rust` run gives the same 0.968).  It is
   not a missing link, and the clusters stand (gate README, finding 5 of the
   shipped SE).
 

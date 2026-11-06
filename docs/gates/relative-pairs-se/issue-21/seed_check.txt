@@ -1,0 +1,6 @@
+se_calibration_fo21_seedcheck/se_cal_fo21_seedcheck rep1: identical to the stored pedigree: False
+se_calibration_fo21_seedcheck/se_cal_fo21_seedcheck rep2: identical to the stored pedigree: False
+se_calibration_fo21_seedcheck/se_cal_fo21_seedcheck rep3: identical to the stored pedigree: False
+se_calibration_fo21_old_check/se_cal_lam3_K10 rep1: identical to the stored pedigree: True
+se_calibration_fo21_old_check/se_cal_lam3_K10 rep2: identical to the stored pedigree: True
+se_calibration_fo21_old_check/se_cal_lam3_K10 rep3: identical to the stored pedigree: True

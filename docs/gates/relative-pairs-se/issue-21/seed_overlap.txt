@@ -57,6 +57,23 @@ trait2 FO gen5: K10 vs K02 on 90 shared seeds, max |r10 - r02| = 0.00e+00
   se_cal_lam3_K02: 100 reps, SD(r)/mean SE = 1.021
   se_cal_lam3_K10_hiA: 100 reps, SD(r)/mean SE = 1.039
 
+trait1 FO gen5 r̂ on shared seeds, per scenario pair:
+  se_cal_lam05_K02 & se_cal_lam05_K10: 90 seeds, max |gap| 0.00e+00, cor 1.000
+  se_cal_lam05_K02 & se_cal_lam05_K10_hiA: 70 seeds, max |gap| 1.56e-01, cor 0.909
+  se_cal_lam05_K02 & se_cal_lam3_K02: 80 seeds, max |gap| 3.25e-02, cor -0.122
+  se_cal_lam05_K02 & se_cal_lam3_K10: 90 seeds, max |gap| 3.25e-02, cor -0.056
+  se_cal_lam05_K02 & se_cal_lam3_K10_hiA: 60 seeds, max |gap| 1.76e-01, cor -0.102
+  se_cal_lam05_K10 & se_cal_lam05_K10_hiA: 60 seeds, max |gap| 1.56e-01, cor 0.916
+  se_cal_lam05_K10 & se_cal_lam3_K02: 70 seeds, max |gap| 3.25e-02, cor -0.128
+  se_cal_lam05_K10 & se_cal_lam3_K10: 80 seeds, max |gap| 3.25e-02, cor -0.061
+  se_cal_lam05_K10 & se_cal_lam3_K10_hiA: 50 seeds, max |gap| 1.76e-01, cor -0.154
+  se_cal_lam05_K10_hiA & se_cal_lam3_K02: 90 seeds, max |gap| 1.74e-01, cor -0.143
+  se_cal_lam05_K10_hiA & se_cal_lam3_K10: 80 seeds, max |gap| 1.74e-01, cor -0.162
+  se_cal_lam05_K10_hiA & se_cal_lam3_K10_hiA: 90 seeds, max |gap| 2.61e-02, cor -0.105
+  se_cal_lam3_K02 & se_cal_lam3_K10: 90 seeds, max |gap| 0.00e+00, cor 1.000
+  se_cal_lam3_K02 & se_cal_lam3_K10_hiA: 80 seeds, max |gap| 1.58e-01, cor 0.943
+  se_cal_lam3_K10 & se_cal_lam3_K10_hiA: 70 seeds, max |gap| 1.58e-01, cor 0.944
+
 P(SD of 110 N(0,1) >= 1.258) = 1.30e-04
 gate Pearson cells: 816; with ratio >= 1.18: 5
 shape: (5, 5)

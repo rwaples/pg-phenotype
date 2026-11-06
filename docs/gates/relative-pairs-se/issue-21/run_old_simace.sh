@@ -6,7 +6,7 @@
 # Usage: OLD=<dir> PY=<simACE>/.pixi/envs/default/bin/python \
 #            bash run_old_simace.sh FIRST_SEED N_REPS OUT_DIR [JOBS]
 # Rep k gets seed FIRST_SEED + k - 1 and writes OUT_DIR/rep{k}/pedigree.parquet.  Seeds 55030-55032
-# reproduce the stored se_cal_lam3_K10 reps 1-3 (seed_check.py); the issue's run used 920000, 400 reps.
+# reproduce the stored se_cal_lam3_K10 reps 1-3 (seed_check.py); the issue run: 920000 400 <dir>/se_cal_old_lam3_K10.
 set -euo pipefail
 OLD=${OLD:?set OLD to the extracted b2181f9 tree}
 PY=${PY:?set PY to a python with simACE's dependencies}

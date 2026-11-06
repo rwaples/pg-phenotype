@@ -74,6 +74,16 @@ for trait, cell in (("trait1", "FO"), ("trait1", "MO"), ("trait2", "FO")):
         own = c.filter(scenario=s)
         print(f"  {s}: {len(own)} reps, SD(r)/mean SE = {own['r'].std() / own['se_parent'].mean():.3f}")
 
+# Every scenario pair on its shared seeds: same pedigree parameters (only K differs) give the same
+# r̂; a different λ or A does not, though the seed's stream starts the same.
+print("\ntrait1 FO gen5 r̂ on shared seeds, per scenario pair:")
+c = d.filter(trait="trait1", gen=5, cell="FO")
+for a, b in itertools.combinations(sorted(by), 2):
+    m = c.filter(scenario=a).select("seed", ra="r").join(c.filter(scenario=b).select("seed", rb="r"), on="seed")
+    if len(m):
+        gap = (m["ra"] - m["rb"]).abs().max()
+        print(f"  {a} & {b}: {len(m)} seeds, max |gap| {gap:.2e}, cor {np.corrcoef(m['ra'], m['rb'])[0, 1]:.3f}")
+
 # A calibrated cell's SD(r̂)/SE over k reps is about the SD of k standard normals (the SE's own CV,
 # 2-7%, is ignored).  Its tail probability, and the gate's Pearson cells (pooled and stratum,
 # mean n >= 1000) as far out.

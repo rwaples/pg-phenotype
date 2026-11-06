@@ -6,10 +6,16 @@ parent is too (the gate's cell): r̂ = Pearson(L_parent, L_child), the parent-cl
 (the MRCA design for a lineal stratum cell), and the covariance split by the child's liability
 components:  L_c = A_f/2 + A_m/2 + M_c + C_c + E_c,  M_c the Mendelian sampling term.
 
-Also each rep's realized mate correlation of liability among generation g's children's parents,
-and mates per parent.  Writes one row per rep x trait x gen x role to the TSV named by --out.
+Also `mate_r` / `mate_rA`, the correlation of the two parents' liability / A over generation g's
+children (one entry per child, so a couple counts once per child: an offspring-weighted mate
+correlation, not a per-couple one), and mates per parent.  Writes one row per
+rep x trait x gen x role to the TSV named by --out.
 
-    pixi run python -B docs/gates/relative-pairs-se/issue-21/fo_probe.py /data/Documents/simACE/results/se_calibration \
+Reps are the `se_cal_*/rep*` directories with a run.yaml (complete simACE reps).  With
+--pedigree-only they are those with a pedigree.parquet and no cohort is read: every row counts as
+observed, as it is in generations 4-5 of these scenarios (n = 20000 per cell).
+
+    pixi run python -B docs/gates/relative-pairs-se/issue-21/fo_probe.py <simACE>/results/se_calibration \
         --out docs/gates/relative-pairs-se/issue-21/fo_probe.tsv --jobs 10
 """
 
@@ -29,12 +35,21 @@ def cluster_se(phi: np.ndarray, key: np.ndarray) -> float:
     return math.sqrt((s**2).sum()) / len(phi)
 
 
-def rep_rows(rep_dir: Path) -> list[dict]:
+def rep_rows(rep_dir: Path, pedigree_only: bool = False) -> list[dict]:
     """One row per trait x child generation x parent role of one rep."""
     ped = pl.read_parquet(rep_dir / "pedigree.parquet")
-    # A pedigree-only rep (no cohort) counts every row as observed.
-    cohort = pl.read_parquet(rep_dir / "cohort.parquet") if (rep_dir / "cohort.parquet").exists() else None
     n = len(ped)
+    # Ids index rows below, as in the gate tool's load_rep.
+    if not (ped["id"] == pl.int_range(n, eager=True)).all():
+        raise ValueError(f"{rep_dir}: ids are not rows")
+    cohort = None if pedigree_only else pl.read_parquet(rep_dir / "cohort.parquet")
+    if cohort is not None:
+        kept = np.zeros(n, dtype=bool)
+        kept[cohort["id"].to_numpy()] = True
+        for col in ("mother", "father"):
+            parent = ped[col].to_numpy()[cohort["id"].to_numpy()]
+            if not kept[parent[parent >= 0]].all():
+                raise ValueError(f"{rep_dir}: the cohort drops a recorded parent of its rows")
     gen = ped["generation"].to_numpy()
     mother, father = ped["mother"].to_numpy(), ped["father"].to_numpy()
     rows_out = []
@@ -101,10 +116,12 @@ def main() -> None:
     ap.add_argument("root", type=Path)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--jobs", type=int, default=4)
+    ap.add_argument("--pedigree-only", action="store_true", help="reps without a cohort: every row observed")
     a = ap.parse_args()
-    reps = sorted(p for p in a.root.glob("se_cal_*/rep*") if (p / "pedigree.parquet").exists())
+    marker = "pedigree.parquet" if a.pedigree_only else "run.yaml"
+    reps = sorted(p for p in a.root.glob("se_cal_*/rep*") if (p / marker).exists())
     with ProcessPoolExecutor(a.jobs) as ex:
-        rows = [row for rr in ex.map(rep_rows, reps) for row in rr]
+        rows = [row for rr in ex.map(rep_rows, reps, [a.pedigree_only] * len(reps)) for row in rr]
     pl.DataFrame(rows).write_csv(a.out, separator="\t", float_precision=6)
     print(f"{len(reps)} reps -> {a.out}")
 

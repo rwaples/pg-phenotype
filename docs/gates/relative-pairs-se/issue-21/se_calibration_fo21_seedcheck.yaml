@@ -1,0 +1,22 @@
+# pg-phenotype #21: rerun the first three seeds of se_calibration's se_cal_lam3_K10 (55030-55032)
+# on the current simACE, to check that it reproduces the stored pedigrees (simace 0.1.1.dev38).
+# If it does, se_calibration_fo21 differs from the gate's reps by seed alone.
+
+se_cal_fo21_seedcheck:
+  seed: 55030
+  replicates: 3
+  N: 20000
+  pedigree:
+    mating_lambda: 3.0
+    p_mztwin: 0.02
+    trait1: {A: 0.5, C: 0.0, E: 0.5}
+    trait2: {A: 0.4, C: 0.2, E: 0.4}
+  phenotype:
+    trait1:
+      model: adult
+      params: {method: ltm, cip_x0: 50, cip_k: 0.2, prevalence: 0.10}
+      beta: 1.0
+    trait2:
+      model: adult
+      params: {method: ltm, cip_x0: 50, cip_k: 0.2, prevalence: 0.10}
+      beta: 1.0

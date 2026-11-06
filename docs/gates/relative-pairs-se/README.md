@@ -46,7 +46,11 @@ per-rep rows, which are not kept here (about 40 MB).
 simACE `config/se_calibration.yaml`: six scenarios, 100 reps each, N 20000
 per generation, 6 pedigree generations of which the last 3 are phenotyped
 (the cohort's `affected{t}` is null before generation 3).  The reps'
-`run.yaml` records simace `0.1.1.dev38+gec3d0a396`.
+`run.yaml` records simace `0.1.1.dev38+gec3d0a396` (stale package metadata)
+and `source: v0.1.0-44-gb2181f9-dirty`, the tree they were built from.  A
+clean `b2181f9` rebuilds reps 1-3 of `se_cal_lam3_K10` identically (3 reps
+checked; `issue-21/seed_check.txt`), so the dirty changes did not touch the
+pedigree.
 
 | scenario | `mating_lambda` | K | trait1 A, C | trait2 A, C |
 |---|---|---|---|---|
@@ -61,9 +65,13 @@ The scenarios share seeds (issue #21).  simACE seeds rep k with `seed + k -
 1`, and the base seeds are 10 apart (55010-55060), so the 600 reps hold 150
 distinct seeds.  Scenarios with the same pedigree parameters and a different
 K (the two λ 0.5 and the two λ 3 scenarios at A 0.5) share 90 seeds, and on
-those reps the pedigree and every liability are identical.  Contrasts across
-K therefore compare largely the same pedigrees, and the six scenarios are not
-independent replicates of a cell (`issue-21/seed_overlap.txt`).
+those reps the pedigree and every liability are identical: trait1's FO r̂ in
+generation 5 differs by 0.  The high-A scenario shares 60-80 seeds with each
+scenario at its λ, and there its r̂ correlates 0.909-0.944 with theirs.
+Seeds shared across λ give unrelated pedigrees (r̂ correlates -0.162 to
+-0.056).  Contrasts across K therefore compare largely the same pedigrees,
+contrasts across A partly so, and the six scenarios are not independent
+replicates of a cell (`issue-21/seed_overlap.txt`).
 
 Cells: the 12 categories up to degree 3, plus the groups PO (MO, FO) and HS
 (MHS, PHS); each pooled and in each generation's stratum (ADR 0012's rule);
@@ -264,8 +272,11 @@ columns to 4 decimals.
    shares 70 with K 0.10, on which r̂ correlates 0.944.  Matched by rep
    index the K 0.10 and K 0.02 r̂ correlate 0.021, which made them look
    independent.  Over the 110 distinct A 0.5 pedigrees the ratio is 1.258.
-   A calibrated cell reaches that with probability 1.3e-4 over 110 reps,
-   against 816 Pearson cells in this gate.  The excess is spread over many
+   That is far out for one calibrated cell (tail probability about 1.3e-4
+   over 110 reps, from a normal-theory Monte Carlo), and the gate's 816
+   Pearson cells are too correlated (shared seeds, pooled against stratum
+   cells) to turn that into a family-wise chance.  So the count alone does
+   not settle it; the fresh reps below do.  The excess is spread over many
    reps: no rep lies more than 2.75 SE from the mean, and dropping the five
    farthest leaves 1.156 (`issue-21/seed_overlap.txt`).
 
@@ -274,18 +285,19 @@ columns to 4 decimals.
    | 400 reps of `se_cal_lam3_K10`, seeds | simACE | trait1 FO gen5 (bootstrap 95%) |
    |---|---|---|
    | 920000-920399 | the reps' source, `b2181f9` | 1.018 (0.950-1.082) |
-   | 910000-910399 | current (`se_calibration_fo21.yaml`) | 0.968 (0.899-1.036) |
+   | 910000-910399 | `8b46ab4` (`issue-21/se_calibration_fo21.yaml`) | 0.968 (0.899-1.036) |
 
    `b2181f9` rebuilds the stored reps 1-3 of `se_cal_lam3_K10` seed for
-   seed; the current simACE does not, since simACE #78 changed the random
-   stream.  In both runs trait1's MO and trait2's FO in generation 5 sit at
+   seed; `8b46ab4` does not, since simACE #78 changed the random stream
+   (`issue-21/seed_check.txt`).  In both runs trait1's MO and trait2's FO in generation 5 sit at
    0.961-0.992
    (`issue-21/fo21_old_summary.txt`, `issue-21/fo21_summary.txt`, from the
    parent-cluster SE of `issue-21/fo_probe.py`, which reproduces this cell's
    `rust` ratio to 4 decimals).  The shipped SE through `--rust` on the 400
-   current reps gives the cell 0.968 with coverage 0.958, and medians per
+   `8b46ab4` reps gives the cell 0.968 with coverage 0.958, and medians per
    category type, estimator and fit of 0.998-1.032 with coverage
    0.940-0.953 (`issue-21/fo21_rust_summary.tsv`).  So the excess belongs to
    the pedigrees the λ 3 scenarios share, not to the cluster design or to
    serial mating, and ADR 0013 needs no new link.  `issue-21/reproduce.sh`
-   regenerates the probe outputs; its header gives the simulation commands.
+   regenerates every output there (`--rust` for the Rust tables); its
+   header gives the simulation commands.
