@@ -410,7 +410,7 @@ fn reordering_the_traits_swaps_the_ace_fit() {
 /// test in one row order and fails it in the other, so the cross solve
 /// is GLS one way and pairs the other.
 #[test]
-#[ignore = "finding: the default weights' Cholesky test depends on the row order; notes/handoff-pgp-issue-31.md"]
+#[ignore = "fails: the default weights' Cholesky test depends on the row order (#33)"]
 fn reordering_the_traits_swaps_the_default_weighted_ace_fit() {
     ace_fit_swaps(None);
 }

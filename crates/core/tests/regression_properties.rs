@@ -132,7 +132,7 @@ fn an_affine_map_and_a_row_shuffle_keep_the_slopes() {
                 // covers the scores' rounding, not the means'.  The SEs
                 // agree within the tolerance above; the Wald test (none
                 // for a zero SE, p = 0 for a round-off one) is compared
-                // only past round-off.
+                // only past round-off (#34).
                 let past_round_off =
                     |se: Result<f64, Reason>| se.is_ok_and(|v| v > 1e-9 * s.slope.abs().max(1.0));
                 if !(past_round_off(s.se) && past_round_off(t.se)) {

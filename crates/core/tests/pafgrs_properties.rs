@@ -377,7 +377,7 @@ fn a_bivariate_score_ignores_the_probands_own_record() {
 /// concordant MZ case pair's own variance clamps to 0 from `h2 = 0.7`, and
 /// their parents and sib score NaN from `h2 = 0.8`.
 #[test]
-#[ignore = "finding: NaN scores with inbred MZ twins at high h2; notes/handoff-pgp-issue-31.md"]
+#[ignore = "fails: NaN scores with inbred MZ twins at high h2 (#32)"]
 fn univariate_scores_are_finite() {
     check(
         "uni finite",
