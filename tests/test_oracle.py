@@ -9,6 +9,9 @@ from tests.pedigrees import random_pedigree
 from tests.scoring_fixtures import observe, proband_view, random_trait
 
 TOL = 1e-10
+# How far below zero a refused proband's covariance must reach: clear of the
+# rounding of a positive semidefinite matrix's smallest eigenvalue.
+INDEFINITE = 1e-12
 
 
 @pytest.mark.parametrize("seed", range(5))
@@ -39,10 +42,12 @@ def test_univariate_matches_reference(seed, ndegree):
         order = reference.canonical_univariate_order(w[rows], kin_p, kin, ped["id"][rows])
         est, var = reference.pa_fgrs_core(t1, t2, w[rows], cov, order)
         if np.isnan(got.est[i]):
-            # Refused (ADR 0015): the pedigree is inbred, and the reference
-            # shows the negative variance as a NaN or as its clamp's 0.
+            # Refused (ADR 0015): the covariance is not positive
+            # semidefinite, and the reference shows the negative variance
+            # as a NaN or as its clamp's 0.
             refused += 1
             assert np.isnan(got.var[i]), i
+            assert np.linalg.eigvalsh(cov).min() < -INDEFINITE, i
             assert np.isnan(est) or var == 0.0, i
             continue
         assert got.est[i] == pytest.approx(est, abs=TOL), i
@@ -113,6 +118,7 @@ def test_bivariate_matches_reference(seed, ndegree):
             # that is not a covariance.
             refused += 1
             assert np.isnan(have).all(), i
+            assert np.linalg.eigvalsh(cov).min() < -INDEFINITE, i
             assert np.isnan(want).any() or min(want[2], want[3]) == 0.0 or want[4] ** 2 > want[2] * want[3], i
             continue
         assert have == pytest.approx(want, abs=TOL), i

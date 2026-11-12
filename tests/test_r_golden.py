@@ -33,6 +33,7 @@ def test_univariate_matches_r_pafgrs(directory, case):
     got = pafgrs.score_univariate(prep, trait, age=data["age"], cip=cip, h2=case["h2"])
     idx = data["proband_index"]
     assert len(idx) == case["n_scored"] > 50
+    assert got.metadata["covariance_not_psd"] == 0
     np.testing.assert_allclose(got.est[idx], data["est"], rtol=0, atol=TOL)
     np.testing.assert_allclose(got.var[idx], data["var"], rtol=0, atol=TOL)
     unscored = np.setdiff1d(np.arange(prep.n_probands), idx)

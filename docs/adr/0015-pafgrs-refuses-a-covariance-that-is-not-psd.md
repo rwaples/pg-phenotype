@@ -51,10 +51,10 @@ other trait even at `rg = 0`.
   covariance one, so a negative variance proves the matrix was not.  It
   shows in one of three places: an observation's variance given the ones
   before it, which stops the conditioning; the posterior variance of a
-  target; or, in a bivariate score, the two targets' block, when
-  `cov12^2 > var1 var2`.  Each has `1e-9` of slack: nearer zero than that
-  is rounding, and is taken as zero.  A posterior that is not finite is
-  refused the same way.
+  target; or, in a bivariate score, the two targets' block, when a unit
+  combination of the two has a negative variance.  Each has `1e-9` of
+  slack: nearer zero than that is taken as rounding, and as zero.  A
+  posterior that is not finite is refused the same way.
 - **Such a proband's `est` and `var` (bivariate: both traits' and `cov12`)
   are NaN**, and the result's metadata counts these probands in
   `covariance_not_psd`.  `n_relatives` and `n_obs` are still the counts.
@@ -78,12 +78,19 @@ it.
 
 ## Consequences
 
-- A proband refused now scored NaN or a variance of 0 before.  Every other
-  score is bit for bit what it was; `pafgrs_properties.rs` holds an
-  outbred pedigree's scores from before.
+- A proband refused now scored NaN or a variance of 0 before, or, in a
+  bivariate score, finite values whose block was not a covariance (the R
+  parity fixture `case09`, proband 1609: a posterior correlation of 1.05).
+- A score that was finite before and is not refused is bit for bit what it
+  was; `pafgrs_properties.rs` holds an outbred pedigree's scores from
+  before.  One kind of score is new: where an observation's variance
+  given the ones before it lies in `[-1e-9, 0)`, the old code gave NaN and
+  R gives NaN; the observation now carries no information and the score
+  is finite and uncounted.  On issue #32's pedigree that window is about
+  `1e-9` wide in `h2`.
 - The refused probands are those for which R's `pa_fgrs` returns NaN or a
-  `postVar` below `-1e-9`, and bivariate probands whose target block is
-  not a covariance (R has no bivariate score).  Where R returns a finite
+  `postVar` below `-1e-9` (but for that window), and bivariate probands
+  whose target block is not a covariance (R has no bivariate score).  Where R returns a finite
   score with a positive
   variance from an indefinite matrix (the table's 0.75 row, the fixture's
   4 probands), so does pg-phenotype, uncounted.  Such a score is not a

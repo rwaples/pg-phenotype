@@ -313,9 +313,11 @@ impl Scratch {
         let cov12 = self.cov.get(0, 1);
         // Rounding alone: `is_posterior` bounds how far below zero.
         let clamped = var.map(|v| v.max(0.0));
-        // The targets' block is a covariance too: no combination of the two
-        // genetic liabilities has a negative variance.
-        let block = cov12 * cov12 <= clamped[0] * clamped[1] + pa::VARIANCE_SLACK;
+        // The targets' block is a covariance too: no unit combination of
+        // the two genetic liabilities has a variance below the slack, which
+        // is the block with the slack on its diagonal being one.
+        let block =
+            cov12 * cov12 <= (clamped[0] + pa::VARIANCE_SLACK) * (clamped[1] + pa::VARIANCE_SLACK);
         if !(done && pa::is_posterior(&[est[0], est[1], cov12], &var) && block) {
             return One {
                 est: [f64::NAN; 2],

@@ -126,9 +126,9 @@ impl Ests for BivScores {
     }
 }
 
-/// A univariate result's scores and counts, bit for bit.
 type UniBits<'a> = (&'a [i64], Vec<u64>, Vec<u64>, &'a [u32], [usize; 2]);
 
+/// A univariate result's scores and counts, bit for bit.
 fn uni_bits(s: &UniScores) -> UniBits<'_> {
     (
         &s.ids,
@@ -759,6 +759,76 @@ fn a_refused_bivariate_proband_is_nan_on_both_traits_and_counted() {
             assert_eq!((joint.est[0][k], joint.var[0][k]), (0.0, 0.8), "{k}");
         }
     }
+}
+
+/// Twin 8 a case on both traits and twin 7 the proband, at an `h2` where
+/// each posterior variance is positive but the two estimates' block has an
+/// eigenvalue near `-1e-8` (a determinant short by `5e-10`): refused.
+#[test]
+fn a_bivariate_block_with_a_negative_eigenvalue_is_refused() {
+    let ped = sib_mated();
+    let prep = prep(&ped, 1);
+    let cips = [cip(false), cip(false)];
+    let mut status = [NA; 9];
+    status[7] = 1.0;
+    let records = [
+        (status.to_vec(), vec![NA; 9]),
+        (status.to_vec(), vec![NA; 9]),
+    ];
+    let params = BivParams::new([0.6114444314569172; 2], 0.1, None).expect("valid");
+    let joint = biv(&prep, &records, &cips, params);
+    assert!(joint.est[0][6].is_nan() && joint.cov12[6].is_nan());
+    assert!(joint.covariance_not_psd >= 1);
+}
+
+/// Every bivariate proband has finite scores whose block is a covariance,
+/// or is NaN throughout and counted; `rg` reaches both ends, where the
+/// block is singular.
+#[test]
+fn a_bivariate_score_is_a_covariance_or_counted_as_not_psd() {
+    check(
+        "biv finite",
+        CASES / 2,
+        1.0,
+        (
+            biv_case(),
+            prop_oneof![Just(-1.0), Just(-0.5), Just(0.3), Just(1.0)],
+        ),
+        |((ped, ndegree, dice, steps, h2, _, _), rg), checked| {
+            let prep = prep(&ped, ndegree);
+            let cips = steps.map(cip);
+            let params = BivParams::new(h2, rg, None).expect("valid parameters");
+            let records = [record(&dice[0], ped.len()), record(&dice[1], ped.len())];
+            let s = biv(&prep, &records, &cips, params);
+            let mut refused = 0;
+            for k in 0..s.ids.len() {
+                let all = [
+                    s.est[0][k],
+                    s.est[1][k],
+                    s.var[0][k],
+                    s.var[1][k],
+                    s.cov12[k],
+                ];
+                if all.iter().all(|x| x.is_nan()) {
+                    refused += 1;
+                    continue;
+                }
+                let (v1, v2, c) = (s.var[0][k], s.var[1][k], s.cov12[k]);
+                prop_assert!(
+                    all.iter().all(|x| x.is_finite())
+                        && v1 >= 0.0
+                        && v2 >= 0.0
+                        && c * c <= (v1 + 1e-9) * (v2 + 1e-9),
+                    "proband {}: {:?}",
+                    s.ids[k],
+                    all
+                );
+            }
+            prop_assert_eq!(s.covariance_not_psd, refused);
+            checked.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        },
+    );
 }
 
 /// `got` against scores recorded as bits on x86_64 Linux: bit for bit
