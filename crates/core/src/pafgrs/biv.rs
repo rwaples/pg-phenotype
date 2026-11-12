@@ -100,9 +100,9 @@ pub struct BivScores {
     pub prevalence: [f64; 2],
     pub threshold: [f64; 2],
     pub controls_without_age: [usize; 2],
-    /// Probands not scored, every estimate, variance and `cov12` NaN:
-    /// conditioning met a negative variance, so the joint Pearson-Aitken
-    /// covariance was not positive semidefinite (ADR 0015).
+    /// Probands not scored, every estimate, variance and `cov12` NaN: the
+    /// joint Pearson-Aitken covariance was not positive semidefinite
+    /// (ADR 0015).
     pub covariance_not_psd: usize,
     pub ndegree: u8,
 }
@@ -307,7 +307,10 @@ impl Scratch {
             }
             self.obs.push(obs[t].obs(key.row as usize));
         }
-        let done = pa::condition(&mut self.cov, &mut self.mu, 2, &self.obs, &mut self.col);
+        // Only an inbred member can make the covariance indefinite, so
+        // the others skip the factorization.
+        let psd = !rel.any_inbred(&self.people) || self.cov.is_psd(&mut self.col);
+        let done = psd && pa::condition(&mut self.cov, &mut self.mu, 2, &self.obs, &mut self.col);
         let est = [self.mu[0], self.mu[1]];
         let var = [self.cov.get(0, 0), self.cov.get(1, 1)];
         let cov12 = self.cov.get(0, 1);

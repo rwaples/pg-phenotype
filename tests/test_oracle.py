@@ -9,9 +9,11 @@ from tests.pedigrees import random_pedigree
 from tests.scoring_fixtures import observe, proband_view, random_trait
 
 TOL = 1e-10
-# How far below zero a refused proband's covariance must reach: clear of the
-# rounding of a positive semidefinite matrix's smallest eigenvalue.
+# A refused proband's covariance has an eigenvalue below -INDEFINITE, clear of
+# the rounding of a positive semidefinite matrix's smallest one; a scored
+# proband's has none below -PSD, clear of the scorer's own 1e-9 slack.
 INDEFINITE = 1e-12
+PSD = 1e-6
 
 
 @pytest.mark.parametrize("seed", range(5))
@@ -41,15 +43,15 @@ def test_univariate_matches_reference(seed, ndegree):
         t2 = np.where(affected[rows], np.inf, thr)
         order = reference.canonical_univariate_order(w[rows], kin_p, kin, ped["id"][rows])
         est, var = reference.pa_fgrs_core(t1, t2, w[rows], cov, order)
+        smallest = np.linalg.eigvalsh(cov).min()
         if np.isnan(got.est[i]):
             # Refused (ADR 0015): the covariance is not positive
-            # semidefinite, and the reference shows the negative variance
-            # as a NaN or as its clamp's 0.
+            # semidefinite, whatever the reference made of it.
             refused += 1
             assert np.isnan(got.var[i]), i
-            assert np.linalg.eigvalsh(cov).min() < -INDEFINITE, i
-            assert np.isnan(est) or var == 0.0, i
+            assert smallest < -INDEFINITE, i
             continue
+        assert smallest > -PSD, i
         assert got.est[i] == pytest.approx(est, abs=TOL), i
         assert got.var[i] == pytest.approx(var, abs=TOL), i
     assert got.metadata["covariance_not_psd"] == refused
@@ -112,14 +114,14 @@ def test_bivariate_matches_reference(seed, ndegree):
         )
         want = reference.pa_fgrs_bivariate_core(lower, upper, w, cov, order)
         have = (got.est1[i], got.est2[i], got.var1[i], got.var2[i], got.cov12[i])
+        smallest = np.linalg.eigvalsh(cov).min() if m else 0.0
         if np.isnan(got.est1[i]):
-            # Refused (ADR 0015), whole: the reference shows the negative
-            # variance as a NaN, as its clamp's 0, or as a target block
-            # that is not a covariance.
+            # Refused (ADR 0015), whole: the joint covariance is not
+            # positive semidefinite, whatever the reference made of it.
             refused += 1
             assert np.isnan(have).all(), i
-            assert np.linalg.eigvalsh(cov).min() < -INDEFINITE, i
-            assert np.isnan(want).any() or min(want[2], want[3]) == 0.0 or want[4] ** 2 > want[2] * want[3], i
+            assert smallest < -INDEFINITE, i
             continue
+        assert smallest > -PSD, i
         assert have == pytest.approx(want, abs=TOL), i
     assert got.metadata["covariance_not_psd"] == refused

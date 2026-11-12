@@ -148,7 +148,8 @@ def test_a_covariance_that_is_not_psd_scores_nan_and_is_counted():
     assert np.isfinite(fine.est).all()
     assert np.isfinite(fine.var).all()
 
-    # At h2 = 0.8 the twins, their parents (5, 6) and their sib (9) are refused.
+    # At h2 = 0.8 no covariance holding a twin is positive semidefinite: the
+    # twins, their parents (5, 6) and their sib (9) are refused.
     refused = [False] * 4 + [True] * 5
     got = pafgrs.score_univariate(prep, twins.trait, age=twins.age, cip=twins.cip, h2=0.8)
     assert got.metadata["covariance_not_psd"] == 5

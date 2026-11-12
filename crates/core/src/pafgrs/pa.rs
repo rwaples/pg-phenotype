@@ -40,10 +40,49 @@ impl UpperCov {
         debug_assert!(a <= b && b < self.size);
         self.v[col_start(b) + a]
     }
+
+    /// Whether the matrix is positive semidefinite within
+    /// [`VARIANCE_SLACK`], by a Cholesky factorization `U'U` of a copy in
+    /// `work`.  A pivot within the slack of zero is a null direction: its
+    /// row of `U` is zero, which a semidefinite matrix allows only when
+    /// what is left of the row already vanishes.
+    pub(crate) fn is_psd(&self, work: &mut Vec<f64>) -> bool {
+        work.clear();
+        work.extend_from_slice(&self.v);
+        for b in 0..self.size {
+            let (done, column) = work.split_at_mut(col_start(b));
+            for a in 0..b {
+                let ca = col_start(a);
+                let dot: f64 = done[ca..ca + a]
+                    .iter()
+                    .zip(&column[..a])
+                    .map(|(x, y)| x * y)
+                    .sum();
+                let rest = column[a] - dot;
+                let pivot = done[ca + a];
+                column[a] = if pivot > 0.0 {
+                    rest / pivot
+                } else if rest * rest > VARIANCE_SLACK {
+                    // Bounded by the two pivots' product; a diagonal is at
+                    // most 1.
+                    return false;
+                } else {
+                    0.0
+                };
+            }
+            let d = column[b] - column[..b].iter().map(|x| x * x).sum::<f64>();
+            if d < -VARIANCE_SLACK {
+                return false;
+            }
+            column[b] = if d > VARIANCE_SLACK { d.sqrt() } else { 0.0 };
+        }
+        true
+    }
 }
 
-/// How far below zero a variance may fall while conditioning and still be
-/// rounding; a covariance's entries are at most of order 1.
+/// How far below zero a variance may fall, in [`UpperCov::is_psd`] or
+/// while conditioning, and still be rounding; a covariance's entries are at
+/// most of order 1.
 pub(crate) const VARIANCE_SLACK: f64 = 1e-9;
 
 /// Whether the targets' block [`condition`] left is a posterior: every
@@ -291,6 +330,43 @@ mod tests {
         assert!(!is_posterior(&[est], &[var]));
         let (done, ..) = given_cases(&[&[0.8, 0.8, 0.8], &[0.8, 1.0, 1.1], &[0.8, 1.1, 1.0]]);
         assert!(!done);
+    }
+
+    #[test]
+    fn is_psd_tells_a_covariance_from_an_indefinite_matrix() {
+        let mut work = vec![7.0; 3];
+        let psd: [&[&[f64]]; 5] = [
+            &[],
+            &[&[0.0]],
+            &[&[0.5, 0.25, 0.25], &[0.25, 1.0, 0.25], &[0.25, 0.25, 1.0]],
+            // Singular: an MZ pair at h2 = 1, and a null first direction.
+            &[&[1.0, 1.0, 0.5], &[1.0, 1.0, 0.5], &[0.5, 0.5, 1.0]],
+            &[&[0.0, 0.0], &[0.0, 1.0]],
+        ];
+        for rows in psd {
+            assert!(upper(rows).is_psd(&mut work), "{rows:?}");
+        }
+        let indefinite: [&[&[f64]]; 4] = [
+            &[&[-0.1]],
+            // Issue #32: an inbred MZ twin at h2 = 0.7, and the twins as two
+            // relatives at h2 = 0.75, which conditioning does not notice.
+            &[&[0.7, 0.9625], &[0.9625, 1.0]],
+            &[
+                &[0.75, 0.75, 0.75],
+                &[0.75, 1.0, 1.03125],
+                &[0.75, 1.03125, 1.0],
+            ],
+            // A null direction that still covaries.
+            &[&[0.0, 0.5], &[0.5, 1.0]],
+        ];
+        for rows in indefinite {
+            let cov = upper(rows);
+            let before = cov.v.clone();
+            assert!(!cov.is_psd(&mut work), "{rows:?}");
+            assert_eq!(cov.v, before, "the test reads a copy");
+        }
+        let (done, est, var) = given_cases(indefinite[2]);
+        assert!(done && is_posterior(&[est], &[var]), "{est} {var}");
     }
 
     /// An observation's variance that rounding put below zero is zero: the

@@ -2,25 +2,24 @@
 
 ## Unreleased
 
-- PA-FGRS refuses a proband whose conditioning meets a negative variance
+- PA-FGRS refuses a proband whose covariance is not positive semidefinite
   (issue #32, ADR 0015). The covariance takes no inbreeding on its
   diagonal, as BioPsyk/PAFGRS's does, so with an inbred proband or
-  relative it can stop being positive semidefinite: inbred MZ twins
-  (`F = 3/8`) above `h2 = 0.53`. Such a proband now gets NaN in `est` and
-  `var` (bivariate: `est1`, `est2`, `var1`, `var2`, `cov12`) and is
-  counted in the new metadata key `covariance_not_psd`, which follows
-  `controls_without_age`. Before, it scored NaN with no reason given or a
-  variance clamped to 0, and in a bivariate score the NaN reached the
-  other trait. A bivariate proband is also refused when its two estimates'
-  block is not a covariance (a posterior correlation beyond 1); it scored
-  finite values before. In a univariate score the refused probands are
-  those for which R's `pa_fgrs` returns NaN or a `postVar` below `-1e-9`.
-  A score that was finite before and is not refused is bit-identical. A
-  proband with an indefinite covariance whose conditioning meets no
-  negative variance is still scored, uncounted, as in R. Code that
-  reads the scores must expect NaN where `covariance_not_psd > 0`; code
-  that compares the metadata keys must add the new one. Putting
-  inbreeding on the diagonal is issue #36.
+  relative it can stop being a covariance: inbred MZ twins (`F = 3/8`)
+  above `h2 = 0.53`. Such a proband now gets NaN in `est` and `var`
+  (bivariate: `est1`, `est2`, `var1`, `var2`, `cov12`) and is counted in
+  the new metadata key `covariance_not_psd`, which follows
+  `controls_without_age`. Before, it scored NaN with no reason given, a
+  variance clamped to 0, or a finite value from an indefinite matrix, and
+  in a bivariate score the NaN reached the other trait. Every other score
+  is bit-identical. R's `pa_fgrs` scores some of these probands with a
+  positive variance, so on an inbred pedigree pg-phenotype now refuses
+  probands R scores: 4 of 82 on the stored fixture `seed2_ndeg1_h2_0.75`.
+  A proband with an inbred member pays one factorization per score. Code
+  that reads the
+  scores must expect NaN where `covariance_not_psd > 0`; code that
+  compares the metadata keys must add the new one. Putting inbreeding on
+  the diagonal is issue #36.
 
 - Packaging: releases no longer build a macOS x86_64 wheel. Four abi3 wheels
   remain (Linux x86_64 and aarch64, macOS arm64, Windows x86_64); on an Intel

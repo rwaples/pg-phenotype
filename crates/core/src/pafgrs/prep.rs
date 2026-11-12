@@ -54,6 +54,11 @@ pub struct Prep {
     pub(crate) chunks: Vec<Chunk>,
     /// `(chunk, member)` of each proband, in ascending row order.
     locate: Vec<(u32, u32)>,
+    /// Per pedigree row, whether it may be inbred: its parents are not
+    /// proven to share no ancestor ([`Terminals::disjoint`]).  Every inbred
+    /// row is flagged; a row whose parents' terminal sets overflowed is
+    /// flagged without being inbred.
+    inbred: Vec<bool>,
 }
 
 /// The probands of consecutive sibship groups and their relatives.
@@ -82,9 +87,24 @@ pub(crate) struct Relatives<'a> {
     pub(crate) kin: &'a [f32],
     tri: &'a Triangle,
     tri_base: usize,
+    /// The proband's row.
+    proband: u32,
+    /// [`Prep::inbred`].
+    inbred: &'a [bool],
 }
 
 impl Relatives<'_> {
+    /// Whether the proband or a relative at `positions` may be inbred.
+    /// With none, the Pearson-Aitken covariance is positive semidefinite:
+    /// `2 phi` with a unit diagonal is then the members' relatedness matrix
+    /// (ADR 0015).
+    pub(crate) fn any_inbred(&self, positions: &[usize]) -> bool {
+        self.inbred[self.proband as usize]
+            || positions
+                .iter()
+                .any(|&j| self.inbred[self.rows[j] as usize])
+    }
+
     /// Kinship between relatives `j < k`.
     #[inline]
     pub(crate) fn pair(&self, j: usize, k: usize) -> f32 {
@@ -109,13 +129,15 @@ impl Relatives<'_> {
 }
 
 impl Chunk {
-    pub(crate) fn relatives(&self, m: usize) -> Relatives<'_> {
+    pub(crate) fn relatives<'a>(&'a self, m: usize, inbred: &'a [bool]) -> Relatives<'a> {
         let range = self.rel_start[m] as usize..self.rel_start[m + 1] as usize;
         Relatives {
             rows: &self.rel_row[range.clone()],
             kin: &self.rel_kin[range],
             tri: &self.tri,
             tri_base: self.tri_start[m],
+            proband: self.rows[m],
+            inbred,
         }
     }
 
@@ -180,7 +202,7 @@ impl Prep {
                     .out
                     .iter()
                     .enumerate()
-                    .map(|(m, &out)| (out, score(s, chunk.relatives(m))))
+                    .map(|(m, &out)| (out, score(s, chunk.relatives(m, &self.inbred))))
                     .collect()
             })
             .collect();
@@ -193,7 +215,7 @@ impl Prep {
 
     pub(crate) fn proband(&self, i: usize) -> Relatives<'_> {
         let (c, m) = self.locate[i];
-        self.chunks[c as usize].relatives(m as usize)
+        self.chunks[c as usize].relatives(m as usize, &self.inbred)
     }
 
     /// Proband `i`'s (ascending order) relative rows and their kinship to it.
@@ -212,6 +234,7 @@ impl Prep {
     /// Bytes held by the relative lists and the triangles.
     pub fn bytes(&self) -> usize {
         self.ids.len() * 8
+            + self.inbred.len()
             + self.locate.len() * 8
             + self.chunks.iter().map(Chunk::bytes).sum::<usize>()
     }
@@ -261,8 +284,16 @@ pub fn prepare(
 
     let depth = topology::structural_depth(built.mother_rows(), built.father_rows());
     let kped = built.columns().kinship(&depth)?;
+    let terminals = Terminals::build(kped.mother(), kped.father(), kped.twin(), kped.depth());
+    let inbred = kped
+        .mother()
+        .iter()
+        .zip(kped.father())
+        .map(|(&m, &f)| m >= 0 && f >= 0 && !terminals.disjoint(m as u32, f as u32))
+        .collect();
     let chunks = walk_chunks(
         kped,
+        &terminals,
         &Walk {
             probands: &probands,
             candidates: &candidates,
@@ -282,6 +313,7 @@ pub fn prepare(
         ndegree,
         chunks,
         locate,
+        inbred,
     })
 }
 
@@ -499,6 +531,7 @@ struct Recurrence<'a> {
 /// and a scratch row-to-position map.
 fn walk_chunks(
     kped: KinshipPedigree<'_>,
+    terminals: &Terminals,
     walk: &Walk<'_>,
     groups: &[Vec<u32>],
 ) -> Result<Vec<Chunk>, Error> {
@@ -513,13 +546,12 @@ fn walk_chunks(
     }
     let n_chunks = bounds.len() - 1;
     let index = KinshipIndex::new(&kped)?;
-    let terminals = Terminals::build(kped.mother(), kped.father(), kped.twin(), kped.depth());
     let rec = Recurrence {
         mother: kped.mother(),
         father: kped.father(),
         twin: kped.twin(),
         depth: kped.depth(),
-        terminals: &terminals,
+        terminals,
     };
     let slots: Vec<Mutex<Option<Chunk>>> = (0..n_chunks).map(|_| Mutex::new(None)).collect();
 
@@ -842,6 +874,26 @@ mod tests {
         let prep = prepare(input(&ids, &mother, &father), 1, None).unwrap();
         assert_eq!(prep.relatives(4).0, &[2]);
         assert_eq!(prep.relatives(3).0, &[0, 1, 2]);
+    }
+
+    /// Rows 4 and 5 are children of the full sibs in rows 2 and 3
+    /// (`F = 1/4`); only they are inbred, so only a member list holding one
+    /// is.
+    #[test]
+    fn any_inbred_reads_the_proband_and_the_listed_relatives() {
+        let ids = [10, 11, 1, 2, 3, 4];
+        let mother = [-1, -1, 10, 10, 1, 1];
+        let father = [-1, -1, 11, 11, 2, 2];
+        let prep = prepare(input(&ids, &mother, &father), 1, None).unwrap();
+        assert_eq!(prep.inbred, [false, false, false, false, true, true]);
+        // Row 2's relatives: its parents and sib, then its children.
+        let parent = prep.proband(2);
+        assert_eq!(parent.rows, &[0, 1, 3, 4, 5]);
+        assert!(!parent.any_inbred(&[]));
+        assert!(!parent.any_inbred(&[0, 1, 2]));
+        assert!(parent.any_inbred(&[0, 4]));
+        // An inbred proband, whatever its relatives.
+        assert!(prep.proband(4).any_inbred(&[]));
     }
 
     #[test]

@@ -379,8 +379,7 @@ fn a_bivariate_score_ignores_the_probands_own_record() {
 /// Every univariate score is finite with `var >= 0`, or `est` and `var`
 /// are both NaN and the proband is counted in `covariance_not_psd` (issue
 /// #32): the generator's inbred MZ twins give covariances that are not
-/// positive semidefinite, and conditioning some of them meets a negative
-/// variance.
+/// positive semidefinite.
 #[test]
 fn a_univariate_score_is_finite_or_counted_as_not_psd() {
     check(
@@ -463,11 +462,9 @@ fn a_bivariate_score_with_rg_zero_is_two_univariate_scores() {
             let records = [record(&dice[0], ped.len()), record(&dice[1], ped.len())];
             let joint = biv(&prep, &records, &cips, params);
             let unis = [0, 1].map(|t| uni(&prep, &records[t].0, &records[t].1, &cips[t], h2[t]));
-            // The joint covariance is the two traits' blocks and each
-            // trait's observations keep their order, so the joint
-            // conditioning meets a negative variance exactly when one
-            // trait's does: the joint score is then NaN on both traits and
-            // counted once.
+            // The joint covariance is the two traits' blocks, so it is not
+            // positive semidefinite exactly when one of them is not: the
+            // joint score is then NaN on both traits and counted once.
             let refused = |k: usize| unis.iter().any(|u| u.est[k].is_nan());
             let mut n_refused = 0;
             for k in 0..joint.ids.len() {
@@ -669,14 +666,14 @@ fn sib_mated() -> Ped {
 /// each twin (`[[h2, 11/8 h2], [11/8 h2, 1]]`) is not positive
 /// semidefinite above `h2 = 64/121`, and that of their parents and sib
 /// (relatives' block `[[1, 11/8 h2], [11/8 h2, 1]]`) above `h2 = 8/11`.
-/// A proband is refused, scored NaN and counted, where conditioning meets
-/// a negative variance: the twins from 0.7, their parents and sib from 0.8
-/// (at 0.75 the second twin's variance given the first is still positive).
-/// These are the scores for which R PAFGRS's `pa_fgrs` returns a negative
-/// `postVar` or NaN on the same covariance; the others equal its (to
-/// its printed digits).
+/// A proband is refused, scored NaN and counted, exactly there: the twins
+/// from 0.7, their parents and sib from 0.75.  At 0.75 conditioning alone
+/// would not notice (the second twin's variance given the first is still
+/// positive, and R PAFGRS's `pa_fgrs` returns 1.35655).  The scores not
+/// refused equal `pa_fgrs`'s on the same covariance, to its printed
+/// digits.
 #[test]
-fn inbred_mz_twins_are_refused_where_conditioning_meets_a_negative_variance() {
+fn inbred_mz_twins_are_refused_where_the_covariance_is_not_psd() {
     let ped = sib_mated();
     let prep = prep(&ped, 1);
     let cip = cip(false);
@@ -688,7 +685,7 @@ fn inbred_mz_twins_are_refused_where_conditioning_meets_a_negative_variance() {
     for (h2, sib_est, twin_var) in [
         (0.5, 1.11413, 0.107287),
         (0.7, 1.32979, NA),
-        (0.75, 1.35655, NA),
+        (0.75, NA, NA),
         (0.8, NA, NA),
         (1.0, NA, NA),
     ] {

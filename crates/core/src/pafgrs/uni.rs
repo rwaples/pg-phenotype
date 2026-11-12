@@ -27,9 +27,8 @@ pub struct UniScores {
     pub threshold: f64,
     /// Controls with no age, scored as unobserved.
     pub controls_without_age: usize,
-    /// Probands not scored, `est` and `var` NaN: conditioning met a
-    /// negative variance, so the Pearson-Aitken covariance was not positive
-    /// semidefinite (ADR 0015).
+    /// Probands not scored, `est` and `var` NaN: the Pearson-Aitken
+    /// covariance was not positive semidefinite (ADR 0015).
     pub covariance_not_psd: usize,
     /// The prep's degree.
     pub ndegree: u8,
@@ -182,7 +181,10 @@ impl Scratch {
             }
             self.obs.push(obs.obs(key.row as usize));
         }
-        let done = pa::condition(&mut self.cov, &mut self.mu, 1, &self.obs, &mut self.col);
+        // Only an inbred member can make the covariance indefinite, so
+        // the others skip the factorization.
+        let psd = !rel.any_inbred(&self.valid) || self.cov.is_psd(&mut self.col);
+        let done = psd && pa::condition(&mut self.cov, &mut self.mu, 1, &self.obs, &mut self.col);
         let (est, var) = (self.mu[0], self.cov.get(0, 0));
         if !(done && pa::is_posterior(&[est], &[var])) {
             return One {
