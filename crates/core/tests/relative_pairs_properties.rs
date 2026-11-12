@@ -261,8 +261,8 @@ impl Group {
 /// influence is itself a sum of terms that cancel (to almost nothing when
 /// `r` is near ±1), each of order `1/n` times the `(mx/sx)²` of
 /// `Quadratic::standardised`, which is above 1 on a nearly constant side.
-/// The worst-case counts leave room for that: the largest gap in 607389
-/// SEs at release depth was 0.096 of the allowance.
+/// The worst-case counts leave room for that; commit 9ab7eb2 records the
+/// headroom measured when the allowance was set.
 fn meat(first: &[i64], second: &[i64], mrca: &[i64], phi: &[f64]) -> (f64, f64) {
     let mut cluster: BTreeMap<(i64, i64), Group> = BTreeMap::new();
     let mut member: BTreeMap<i64, Group> = BTreeMap::new();
