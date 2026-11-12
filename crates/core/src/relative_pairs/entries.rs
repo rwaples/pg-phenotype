@@ -357,7 +357,7 @@ mod tests {
     use crate::input::PedigreeInput;
     use crate::input::{Trait, TraitKind};
     use crate::pedigree::PedigreeArg;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     fn noise(i: usize) -> f64 {
         ((i * 7919 + 13) % 101) as f64 / 101.0
@@ -424,11 +424,12 @@ mod tests {
     type Key = (i64, i64, i64);
 
     /// The meat `Σ_m Φ_m² + Σ_i S_i² − Σ_(i,m) S_(i,m)²` of one estimate's
-    /// influences `phi` on `entries`.
+    /// influences `phi` on `entries`, summed in key order, so the same in
+    /// every process.
     fn meat(entries: &CellEntries, phi: &[f64]) -> f64 {
-        let mut by_mrca: HashMap<Key, f64> = HashMap::new();
-        let mut by_person: HashMap<i64, f64> = HashMap::new();
-        let mut by_both: HashMap<(i64, Key), f64> = HashMap::new();
+        let mut by_mrca: BTreeMap<Key, f64> = BTreeMap::new();
+        let mut by_person: BTreeMap<i64, f64> = BTreeMap::new();
+        let mut by_both: BTreeMap<(i64, Key), f64> = BTreeMap::new();
         for (e, &p) in phi.iter().enumerate() {
             let (a, b) = (entries.first_id[e], entries.second_id[e]);
             let m = match entries.mrca_id[e] {
