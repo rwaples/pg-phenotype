@@ -10,7 +10,7 @@
 
 mod common;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 
 use common::{check, codes, kind, outbred_pedigree, pedigree, trait_of, values, Ped};
@@ -227,33 +227,74 @@ fn flipping_the_levels_keeps_the_binary_correlations() {
     );
 }
 
-/// The inclusion-exclusion meat of ADR 0013 over one cell's entries, and
-/// its scale (the three sums of squares, added): `Σ_m Φ_m² + Σ_i S_i² −
-/// Σ_(i,m) S_(i,m)²`, a pair with no MRCA its own cluster, each entry
-/// counted for both of its members.
+/// One group's influences: their sum, the sum of their sizes, and how many
+/// there are.
+#[derive(Clone, Copy, Default)]
+struct Group {
+    sum: f64,
+    size: f64,
+    entries: f64,
+}
+
+impl Group {
+    /// Add the influence `phi`, counted in the size as `|phi| + floor`.
+    fn add(&mut self, phi: f64, floor: f64) {
+        self.sum += phi;
+        self.size += phi.abs() + floor;
+        self.entries += 1.0;
+    }
+}
+
+/// The inclusion-exclusion meat of ADR 0013 over one cell's entries, and a
+/// bound on its rounding: `Σ_m Φ_m² + Σ_i S_i² − Σ_(i,m) S_(i,m)²`, a pair
+/// with no MRCA its own cluster, each entry counted for both of its
+/// members.  The groups are summed in key order, so a seed replays.
+///
+/// The bound, in units of `ε`, is `Σ_g (8 n_g + 2 G) A_g²` over all `G`
+/// groups, `n_g` a group's entries and `A_g = Σ (|φ| + 1/n)` over them,
+/// `n` the cell's entries.  A group's sum rounds by at most `2 n_g ε A_g`
+/// (the engine adds a cluster's entries twice, once per member), so its
+/// square by `4 n_g ε A_g²`, and adding the `G` squares by at most
+/// `G ε Σ A_g²`; the engine and this oracle each round so, in different
+/// orders.  An entry counts as `|φ| + 1/n`, never by a signed sum: a
+/// group whose influences cancel rounds by their sizes, and an influence's
+/// own terms are of order `1/n` before they cancel, so it rounds by about
+/// `ε/n` however small it is (every one is small when `r` is near ±1).
 fn meat(first: &[i64], second: &[i64], mrca: &[i64], phi: &[f64]) -> (f64, f64) {
-    let mut cluster: HashMap<(i64, i64), f64> = HashMap::new();
-    let mut member: HashMap<i64, f64> = HashMap::new();
-    let mut member_cluster: HashMap<(i64, (i64, i64)), f64> = HashMap::new();
+    let mut cluster: BTreeMap<(i64, i64), Group> = BTreeMap::new();
+    let mut member: BTreeMap<i64, Group> = BTreeMap::new();
+    let mut member_cluster: BTreeMap<(i64, (i64, i64)), Group> = BTreeMap::new();
+    let floor = 1.0 / phi.len() as f64;
     for e in 0..phi.len() {
         let key = if mrca[e] == -1 {
             (-1 - first[e].min(second[e]), first[e].max(second[e]))
         } else {
             (mrca[e], -1)
         };
-        *cluster.entry(key).or_default() += phi[e];
+        cluster.entry(key).or_default().add(phi[e], floor);
         for i in [first[e], second[e]] {
-            *member.entry(i).or_default() += phi[e];
-            *member_cluster.entry((i, key)).or_default() += phi[e];
+            member.entry(i).or_default().add(phi[e], floor);
+            member_cluster
+                .entry((i, key))
+                .or_default()
+                .add(phi[e], floor);
         }
     }
-    let squares = |v: Vec<f64>| v.iter().map(|x| x * x).sum::<f64>();
+    let groups = (cluster.len() + member.len() + member_cluster.len()) as f64;
+    let squares = |of: &mut dyn Iterator<Item = &Group>| {
+        of.fold((0.0, 0.0), |(squares, bound), g| {
+            (
+                squares + g.sum * g.sum,
+                bound + (8.0 * g.entries + 2.0 * groups) * g.size * g.size,
+            )
+        })
+    };
     let (c, m, mc) = (
-        squares(cluster.into_values().collect()),
-        squares(member.into_values().collect()),
-        squares(member_cluster.into_values().collect()),
+        squares(&mut cluster.values()),
+        squares(&mut member.values()),
+        squares(&mut member_cluster.values()),
     );
-    (c + m - mc, c + m + mc)
+    (c.0 + m.0 - mc.0, c.1 + m.1 + mc.1)
 }
 
 /// Each SE is the root of the meat its exported influences give, and
@@ -276,8 +317,8 @@ fn the_se_is_the_meat_of_its_influences() {
                     let (Some(Ok(se)), Some(phi)) = (e.se, phi) else {
                         continue;
                     };
-                    let (meat, scale) = meat(&ent.first_id, &ent.second_id, &ent.mrca_id, phi);
-                    let tol = 4096.0 * f64::EPSILON * scale;
+                    let (meat, bound) = meat(&ent.first_id, &ent.second_id, &ent.mrca_id, phi);
+                    let tol = f64::EPSILON * bound;
                     prop_assert!(
                         (se * se - meat).abs() <= tol,
                         "{} {:?}: se² {} vs meat {}",
