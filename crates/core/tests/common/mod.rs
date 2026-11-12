@@ -254,7 +254,7 @@ fn env_count(name: &str) -> Option<u32> {
 }
 
 /// Cases for a property whose ordinary run draws `ordinary`: `ordinary`
-/// times `PROPTEST_SCALE` (default 1; `test-rust-thorough` sets 64, as the
+/// times `PROPTEST_SCALE` (default 1; `test-rust-thorough` sets 256, as the
 /// Python suite's `property_budget` scales its budgets), so a costly
 /// property keeps its smaller share at every depth.  `PROPTEST_CASES`,
 /// proptest's own variable, which its config would ignore here because
