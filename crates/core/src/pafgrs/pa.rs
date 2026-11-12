@@ -42,18 +42,16 @@ impl UpperCov {
     }
 }
 
-/// How far below zero a posterior variance may fall and still be rounding;
-/// a covariance's entries are at most of order 1.
-const VARIANCE_SLACK: f64 = 1e-9;
+/// How far below zero a variance may fall while conditioning and still be
+/// rounding; a covariance's entries are at most of order 1.
+pub(crate) const VARIANCE_SLACK: f64 = 1e-9;
 
-/// Whether what [`condition`] left is a posterior: every mean (and
-/// covariance) in `finite` is finite, and every variance is finite and not
-/// negative beyond rounding.
+/// Whether the targets' block [`condition`] left is a posterior: every
+/// mean (and covariance) in `finite` is finite, and every variance is
+/// finite and not negative beyond [`VARIANCE_SLACK`].
 ///
 /// Each step of [`condition`] keeps a positive semidefinite covariance one,
-/// so a negative variance, at a target or at an observation on the way,
-/// proves the covariance was not (ADR 0015).  One at an observation makes
-/// its moments NaN, and through them every mean.
+/// so a negative variance proves the covariance was not (ADR 0015).
 pub(crate) fn is_posterior(finite: &[f64], variances: &[f64]) -> bool {
     finite.iter().all(|x| x.is_finite())
         && variances
@@ -77,13 +75,19 @@ fn col_start(b: usize) -> usize {
 /// The arithmetic is fitACE's numba kernel operation for operation: each
 /// step updates the mean, then the upper triangle by the rank-one term
 /// `cov[a, j] * cov[b, j] * (1/v - u/v^2)`.
+///
+/// Returns `false`, leaving `cov` and `mu` half conditioned, when an
+/// observation's variance given the ones before it is below
+/// `-`[`VARIANCE_SLACK`]: the covariance was not positive semidefinite
+/// (ADR 0015).  A variance that rounding put below zero is taken as zero.
+#[must_use]
 pub(crate) fn condition(
     cov: &mut UpperCov,
     mu: &mut [f64],
     targets: usize,
     obs: &[Obs],
     col: &mut Vec<f64>,
-) {
+) -> bool {
     let size = targets + obs.len();
     debug_assert_eq!(cov.size, size);
     let v = &mut cov.v;
@@ -92,6 +96,12 @@ pub(crate) fn condition(
         let o = obs[j - targets];
         let cj = col_start(j);
         let vj = v[cj + j];
+        if vj < -VARIANCE_SLACK {
+            return false;
+        }
+        // Its square root would be NaN; a variance not below zero is kept
+        // as it is, a negative zero included.
+        let vj = if vj < 0.0 { 0.0 } else { vj };
         let (m, u) = normal::observation(mu[j], vj, o.lower, o.upper, o.w);
         let inv = if vj > 1e-30 { 1.0 / vj } else { 0.0 };
         let delta = m - mu[j];
@@ -111,6 +121,7 @@ pub(crate) fn condition(
             }
         }
     }
+    true
 }
 
 #[cfg(test)]
@@ -212,7 +223,7 @@ mod tests {
                     }
                 }
                 mu.resize(size, -7.0);
-                condition(&mut cov, &mut mu, targets, &obs, &mut col);
+                assert!(condition(&mut cov, &mut mu, targets, &obs, &mut col));
                 for a in 0..size {
                     for b in a..size {
                         assert_eq!(
@@ -243,9 +254,10 @@ mod tests {
         cov
     }
 
-    /// The posterior mean and variance of dimension 0 given cases above
-    /// `qnorm(0.9)` in every other dimension.
-    fn given_cases(rows: &[&[f64]]) -> (f64, f64) {
+    /// Whether conditioning went through, and the posterior mean and
+    /// variance of dimension 0, given cases above `qnorm(0.9)` in every
+    /// other dimension.
+    fn given_cases(rows: &[&[f64]]) -> (bool, f64, f64) {
         let mut cov = upper(rows);
         let case = Obs {
             lower: 1.2815515655446004,
@@ -253,30 +265,44 @@ mod tests {
             w: 1.0,
         };
         let mut mu = vec![0.0; rows.len()];
-        condition(
+        let done = condition(
             &mut cov,
             &mut mu,
             1,
             &vec![case; rows.len() - 1],
             &mut Vec::new(),
         );
-        (mu[0], cov.get(0, 0))
+        (done, mu[0], cov.get(0, 0))
     }
 
     /// Issue #32's covariances, inbred MZ twins with kinship 11/16: a
-    /// negative target variance where a twin is the proband, and a NaN mean
-    /// where the twins are the relatives and the second's variance given
-    /// the first is negative.
+    /// negative target variance where a twin is the proband, and where the
+    /// twins are the relatives a second twin whose variance given the
+    /// first is negative, which stops the conditioning.
     #[test]
     fn an_indefinite_covariance_leaves_no_posterior() {
-        let (est, var) = given_cases(&[&[0.5, 0.6875], &[0.6875, 1.0]]);
-        assert!(is_posterior(&[est], &[var]) && var > 0.1, "{est} {var}");
-        let (est, var) = given_cases(&[&[0.7, 0.9625], &[0.9625, 1.0]]);
-        assert!(est.is_finite() && var < -0.06, "{est} {var}");
+        let (done, est, var) = given_cases(&[&[0.5, 0.6875], &[0.6875, 1.0]]);
+        assert!(
+            done && is_posterior(&[est], &[var]) && var > 0.1,
+            "{est} {var}"
+        );
+        let (done, est, var) = given_cases(&[&[0.7, 0.9625], &[0.9625, 1.0]]);
+        assert!(done && est.is_finite() && var < -0.06, "{est} {var}");
         assert!(!is_posterior(&[est], &[var]));
-        let (est, var) = given_cases(&[&[0.8, 0.8, 0.8], &[0.8, 1.0, 1.1], &[0.8, 1.1, 1.0]]);
-        assert!(est.is_nan(), "{est} {var}");
-        assert!(!is_posterior(&[est], &[var]));
+        let (done, ..) = given_cases(&[&[0.8, 0.8, 0.8], &[0.8, 1.0, 1.1], &[0.8, 1.1, 1.0]]);
+        assert!(!done);
+    }
+
+    /// An observation's variance that rounding put below zero is zero: the
+    /// step changes nothing, and no NaN reaches the target.
+    #[test]
+    fn a_variance_rounded_below_zero_is_zero() {
+        let (done, est, var) = given_cases(&[&[0.5, 0.25], &[0.25, -1e-17]]);
+        assert!(done);
+        assert_eq!(
+            (est.to_bits(), var.to_bits()),
+            (0f64.to_bits(), 0.5f64.to_bits())
+        );
     }
 
     #[test]

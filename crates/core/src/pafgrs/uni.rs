@@ -94,7 +94,7 @@ pub fn score_univariate(
         prevalence: cip.prevalence(),
         threshold: obs.threshold,
         controls_without_age: obs.controls_without_age,
-        covariance_not_psd: one.iter().filter(|o| o.est.is_nan()).count(),
+        covariance_not_psd: one.iter().filter(|o| o.refused).count(),
         ndegree: prep.ndegree(),
     })
 }
@@ -105,6 +105,8 @@ struct One {
     est: f64,
     var: f64,
     n_relatives: u32,
+    /// Not scored (ADR 0015): `est` and `var` are NaN.
+    refused: bool,
 }
 
 /// Per-worker buffers, reused across probands.
@@ -143,6 +145,7 @@ impl Scratch {
                 est: 0.0,
                 var: h2,
                 n_relatives: 0,
+                refused: false,
             };
         }
         rel.dense_kinship(&self.valid, &mut self.phi);
@@ -179,13 +182,14 @@ impl Scratch {
             }
             self.obs.push(obs.obs(key.row as usize));
         }
-        pa::condition(&mut self.cov, &mut self.mu, 1, &self.obs, &mut self.col);
+        let done = pa::condition(&mut self.cov, &mut self.mu, 1, &self.obs, &mut self.col);
         let (est, var) = (self.mu[0], self.cov.get(0, 0));
-        if !pa::is_posterior(&[est], &[var]) {
+        if !(done && pa::is_posterior(&[est], &[var])) {
             return One {
                 est: f64::NAN,
                 var: f64::NAN,
                 n_relatives: n as u32,
+                refused: true,
             };
         }
         One {
@@ -193,6 +197,7 @@ impl Scratch {
             // Rounding alone: `is_posterior` bounds how far below zero.
             var: var.max(0.0),
             n_relatives: n as u32,
+            refused: false,
         }
     }
 }

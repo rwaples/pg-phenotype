@@ -140,6 +140,8 @@ struct One {
     cov12: f64,
     n_relatives: u32,
     n_obs: [u32; 2],
+    /// Not scored (ADR 0015): every estimate, variance and `cov12` is NaN.
+    refused: bool,
 }
 
 /// Score every proband of `prep` on two traits jointly.
@@ -184,7 +186,7 @@ pub fn score_bivariate(
         prevalence: cips.map(Cip::prevalence),
         threshold: [obs[0].threshold, obs[1].threshold],
         controls_without_age: [obs[0].controls_without_age, obs[1].controls_without_age],
-        covariance_not_psd: one.iter().filter(|o| o.cov12.is_nan()).count(),
+        covariance_not_psd: one.iter().filter(|o| o.refused).count(),
         ndegree: prep.ndegree(),
     })
 }
@@ -236,6 +238,7 @@ impl Scratch {
                 cov12: cov_g,
                 n_relatives: 0,
                 n_obs,
+                refused: false,
             };
         }
         rel.dense_kinship(&self.people, &mut self.phi);
@@ -304,26 +307,32 @@ impl Scratch {
             }
             self.obs.push(obs[t].obs(key.row as usize));
         }
-        pa::condition(&mut self.cov, &mut self.mu, 2, &self.obs, &mut self.col);
+        let done = pa::condition(&mut self.cov, &mut self.mu, 2, &self.obs, &mut self.col);
         let est = [self.mu[0], self.mu[1]];
         let var = [self.cov.get(0, 0), self.cov.get(1, 1)];
         let cov12 = self.cov.get(0, 1);
-        if !pa::is_posterior(&[est[0], est[1], cov12], &var) {
+        // Rounding alone: `is_posterior` bounds how far below zero.
+        let clamped = var.map(|v| v.max(0.0));
+        // The targets' block is a covariance too: no combination of the two
+        // genetic liabilities has a negative variance.
+        let block = cov12 * cov12 <= clamped[0] * clamped[1] + pa::VARIANCE_SLACK;
+        if !(done && pa::is_posterior(&[est[0], est[1], cov12], &var) && block) {
             return One {
                 est: [f64::NAN; 2],
                 var: [f64::NAN; 2],
                 cov12: f64::NAN,
                 n_relatives: n as u32,
                 n_obs,
+                refused: true,
             };
         }
         One {
             est,
-            // Rounding alone: `is_posterior` bounds how far below zero.
-            var: var.map(|v| v.max(0.0)),
+            var: clamped,
             cov12,
             n_relatives: n as u32,
             n_obs,
+            refused: false,
         }
     }
 }

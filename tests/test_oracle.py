@@ -74,6 +74,7 @@ def test_bivariate_matches_reference(seed, ndegree):
     assert rho_within == (cov_g if rho is None else rho)
     observed = [observe(t) for t in traits]
     g = np.array([[h2[0], cov_g], [cov_g, h2[1]]])
+    refused = 0
     for i in range(n):
         rows, kin_p, kin = proband_view(prep, i)
         obs = [(x, t) for x in range(len(rows)) for t in (0, 1) if observed[t][1][rows[x]] > 0]
@@ -106,4 +107,13 @@ def test_bivariate_matches_reference(seed, ndegree):
         )
         want = reference.pa_fgrs_bivariate_core(lower, upper, w, cov, order)
         have = (got.est1[i], got.est2[i], got.var1[i], got.var2[i], got.cov12[i])
+        if np.isnan(got.est1[i]):
+            # Refused (ADR 0015), whole: the reference shows the negative
+            # variance as a NaN, as its clamp's 0, or as a target block
+            # that is not a covariance.
+            refused += 1
+            assert np.isnan(have).all(), i
+            assert np.isnan(want).any() or min(want[2], want[3]) == 0.0 or want[4] ** 2 > want[2] * want[3], i
+            continue
         assert have == pytest.approx(want, abs=TOL), i
+    assert got.metadata["covariance_not_psd"] == refused

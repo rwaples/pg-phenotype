@@ -127,13 +127,15 @@ impl Ests for BivScores {
 }
 
 /// A univariate result's scores and counts, bit for bit.
-fn uni_bits(s: &UniScores) -> (&[i64], Vec<u64>, Vec<u64>, &[u32], usize) {
+type UniBits<'a> = (&'a [i64], Vec<u64>, Vec<u64>, &'a [u32], [usize; 2]);
+
+fn uni_bits(s: &UniScores) -> UniBits<'_> {
     (
         &s.ids,
         bits(&s.est),
         bits(&s.var),
         &s.n_relatives,
-        s.controls_without_age,
+        [s.controls_without_age, s.covariance_not_psd],
     )
 }
 
@@ -144,7 +146,7 @@ type BivBits<'a> = (
     Vec<u64>,
     &'a [u32],
     &'a [Vec<u32>; 2],
-    [usize; 2],
+    [usize; 3],
 );
 
 fn biv_bits(s: &BivScores) -> BivBits<'_> {
@@ -159,7 +161,11 @@ fn biv_bits(s: &BivScores) -> BivBits<'_> {
         bits(&s.cov12),
         &s.n_relatives,
         &s.n_obs,
-        s.controls_without_age,
+        [
+            s.controls_without_age[0],
+            s.controls_without_age[1],
+            s.covariance_not_psd,
+        ],
     )
 }
 
@@ -755,6 +761,20 @@ fn a_refused_bivariate_proband_is_nan_on_both_traits_and_counted() {
     }
 }
 
+/// `got` against scores recorded as bits on x86_64 Linux: bit for bit
+/// there, and within `1e-12` on a platform whose `exp` may round another
+/// way.
+fn assert_recorded(got: &[f64], want: &[u64], what: &str) {
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        assert_eq!(bits(got), want, "{what}");
+    }
+    assert_eq!(got.len(), want.len(), "{what}");
+    for (k, (g, w)) in got.iter().zip(want).enumerate() {
+        let w = f64::from_bits(*w);
+        assert!((g - w).abs() <= 1e-12, "{what}[{k}]: {g} vs {w}");
+    }
+}
+
 /// On a pedigree with no inbred row every score is, bit for bit, what the
 /// scorer gave before it refused any proband (pg-phenotype `8d4bb5a`).
 #[test]
@@ -767,8 +787,8 @@ fn scores_without_inbreeding_are_bit_for_bit_those_before_the_refusal() {
         (1.0, &UNI_EST_H2_100, &UNI_VAR_H2_100),
     ] {
         let s = uni(&prep, &OUTBRED_STATUS[0], &OUTBRED_AGE[0], &cip, h2);
-        assert_eq!(bits(&s.est), est, "est at h2 {h2}");
-        assert_eq!(bits(&s.var), var, "var at h2 {h2}");
+        assert_recorded(&s.est, est, &format!("est at h2 {h2}"));
+        assert_recorded(&s.var, var, &format!("var at h2 {h2}"));
         assert_eq!(s.n_relatives, [7, 6, 2, 3, 8, 8, 8, 2, 6, 7, 8, 7, 7, 2]);
         assert_eq!(s.covariance_not_psd, 0);
     }
@@ -778,11 +798,11 @@ fn scores_without_inbreeding_are_bit_for_bit_those_before_the_refusal() {
     ];
     let params = BivParams::new([0.8, 0.5], -0.5, Some(-0.2)).expect("valid");
     let b = biv(&prep, &records, &[cip, self::cip(true)], params);
-    assert_eq!(bits(&b.est[0]), BIV_EST1);
-    assert_eq!(bits(&b.est[1]), BIV_EST2);
-    assert_eq!(bits(&b.var[0]), BIV_VAR1);
-    assert_eq!(bits(&b.var[1]), BIV_VAR2);
-    assert_eq!(bits(&b.cov12), BIV_COV12);
+    assert_recorded(&b.est[0], &BIV_EST1, "est1");
+    assert_recorded(&b.est[1], &BIV_EST2, "est2");
+    assert_recorded(&b.var[0], &BIV_VAR1, "var1");
+    assert_recorded(&b.var[1], &BIV_VAR2, "var2");
+    assert_recorded(&b.cov12, &BIV_COV12, "cov12");
     assert_eq!(b.covariance_not_psd, 0);
 }
 

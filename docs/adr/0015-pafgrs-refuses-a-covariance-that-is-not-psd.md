@@ -49,10 +49,12 @@ other trait even at `rg = 0`.
 - **A proband whose conditioning meets a negative variance is not
   scored.**  Each conditioning step keeps a positive semidefinite
   covariance one, so a negative variance proves the matrix was not.  It
-  shows in one of two ways: the posterior variance of a target is below
-  `-1e-9` (below that is rounding, still clamped to 0), or an
-  observation's variance given the ones before it is negative, which makes
-  its truncated moments NaN and through them every estimate.
+  shows in one of three places: an observation's variance given the ones
+  before it, which stops the conditioning; the posterior variance of a
+  target; or, in a bivariate score, the two targets' block, when
+  `cov12^2 > var1 var2`.  Each has `1e-9` of slack: nearer zero than that
+  is rounding, and is taken as zero.  A posterior that is not finite is
+  refused the same way.
 - **Such a proband's `est` and `var` (bivariate: both traits' and `cov12`)
   are NaN**, and the result's metadata counts these probands in
   `covariance_not_psd`.  `n_relatives` and `n_obs` are still the counts.
@@ -80,7 +82,9 @@ it.
   score is bit for bit what it was; `pafgrs_properties.rs` holds an
   outbred pedigree's scores from before.
 - The refused probands are those for which R's `pa_fgrs` returns NaN or a
-  negative `postVar`.  Where R returns a finite score with a positive
+  `postVar` below `-1e-9`, and bivariate probands whose target block is
+  not a covariance (R has no bivariate score).  Where R returns a finite
+  score with a positive
   variance from an indefinite matrix (the table's 0.75 row, the fixture's
   4 probands), so does pg-phenotype, uncounted.  Such a score is not a
   posterior of any model; issue #36 removes the cause.
