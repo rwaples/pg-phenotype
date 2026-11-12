@@ -100,6 +100,10 @@ pub struct BivScores {
     pub prevalence: [f64; 2],
     pub threshold: [f64; 2],
     pub controls_without_age: [usize; 2],
+    /// Probands not scored, every estimate, variance and `cov12` NaN:
+    /// conditioning met a negative variance, so the joint Pearson-Aitken
+    /// covariance was not positive semidefinite (ADR 0015).
+    pub covariance_not_psd: usize,
     pub ndegree: u8,
 }
 
@@ -117,6 +121,10 @@ impl BivScores {
             (
                 "controls_without_age",
                 Value::Counts(self.controls_without_age.map(|c| c as u64).to_vec()),
+            ),
+            (
+                "covariance_not_psd",
+                (self.covariance_not_psd as u64).into(),
             ),
             ("n_probands", (self.ids.len() as u64).into()),
             ("ndegree", u64::from(self.ndegree).into()),
@@ -176,6 +184,7 @@ pub fn score_bivariate(
         prevalence: cips.map(Cip::prevalence),
         threshold: [obs[0].threshold, obs[1].threshold],
         controls_without_age: [obs[0].controls_without_age, obs[1].controls_without_age],
+        covariance_not_psd: one.iter().filter(|o| o.cov12.is_nan()).count(),
         ndegree: prep.ndegree(),
     })
 }
@@ -296,10 +305,23 @@ impl Scratch {
             self.obs.push(obs[t].obs(key.row as usize));
         }
         pa::condition(&mut self.cov, &mut self.mu, 2, &self.obs, &mut self.col);
+        let est = [self.mu[0], self.mu[1]];
+        let var = [self.cov.get(0, 0), self.cov.get(1, 1)];
+        let cov12 = self.cov.get(0, 1);
+        if !pa::is_posterior(&[est[0], est[1], cov12], &var) {
+            return One {
+                est: [f64::NAN; 2],
+                var: [f64::NAN; 2],
+                cov12: f64::NAN,
+                n_relatives: n as u32,
+                n_obs,
+            };
+        }
         One {
-            est: [self.mu[0], self.mu[1]],
-            var: [self.cov.get(0, 0).max(0.0), self.cov.get(1, 1).max(0.0)],
-            cov12: self.cov.get(0, 1),
+            est,
+            // Rounding alone: `is_posterior` bounds how far below zero.
+            var: var.map(|v| v.max(0.0)),
+            cov12,
             n_relatives: n as u32,
             n_obs,
         }
@@ -326,6 +348,7 @@ mod tests {
                 "prevalence",
                 "threshold",
                 "controls_without_age",
+                "covariance_not_psd",
                 "n_probands",
                 "ndegree"
             ]

@@ -42,6 +42,25 @@ impl UpperCov {
     }
 }
 
+/// How far below zero a posterior variance may fall and still be rounding;
+/// a covariance's entries are at most of order 1.
+const VARIANCE_SLACK: f64 = 1e-9;
+
+/// Whether what [`condition`] left is a posterior: every mean (and
+/// covariance) in `finite` is finite, and every variance is finite and not
+/// negative beyond rounding.
+///
+/// Each step of [`condition`] keeps a positive semidefinite covariance one,
+/// so a negative variance, at a target or at an observation on the way,
+/// proves the covariance was not (ADR 0015).  One at an observation makes
+/// its moments NaN, and through them every mean.
+pub(crate) fn is_posterior(finite: &[f64], variances: &[f64]) -> bool {
+    finite.iter().all(|x| x.is_finite())
+        && variances
+            .iter()
+            .all(|v| (-VARIANCE_SLACK..f64::INFINITY).contains(v))
+}
+
 /// Where column `b` starts: the `b` columns before it hold `1 + .. + b`.
 #[inline]
 fn col_start(b: usize) -> usize {
@@ -210,6 +229,65 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A symmetric matrix from its rows.
+    fn upper(rows: &[&[f64]]) -> UpperCov {
+        let mut cov = UpperCov::default();
+        cov.reset(rows.len());
+        for (a, row) in rows.iter().enumerate() {
+            for b in a..rows.len() {
+                cov.set(a, b, row[b]);
+            }
+        }
+        cov
+    }
+
+    /// The posterior mean and variance of dimension 0 given cases above
+    /// `qnorm(0.9)` in every other dimension.
+    fn given_cases(rows: &[&[f64]]) -> (f64, f64) {
+        let mut cov = upper(rows);
+        let case = Obs {
+            lower: 1.2815515655446004,
+            upper: f64::INFINITY,
+            w: 1.0,
+        };
+        let mut mu = vec![0.0; rows.len()];
+        condition(
+            &mut cov,
+            &mut mu,
+            1,
+            &vec![case; rows.len() - 1],
+            &mut Vec::new(),
+        );
+        (mu[0], cov.get(0, 0))
+    }
+
+    /// Issue #32's covariances, inbred MZ twins with kinship 11/16: a
+    /// negative target variance where a twin is the proband, and a NaN mean
+    /// where the twins are the relatives and the second's variance given
+    /// the first is negative.
+    #[test]
+    fn an_indefinite_covariance_leaves_no_posterior() {
+        let (est, var) = given_cases(&[&[0.5, 0.6875], &[0.6875, 1.0]]);
+        assert!(is_posterior(&[est], &[var]) && var > 0.1, "{est} {var}");
+        let (est, var) = given_cases(&[&[0.7, 0.9625], &[0.9625, 1.0]]);
+        assert!(est.is_finite() && var < -0.06, "{est} {var}");
+        assert!(!is_posterior(&[est], &[var]));
+        let (est, var) = given_cases(&[&[0.8, 0.8, 0.8], &[0.8, 1.0, 1.1], &[0.8, 1.1, 1.0]]);
+        assert!(est.is_nan(), "{est} {var}");
+        assert!(!is_posterior(&[est], &[var]));
+    }
+
+    #[test]
+    fn a_posterior_is_finite_with_no_negative_variance() {
+        assert!(is_posterior(&[0.3, -2.0], &[0.0, 1.5]));
+        assert!(is_posterior(&[0.0], &[-1e-12]));
+        assert!(!is_posterior(&[0.0], &[-1e-6]));
+        assert!(!is_posterior(&[f64::NAN], &[0.1]));
+        assert!(!is_posterior(&[f64::INFINITY], &[0.1]));
+        assert!(!is_posterior(&[0.0], &[f64::NAN]));
+        assert!(!is_posterior(&[0.0], &[f64::INFINITY]));
     }
 
     #[test]

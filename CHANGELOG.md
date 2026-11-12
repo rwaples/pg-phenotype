@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- PA-FGRS refuses a proband whose conditioning meets a negative variance
+  (issue #32, ADR 0015). The covariance takes no inbreeding on its
+  diagonal, as BioPsyk/PAFGRS's does, so with an inbred proband or
+  relative it can stop being positive semidefinite: inbred MZ twins
+  (`F = 3/8`) above `h2 = 0.53`. Such a proband now gets NaN in `est` and
+  `var` (bivariate: `est1`, `est2`, `var1`, `var2`, `cov12`) and is
+  counted in the new metadata key `covariance_not_psd`, which follows
+  `controls_without_age`. Before, it scored NaN with no reason given or a
+  variance clamped to 0, and in a bivariate score the NaN reached the
+  other trait. These are the probands for which R's `pa_fgrs` returns NaN
+  or a negative `postVar`. Every other score is bit-identical. Code that
+  reads the scores must expect NaN where `covariance_not_psd > 0`; code
+  that compares the metadata keys must add the new one. Putting
+  inbreeding on the diagonal is issue #36.
+
 - Packaging: releases no longer build a macOS x86_64 wheel. Four abi3 wheels
   remain (Linux x86_64 and aarch64, macOS arm64, Windows x86_64); on an Intel
   Mac pip builds the sdist, which needs a Rust toolchain.

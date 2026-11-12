@@ -24,8 +24,13 @@ is unobserved and counted in `controls_without_age`; a case needs none.}
 A data frame with one row per proband in pedigree input-row order
   and columns `id`, `est`, `var` and `n_relatives` (relatives with
   weight > 0).  A proband with no informative relative gets `est = 0`,
-  `var = h2`.  `attr(, "metadata")` is a list: `h2`, `prevalence`,
-  `threshold`, `controls_without_age`, `n_probands`, `ndegree`,
+  `var = h2`.  A proband whose conditioning meets a negative variance
+  gets `est` and `var` `NaN` and is counted in `covariance_not_psd`: the
+  covariance takes no inbreeding on its diagonal, so with an inbred
+  proband or relative, such as inbred MZ twins at a high `h2`, it can
+  stop being positive semidefinite.
+  `attr(, "metadata")` is a list: `h2`, `prevalence`, `threshold`,
+  `controls_without_age`, `covariance_not_psd`, `n_probands`, `ndegree`,
   `pg_phenotype_version` and `pedigree_graph_core_rev`.  A
   `pgphenotype_validation_error`, in order: `trait_length_mismatch` for a
   trait that is not the pedigree's length, `trait_kind_mismatch` for one

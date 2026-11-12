@@ -43,7 +43,10 @@ both = pafgrs.score_bivariate(prep, (t1, t2), age=(a1, a2), cip=(c1, c2), h2=(0.
   inferred when unambiguous.
 - PA-FGRS takes a binary trait.  `age` is the onset age for a case and the
   last observed age for a control; a control without an age is unobserved
-  and counted.
+  and counted.  A proband whose conditioning meets a negative variance,
+  which takes an inbred proband or relative, scores NaN and is counted in
+  `metadata["covariance_not_psd"]`
+  ([ADR 0015](docs/adr/0015-pafgrs-refuses-a-covariance-that-is-not-psd.md)).
 - `probands=` restricts the scored rows; relatives are drawn from the whole
   pedigree.  Output is one record per proband in input-row order.
 - `configure_threads(n)` or `PG_PHENOTYPE_THREADS` sets the thread budget

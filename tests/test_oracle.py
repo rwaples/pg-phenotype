@@ -22,6 +22,7 @@ def test_univariate_matches_reference(seed, ndegree):
     got = pafgrs.score_univariate(prep, trait.trait, age=trait.age, cip=trait.cip, h2=h2)
     affected, w, thr = observe(trait)
     assert got.metadata["threshold"] == pytest.approx(thr, abs=1e-15)
+    refused = 0
     for i in range(n):
         rows, kin_p, kin = proband_view(prep, i)
         valid = w[rows] > 0
@@ -37,8 +38,16 @@ def test_univariate_matches_reference(seed, ndegree):
         t2 = np.where(affected[rows], np.inf, thr)
         order = reference.canonical_univariate_order(w[rows], kin_p, kin, ped["id"][rows])
         est, var = reference.pa_fgrs_core(t1, t2, w[rows], cov, order)
+        if np.isnan(got.est[i]):
+            # Refused (ADR 0015): the pedigree is inbred, and the reference
+            # shows the negative variance as a NaN or as its clamp's 0.
+            refused += 1
+            assert np.isnan(got.var[i]), i
+            assert np.isnan(est) or var == 0.0, i
+            continue
         assert got.est[i] == pytest.approx(est, abs=TOL), i
         assert got.var[i] == pytest.approx(var, abs=TOL), i
+    assert got.metadata["covariance_not_psd"] == refused
 
 
 @pytest.mark.parametrize("seed", range(4))

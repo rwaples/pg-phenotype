@@ -4,7 +4,7 @@
 
 Floats are written as C99 hex (``float.hex``), which R's ``as.numeric`` reads
 exactly, so the R tests compare against the Python scores bit for bit; ``NA``
-is a missing value.  Both packages run the same Rust core, so any difference
+is a missing value and ``NaN`` a refused score.  Both packages run the same Rust core, so any difference
 is a binding bug.  ``trait_cases.csv`` holds what ``pg_phenotype.Trait`` makes
 of a few inputs, which R's ``trait()`` must reproduce.  ``am_*`` files hold
 assortative-mating cases from the pedsum goldens: inputs, settings, and the
@@ -39,18 +39,19 @@ PEDIGREES = {
 }
 
 
-def cell(value: object) -> str:
+def cell(value: object, nan: str = "NA") -> str:
     if isinstance(value, float | np.floating):
-        return "NA" if np.isnan(value) else float(value).hex()
+        return nan if np.isnan(value) else float(value).hex()
     return str(value)
 
 
-def write(path: Path, columns: Mapping[str, object]) -> None:
+def write(path: Path, columns: Mapping[str, object], nan: str = "NA") -> None:
+    """Write *columns* as CSV, a NaN as *nan*: ``NA`` for a missing input, ``NaN`` for a refused score."""
     names = list(columns)
     with path.open("w", newline="") as f:
         out = csv.writer(f, lineterminator="\n")
         out.writerow(names)
-        out.writerows(zip(*(map(cell, np.asarray(columns[n]).tolist()) for n in names), strict=True))
+        out.writerows(zip(*([cell(v, nan) for v in np.asarray(columns[n]).tolist()] for n in names), strict=True))
 
 
 def subset(ped: dict[str, np.ndarray]) -> list[int]:
@@ -220,7 +221,7 @@ def main(out_dir: Path) -> None:
                 rho_within=case.rho_within,
             )
         name = f"case{i:02d}"
-        write(out_dir / f"expected_{name}.csv", got.to_dict())
+        write(out_dir / f"expected_{name}.csv", got.to_dict(), nan="NaN")
         meta = got.metadata
         rows.append(
             {
@@ -235,6 +236,7 @@ def main(out_dir: Path) -> None:
                 "rho_within": np.nan if case.rho_within is None else case.rho_within,
                 "rho_within_used": meta.get("rho_within", np.nan),
                 "controls_without_age": " ".join(map(str, np.ravel(np.asarray(meta["controls_without_age"])))),
+                "covariance_not_psd": meta["covariance_not_psd"],
                 "threshold": " ".join(map(cell, np.ravel(np.asarray(meta["threshold"])).tolist())),
             }
         )

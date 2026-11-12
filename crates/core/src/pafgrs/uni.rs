@@ -27,6 +27,10 @@ pub struct UniScores {
     pub threshold: f64,
     /// Controls with no age, scored as unobserved.
     pub controls_without_age: usize,
+    /// Probands not scored, `est` and `var` NaN: conditioning met a
+    /// negative variance, so the Pearson-Aitken covariance was not positive
+    /// semidefinite (ADR 0015).
+    pub covariance_not_psd: usize,
     /// The prep's degree.
     pub ndegree: u8,
 }
@@ -42,6 +46,10 @@ impl UniScores {
             (
                 "controls_without_age",
                 (self.controls_without_age as u64).into(),
+            ),
+            (
+                "covariance_not_psd",
+                (self.covariance_not_psd as u64).into(),
             ),
             ("n_probands", (self.ids.len() as u64).into()),
             ("ndegree", u64::from(self.ndegree).into()),
@@ -86,6 +94,7 @@ pub fn score_univariate(
         prevalence: cip.prevalence(),
         threshold: obs.threshold,
         controls_without_age: obs.controls_without_age,
+        covariance_not_psd: one.iter().filter(|o| o.est.is_nan()).count(),
         ndegree: prep.ndegree(),
     })
 }
@@ -171,9 +180,18 @@ impl Scratch {
             self.obs.push(obs.obs(key.row as usize));
         }
         pa::condition(&mut self.cov, &mut self.mu, 1, &self.obs, &mut self.col);
+        let (est, var) = (self.mu[0], self.cov.get(0, 0));
+        if !pa::is_posterior(&[est], &[var]) {
+            return One {
+                est: f64::NAN,
+                var: f64::NAN,
+                n_relatives: n as u32,
+            };
+        }
         One {
-            est: self.mu[0],
-            var: self.cov.get(0, 0).max(0.0),
+            est,
+            // Rounding alone: `is_posterior` bounds how far below zero.
+            var: var.max(0.0),
             n_relatives: n as u32,
         }
     }
@@ -232,6 +250,7 @@ pub(super) mod tests {
                 "prevalence",
                 "threshold",
                 "controls_without_age",
+                "covariance_not_psd",
                 "n_probands",
                 "ndegree"
             ]
@@ -239,7 +258,8 @@ pub(super) mod tests {
         assert_eq!(meta[0].1, Value::Float(0.5));
         assert_eq!(meta[1].1, Value::Float(0.1));
         assert_eq!(meta[3].1, Value::Count(1));
-        assert_eq!(meta[4].1, Value::Count(3));
-        assert_eq!(meta[5].1, Value::Count(2));
+        assert_eq!(meta[4].1, Value::Count(0));
+        assert_eq!(meta[5].1, Value::Count(3));
+        assert_eq!(meta[6].1, Value::Count(2));
     }
 }
