@@ -257,14 +257,15 @@ pub fn prepare(
     let built = pedigree.resolve()?;
     let probands = proband_rows(&built, probands)?;
     let candidates = candidates(&built, &probands, ndegree)?;
-    let groups = sibship_groups(&built, &probands);
 
     let depth = topology::structural_depth(built.mother_rows(), built.father_rows());
     let kped = built
         .columns()
         .kinship(&depth, built.mother_ids(), built.father_ids())?;
+    let founders = ExternalFounders::new(&kped)?;
+    let groups = sibship_groups(&founders, &probands);
     let chunks = walk_chunks(
-        &ExternalFounders::new(&kped)?,
+        &founders,
         &Walk {
             probands: &probands,
             candidates: &candidates,
@@ -455,16 +456,17 @@ fn candidates(built: &Validated, probands: &[u32], ndegree: u8) -> Result<Candid
     Ok(Candidates { start, rows })
 }
 
-/// Probands grouped by their two represented parents (full sibs and MZ
-/// twins); a proband missing a parent is a group of one.  Groups are in
-/// order of their first member, members ascending, as proband indices.
-fn sibship_groups(built: &Validated, probands: &[u32]) -> Vec<Vec<u32>> {
+/// Probands grouped by their two parents (full sibs and MZ twins), a shared
+/// external parent counting as its founder row; a proband missing a parent
+/// is a group of one.  Groups are in order of their first member, members
+/// ascending, as proband indices.
+fn sibship_groups(founders: &ExternalFounders<'_>, probands: &[u32]) -> Vec<Vec<u32>> {
     let mut groups: Vec<Vec<u32>> = Vec::new();
     let mut by_parents: HashMap<(i32, i32), usize> = HashMap::new();
     for (i, &row) in probands.iter().enumerate() {
         let (m, f) = (
-            built.mother_rows()[row as usize],
-            built.father_rows()[row as usize],
+            founders.mother()[row as usize],
+            founders.father()[row as usize],
         );
         if m >= 0 && f >= 0 {
             let g = *by_parents.entry((m, f)).or_insert_with(|| {
@@ -517,18 +519,17 @@ fn walk_chunks(
     }
     let n_chunks = bounds.len() - 1;
     let index = KinshipIndex::new(&founders.pedigree())?;
-    let (mother, father, twin, depth) = (
+    let terminals = Terminals::build(
         founders.mother(),
         founders.father(),
         founders.twin(),
         founders.depth(),
     );
-    let terminals = Terminals::build(mother, father, twin, depth);
     let rec = Recurrence {
-        mother,
-        father,
-        twin,
-        depth,
+        mother: founders.mother(),
+        father: founders.father(),
+        twin: founders.twin(),
+        depth: founders.depth(),
         terminals: &terminals,
     };
     let slots: Vec<Mutex<Option<Chunk>>> = (0..n_chunks).map(|_| Mutex::new(None)).collect();
@@ -537,7 +538,7 @@ fn walk_chunks(
     let workers = rayon::current_num_threads().min(n_chunks);
     (0..workers).into_par_iter().try_for_each(|_| {
         let mut walker: Option<Walker<'_>> = None;
-        let mut pos = vec![u32::MAX; mother.len()];
+        let mut pos = vec![u32::MAX; rec.mother.len()];
         loop {
             let c = next.fetch_add(1, Ordering::Relaxed);
             if c >= n_chunks {

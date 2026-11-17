@@ -16,7 +16,8 @@
 - PA-FGRS: rows that name the same external parent id (a parent id with no
   row) are now related through it. Prep resolves kinship on
   pedigree-graph's `ExternalFounders` pedigree, where each external id two
-  or more rows name is a founder (pedigree-graph #67). Half sibs by an
+  or more rows name (an MZ pair's co-twins counting once) is a founder
+  (pedigree-graph #67). Half sibs by an
   external father, and their descendants, now count as relatives and
   covary, so their scores change; before, kinship through that parent was
   0 and the threshold dropped them. A pedigree whose external ids are each

@@ -5,8 +5,10 @@
 //! founder of the kinship recurrence, so the rows that share it are related.
 //! Every relative's kinship to its proband, and every kinship among the
 //! relatives, is the pairwise walker's on that extended pedigree, bit for
-//! bit.  Renaming each external id to one no other row names gives the
-//! values of a missing parent.
+//! bit, and equals the values on the pedigree with every external id given
+//! a parentless row of its own, an oracle that never runs
+//! `ExternalFounders`.  Renaming each external id to one no other row names
+//! gives the values of a missing parent.
 
 #![expect(
     clippy::expect_used,
@@ -71,16 +73,40 @@ fn walked(ped: &Ped) -> Vec<f32> {
     phi
 }
 
+/// The lower row of `r`'s MZ pair, or `None` when `r` is no twin.
+fn pair_row(ped: &Ped, r: usize) -> Option<usize> {
+    let co = ped.ids.iter().position(|&id| id == ped.twin[r])?;
+    Some(r.min(co))
+}
+
+/// `ped` with some MZ pairs' father an external id that only the pair
+/// names (the common generator gives a twin none).
+fn twin_external(ped: &Ped, dice: &[u8]) -> Ped {
+    let mut out = ped.clone();
+    for r in 0..ped.len() {
+        if let Some(low) = pair_row(ped, r) {
+            if dice[low % dice.len()] % 3 == 0 {
+                out.father[r] = 97_000 + low as i64;
+            }
+        }
+    }
+    out
+}
+
 /// `ped` with each external father and some missing mothers renamed to one
-/// of a few shared external ids, chosen by `dice`.  Co-twins keep their
-/// parents, so they stay one genome.
+/// of a few shared external ids, chosen by `dice`.  Co-twins take the same
+/// one, so an id can be named by a pair of co-twins alone or by co-twins
+/// and other rows.
 fn shared(ped: &Ped, dice: &[u8]) -> Ped {
     let mut out = ped.clone();
     for r in 0..ped.len() {
+        let die = dice[pair_row(ped, r).unwrap_or(r) % dice.len()];
         if ped.twin[r] >= 0 {
+            if ped.father[r] >= 97_000 {
+                out.father[r] = 99_000 + i64::from(die % 3);
+            }
             continue;
         }
-        let die = dice[r % dice.len()];
         if ped.father[r] >= 99_000 {
             out.father[r] = 99_000 + i64::from(die % 3);
         }
@@ -89,6 +115,59 @@ fn shared(ped: &Ped, dice: &[u8]) -> Ped {
         }
     }
     out
+}
+
+/// `ped` with a parentless row appended for every external parent id it
+/// names, once or more: the pedigree in which no parent is external.
+fn materialized(ped: &Ped) -> Ped {
+    let mut out = ped.clone();
+    let mut external: Vec<i64> = ped
+        .mother
+        .iter()
+        .chain(&ped.father)
+        .copied()
+        .filter(|&id| id >= 0 && !ped.ids.contains(&id))
+        .collect();
+    external.sort_unstable();
+    external.dedup();
+    for id in external {
+        out.ids.push(id);
+        out.mother.push(-1);
+        out.father.push(-1);
+        out.twin.push(-1);
+    }
+    out
+}
+
+/// The relatives of every proband of `ped` and their kinship equal those of
+/// [`materialized`] `ped` with its added rows left out, bit for bit: an
+/// oracle that never runs `ExternalFounders`.
+fn matches_materialized(ped: &Ped, ndegree: i64) -> Result<(), TestCaseError> {
+    let n = ped.len() as u32;
+    let (got, want) = (prep(ped, ndegree), prep(&materialized(ped), ndegree));
+    for i in 0..got.n_probands() {
+        let (rows, kin) = got.relatives(i);
+        let (all_rows, all_kin) = want.relatives(i);
+        let kept: Vec<usize> = (0..all_rows.len()).filter(|&j| all_rows[j] < n).collect();
+        let want_rows: Vec<u32> = kept.iter().map(|&j| all_rows[j]).collect();
+        let want_kin: Vec<u32> = kept.iter().map(|&j| all_kin[j].to_bits()).collect();
+        let got_kin: Vec<u32> = kin.iter().map(|k| k.to_bits()).collect();
+        prop_assert_eq!(rows, &want_rows[..], "proband {}", i);
+        prop_assert_eq!(got_kin, want_kin, "proband {}", i);
+        for (a, &ja) in kept.iter().enumerate() {
+            for (b, &jb) in kept.iter().enumerate().skip(a + 1) {
+                prop_assert_eq!(
+                    got.pair_kinship(i, a, b).to_bits(),
+                    want.pair_kinship(i, ja, jb).to_bits(),
+                    "proband {} pair {} {}",
+                    i,
+                    a,
+                    b
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Every relative's kinship, and every kinship among a proband's
@@ -139,12 +218,15 @@ fn relatives_through_a_shared_external_id_are_the_walkers() {
     check(
         "external founders",
         CASES,
+        // About half of all cases gain one (549 of 1025 at PROPTEST_SCALE=16).
         0.2,
         (pedigree(), 1i64..=3, prop::collection::vec(any::<u8>(), 64)),
         |(ped, ndegree, dice), checked| {
+            let ped = twin_external(&ped, &dice);
             let merged = shared(&ped, &dice);
             let plain = walked(&ped);
             let gained = matches_walker(&merged, ndegree, Some(&plain))?;
+            matches_materialized(&merged, ndegree)?;
             // Adding a shared founder only adds paths, so every relative of
             // the pedigree without one stays a relative.
             let (before, after) = (prep(&ped, ndegree), prep(&merged, ndegree));
@@ -193,6 +275,7 @@ fn unshared_external_ids_are_missing_parents() {
                 }
             }
             matches_walker(&ped, ndegree, None)?;
+            matches_materialized(&ped, ndegree)?;
             checked.fetch_add(1, Ordering::Relaxed);
             Ok(())
         },

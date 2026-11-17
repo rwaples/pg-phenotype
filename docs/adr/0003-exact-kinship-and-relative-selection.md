@@ -11,9 +11,10 @@
   engine, `1 <= ndegree <= 5`) **and** whose exact kinship to `p` is at
   least `0.5^(ndegree+1) - 1e-6`.  With resolved parents exact kinship is
   at least nominal.  An external parent id (one with no row) that two or
-  more rows name is a founder of the recurrence (pedigree-graph ADR 0009,
-  amended for pedigree-graph #67; pg-phenotype #40), so rows that share one
-  are related through it and pass the threshold like any other relative.
+  more rows name, the co-twins of an MZ pair counting once, is a founder
+  of the recurrence (pedigree-graph ADR 0009, amended for pedigree-graph
+  #67; pg-phenotype #40), so rows that share one are related through it
+  and pass the threshold like any other relative.
   Before #40 the recurrence read such a parent as missing, and the
   threshold removed those pairs at kinship 0.
 - **Exact kinship everywhere.**  Proband-relative and relative-relative
@@ -52,6 +53,8 @@ pedigree-graph's `ExternalFounders`, the rows followed by one parentless
 founder row per shared external id.  Scratch indexed by row is sized to
 it; relatives are always graph rows, so no output holds a founder row.  A
 pedigree with no shared external id borrows its own columns unchanged.
+Sibship groups are formed on the same columns, so children of one mother
+and one shared external father are full sibs and share a triangle.
 
 On that pedigree prep fell from 28.8 s to 8.1 s on one thread (1.95 s on
 eight), and every sampled value stayed bit-identical to pedigree-graph's
