@@ -5,11 +5,13 @@
 - Packaging: releases no longer build a macOS x86_64 wheel. Four abi3 wheels
   remain (Linux x86_64 and aarch64, macOS arm64, Windows x86_64); on an Intel
   Mac pip builds the sdist, which needs a Rust toolchain.
-- pedigree-graph-core is pinned at pedigree-graph main (`7c533dd`), which
+- pedigree-graph-core is pinned at pedigree-graph main (`3c38c6c`), which
   adds the `relationships::query` module (pedigree-graph #52), refuses an
   id that is both a mother and a father (pedigree-graph #58), gives
-  each moments table its symmetric rule (pedigree-graph #55), and passes
-  caller-given texts through error fields (pedigree-graph #60). The
+  each moments table its symmetric rule (pedigree-graph #55), passes
+  caller-given texts through error fields (pedigree-graph #60), and makes
+  shared external parent ids founders of the kinship recurrence
+  (pedigree-graph #67). The
   Relative-Pair Correlation reads its pair blocks and moments through
   `query::pairs` and `query::moments` instead of the legacy `pair_blocks`
   and `relationship_moments`. Results are unchanged.
@@ -17,13 +19,11 @@
   row) are now related through it. Prep resolves kinship on
   pedigree-graph's `ExternalFounders` pedigree, where each external id two
   or more rows name (an MZ pair's co-twins counting once) is a founder
-  (pedigree-graph #67). Half sibs by an
-  external father, and their descendants, now count as relatives and
-  covary, so their scores change; before, kinship through that parent was
-  0 and the threshold dropped them. A pedigree whose external ids are each
-  named by one row gives bit-identical results (issue #40). This needs
-  pedigree-graph-core with `ExternalFounders`; the pin moves once that is
-  pushed.
+  (pedigree-graph #67). Half sibs by an external father, and their
+  descendants, now count as relatives and covary, so their scores change;
+  before, kinship through that parent was 0 and the threshold dropped
+  them. A pedigree whose external ids are each
+  named by one row gives bit-identical results (issue #40).
 
 ## v0.6.1
 
