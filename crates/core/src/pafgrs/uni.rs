@@ -120,6 +120,8 @@ struct Scratch {
     cov: UpperCov,
     mu: Vec<f64>,
     col: Vec<f64>,
+    /// The copy of `cov` its test factors.
+    work: Vec<f64>,
 }
 
 impl Scratch {
@@ -183,8 +185,15 @@ impl Scratch {
         }
         // Only an inbred member can make the covariance indefinite, so
         // the others skip the factorization.
-        let psd = !rel.any_inbred(&self.valid) || self.cov.is_psd(&mut self.col);
-        let done = psd && pa::condition(&mut self.cov, &mut self.mu, 1, &self.obs, &mut self.col);
+        let done = pa::condition_tested(
+            &mut self.cov,
+            &mut self.mu,
+            1,
+            &self.obs,
+            &mut self.col,
+            &mut self.work,
+            rel.any_inbred(&self.valid),
+        );
         let (est, var) = (self.mu[0], self.cov.get(0, 0));
         if !(done && pa::is_posterior(&[est], &[var])) {
             return One {

@@ -758,9 +758,11 @@ fn a_refused_bivariate_proband_is_nan_on_both_traits_and_counted() {
     }
 }
 
-/// Twin 8 a case on both traits and twin 7 the proband, at an `h2` where
-/// each posterior variance is positive but the two estimates' block has an
-/// eigenvalue near `-1e-8` (a determinant short by `5e-10`): refused.
+/// Twin 8 a case on both traits and twin 7 the proband, at an `h2` above
+/// 64/121, where the joint covariance is not positive semidefinite:
+/// refused.  Conditioning it would leave each posterior variance positive
+/// and the two estimates' block with an eigenvalue near `-1e-8`, which
+/// `pa.rs` tests on its own.
 #[test]
 fn a_bivariate_block_with_a_negative_eigenvalue_is_refused() {
     let ped = sib_mated();

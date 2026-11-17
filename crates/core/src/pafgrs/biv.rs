@@ -205,6 +205,8 @@ struct Scratch {
     cov: UpperCov,
     mu: Vec<f64>,
     col: Vec<f64>,
+    /// The copy of `cov` its test factors.
+    work: Vec<f64>,
 }
 
 impl Scratch {
@@ -309,18 +311,22 @@ impl Scratch {
         }
         // Only an inbred member can make the covariance indefinite, so
         // the others skip the factorization.
-        let psd = !rel.any_inbred(&self.people) || self.cov.is_psd(&mut self.col);
-        let done = psd && pa::condition(&mut self.cov, &mut self.mu, 2, &self.obs, &mut self.col);
+        let done = pa::condition_tested(
+            &mut self.cov,
+            &mut self.mu,
+            2,
+            &self.obs,
+            &mut self.col,
+            &mut self.work,
+            rel.any_inbred(&self.people),
+        );
         let est = [self.mu[0], self.mu[1]];
         let var = [self.cov.get(0, 0), self.cov.get(1, 1)];
         let cov12 = self.cov.get(0, 1);
         // Rounding alone: `is_posterior` bounds how far below zero.
         let clamped = var.map(|v| v.max(0.0));
-        // The targets' block is a covariance too: no unit combination of
-        // the two genetic liabilities has a variance below the slack, which
-        // is the block with the slack on its diagonal being one.
-        let block =
-            cov12 * cov12 <= (clamped[0] + pa::VARIANCE_SLACK) * (clamped[1] + pa::VARIANCE_SLACK);
+        // The two genetic liabilities' block is a covariance too.
+        let block = pa::is_block(clamped, cov12);
         if !(done && pa::is_posterior(&[est[0], est[1], cov12], &var) && block) {
             return One {
                 est: [f64::NAN; 2],

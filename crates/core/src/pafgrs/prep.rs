@@ -32,7 +32,7 @@ use pedigree_graph_core::topology;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// The deepest `ndegree` pedigree-graph-core classifies.
@@ -54,10 +54,9 @@ pub struct Prep {
     pub(crate) chunks: Vec<Chunk>,
     /// `(chunk, member)` of each proband, in ascending row order.
     locate: Vec<(u32, u32)>,
-    /// Per pedigree row, whether it may be inbred: its parents are not
-    /// proven to share no ancestor ([`Terminals::disjoint`]).  Every inbred
-    /// row is flagged; a row whose parents' terminal sets overflowed is
-    /// flagged without being inbred.
+    /// Per pedigree row, whether its parents' kinship is positive, for
+    /// every proband and every relative of one; `false` for a row that is
+    /// neither.
     inbred: Vec<bool>,
 }
 
@@ -94,9 +93,9 @@ pub(crate) struct Relatives<'a> {
 }
 
 impl Relatives<'_> {
-    /// Whether the proband or a relative at `positions` may be inbred.
-    /// With none, the Pearson-Aitken covariance is positive semidefinite:
-    /// `2 phi` with a unit diagonal is then the members' relatedness matrix
+    /// Whether the proband or a relative at `positions` is inbred.  With
+    /// none, the Pearson-Aitken covariance is positive semidefinite: `2 phi`
+    /// with a unit diagonal is then the members' relatedness matrix
     /// (ADR 0015).
     pub(crate) fn any_inbred(&self, positions: &[usize]) -> bool {
         self.inbred[self.proband as usize]
@@ -284,16 +283,8 @@ pub fn prepare(
 
     let depth = topology::structural_depth(built.mother_rows(), built.father_rows());
     let kped = built.columns().kinship(&depth)?;
-    let terminals = Terminals::build(kped.mother(), kped.father(), kped.twin(), kped.depth());
-    let inbred = kped
-        .mother()
-        .iter()
-        .zip(kped.father())
-        .map(|(&m, &f)| m >= 0 && f >= 0 && !terminals.disjoint(m as u32, f as u32))
-        .collect();
-    let chunks = walk_chunks(
+    let (chunks, inbred) = walk_chunks(
         kped,
-        &terminals,
         &Walk {
             probands: &probands,
             candidates: &candidates,
@@ -525,16 +516,19 @@ struct Recurrence<'a> {
     twin: &'a [i32],
     depth: &'a [i32],
     terminals: &'a Terminals,
+    /// Set for each row a group holds whose parents' kinship is positive.
+    /// Every worker that meets a row stores the same value, so the flags do
+    /// not depend on the thread count.
+    inbred: &'a [AtomicBool],
 }
 
 /// Chunks of consecutive groups, each built by one worker with its walker
-/// and a scratch row-to-position map.
+/// and a scratch row-to-position map, and [`Prep::inbred`].
 fn walk_chunks(
     kped: KinshipPedigree<'_>,
-    terminals: &Terminals,
     walk: &Walk<'_>,
     groups: &[Vec<u32>],
-) -> Result<Vec<Chunk>, Error> {
+) -> Result<(Vec<Chunk>, Vec<bool>), Error> {
     let mut bounds = vec![0usize];
     let mut members = 0;
     for (g, group) in groups.iter().enumerate() {
@@ -546,12 +540,15 @@ fn walk_chunks(
     }
     let n_chunks = bounds.len() - 1;
     let index = KinshipIndex::new(&kped)?;
+    let terminals = Terminals::build(kped.mother(), kped.father(), kped.twin(), kped.depth());
+    let inbred: Vec<AtomicBool> = (0..kped.len()).map(|_| AtomicBool::new(false)).collect();
     let rec = Recurrence {
         mother: kped.mother(),
         father: kped.father(),
         twin: kped.twin(),
         depth: kped.depth(),
-        terminals,
+        terminals: &terminals,
+        inbred: &inbred,
     };
     let slots: Vec<Mutex<Option<Chunk>>> = (0..n_chunks).map(|_| Mutex::new(None)).collect();
 
@@ -591,7 +588,8 @@ fn walk_chunks(
         .filter_map(|slot| slot.into_inner().unwrap_or_else(|e| e.into_inner()))
         .collect();
     debug_assert_eq!(chunks.len(), n_chunks, "a chunk slot was left empty");
-    Ok(chunks)
+    let inbred = inbred.into_iter().map(AtomicBool::into_inner).collect();
+    Ok((chunks, inbred))
 }
 
 /// One chunk as it grows, with the worker state it borrows.
@@ -701,7 +699,11 @@ impl<'w, 'a, 'p> ChunkBuilder<'w, 'a, 'p> {
             let diag = if m < 0 || f < 0 {
                 0.5
             } else {
-                0.5f32 * (1.0f32 + self.operand(m, f as u32)?)
+                let parents = self.operand(m, f as u32)?;
+                if parents > 0.0 {
+                    rec.inbred[b].store(true, Ordering::Relaxed);
+                }
+                0.5f32 * (1.0f32 + parents)
             };
             self.local[jb * d + jb] = diag;
             // Each parent's union position, `u32::MAX` when it is missing

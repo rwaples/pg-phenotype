@@ -11,8 +11,8 @@
   the new metadata key `covariance_not_psd`, which follows
   `controls_without_age`. Before, it scored NaN with no reason given, a
   variance clamped to 0, or a finite value from an indefinite matrix, and
-  in a bivariate score the NaN reached the other trait. Every other score
-  is bit-identical. R's `pa_fgrs` scores some of these probands with a
+  in a bivariate score the NaN reached the other trait. A score that was
+  finite before and is not refused is bit-identical. R's `pa_fgrs` scores some of these probands with a
   positive variance, so on an inbred pedigree pg-phenotype now refuses
   probands R scores: 4 of 82 on the stored fixture `seed2_ndeg1_h2_0.75`.
   A proband with an inbred member pays one factorization per score. Code

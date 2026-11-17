@@ -55,15 +55,15 @@ other trait even at `rg = 0`.
   The other probands of the call are scored as before.
 - **The test is a Cholesky factorization of the covariance** before the
   conditioning, with `1e-9` of slack below zero, so a matrix singular to
-  rounding (an MZ pair at `h2 = 1`) passes.  It reads the matrix alone, so
-  ADR 0004's conditioning order does not decide who is refused.
+  rounding (an MZ pair at `h2 = 1`) passes.  It eliminates the largest
+  diagonal left at each step, so it never divides by a pivot small beside
+  its row, and it reads the matrix alone: ADR 0004's conditioning order
+  does not decide who is refused.
 - **Only a proband with an inbred member is tested**: the proband itself
   or an observed relative with `F > 0`.  The others' covariance is one by
-  construction.  `prepare` keeps one flag per row: whether its parents may
-  share an ancestor, read off the terminal sets it already builds for the
-  kinship (ADR 0003).  Every inbred row is flagged.  A row whose parents'
-  sets overflowed is flagged too, which costs a factorization and changes
-  no result.
+  construction.  `prepare` keeps one flag per row: whether its parents'
+  kinship is positive, which it already computes for each proband's and
+  relative's own kinship (ADR 0003).
 - **The conditioning is checked too**, whoever the members are.  It stops
   at an observation whose variance given the ones before it is below
   `-1e-9`; a posterior that is not finite, or has a variance below `-1e-9`,
@@ -100,18 +100,25 @@ indefinite matrices were caught also depended on the conditioning order.
   `seed2_ndeg1_h2_0.75` (R variances 0.074 to 0.430), and the table's 0.75
   row.  They are now NaN and counted; `tests/test_r_golden.py` names the
   fixture's count.
-- A score that is not refused is bit for bit what it was: the test reads a
-  copy of the matrix.  `pafgrs_properties.rs` holds an outbred pedigree's
-  scores from before.
+- A score that was finite before and is not refused is bit for bit what it
+  was: the test reads a copy of the matrix.  `pafgrs_properties.rs` holds
+  an outbred pedigree's scores from before.  One kind of score is new:
+  where an observation's variance given the ones before it lies in
+  `[-1e-9, 0)`, the old code gave NaN; it is now taken as zero and the
+  score is finite.
+- With no inbred member a bivariate covariance is positive semidefinite
+  only as far as `rho_within` is consistent, and ADR 0002 allows it `1e-12`
+  of slack on a determinant, which can be an eigenvalue near `-1e-6`.  Such
+  a proband is scored when no member is inbred and refused when one is.
 - A proband refused now scored NaN, a variance of 0, or a finite value
   from an indefinite matrix before.
 - A bivariate proband is refused whole, also when only one trait's block
   is indefinite and `rg = 0`.  A caller who wants the other trait's score
   scores it alone.
 - A proband with an inbred member pays one factorization per score, about
-  the cost of its conditioning.  A pedigree with no inbreeding pays one
-  terminal-set comparison per row in `prepare` and one flag read per
-  observed relative in a score.
+  the cost of its conditioning, and each worker then holds a second
+  triangle the size of its largest covariance.  A pedigree with no
+  inbreeding pays one flag read per observed relative in a score.
 - A caller must expect NaN in `est` and `var`.  `covariance_not_psd > 0`
   says why, and `covariance_not_psd == 0` says every covariance was
   positive semidefinite.

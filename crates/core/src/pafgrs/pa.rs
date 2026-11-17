@@ -42,39 +42,52 @@ impl UpperCov {
     }
 
     /// Whether the matrix is positive semidefinite within
-    /// [`VARIANCE_SLACK`], by a Cholesky factorization `U'U` of a copy in
-    /// `work`.  A pivot within the slack of zero is a null direction: its
-    /// row of `U` is zero, which a semidefinite matrix allows only when
-    /// what is left of the row already vanishes.
-    pub(crate) fn is_psd(&self, work: &mut Vec<f64>) -> bool {
+    /// [`VARIANCE_SLACK`], by a Cholesky factorization of a copy in `work`
+    /// that always eliminates the largest diagonal left (`row` holds that
+    /// pivot's row).
+    ///
+    /// The pivot bounds its row, so no step divides by something small
+    /// beside what it divides, and the verdict does not turn on the order
+    /// of the dimensions.  Once nothing above the slack is left, what is
+    /// left must vanish: a diagonal below `-VARIANCE_SLACK`, or an
+    /// off-diagonal beyond twice the slack, is a direction of negative
+    /// variance.
+    pub(crate) fn is_psd(&self, work: &mut Vec<f64>, row: &mut Vec<f64>) -> bool {
+        let n = self.size;
         work.clear();
         work.extend_from_slice(&self.v);
-        for b in 0..self.size {
-            let (done, column) = work.split_at_mut(col_start(b));
-            for a in 0..b {
-                let ca = col_start(a);
-                let dot: f64 = done[ca..ca + a]
-                    .iter()
-                    .zip(&column[..a])
-                    .map(|(x, y)| x * y)
-                    .sum();
-                let rest = column[a] - dot;
-                let pivot = done[ca + a];
-                column[a] = if pivot > 0.0 {
-                    rest / pivot
-                } else if rest * rest > VARIANCE_SLACK {
-                    // Bounded by the two pivots' product; a diagonal is at
-                    // most 1.
-                    return false;
-                } else {
-                    0.0
-                };
+        // Entry `(a, b)` in either order.
+        let at = |a: usize, b: usize| col_start(a.max(b)) + a.min(b);
+        for k in 0..n {
+            let (mut p, mut pivot) = (k, work[at(k, k)]);
+            for j in k + 1..n {
+                let d = work[at(j, j)];
+                if d > pivot {
+                    (p, pivot) = (j, d);
+                }
             }
-            let d = column[b] - column[..b].iter().map(|x| x * x).sum::<f64>();
-            if d < -VARIANCE_SLACK {
-                return false;
+            if pivot <= VARIANCE_SLACK {
+                return (k..n).all(|b| {
+                    work[at(b, b)] >= -VARIANCE_SLACK
+                        && (k..b).all(|a| work[at(a, b)].abs() <= 2.0 * VARIANCE_SLACK)
+                });
             }
-            column[b] = if d > VARIANCE_SLACK { d.sqrt() } else { 0.0 };
+            // Dimensions k and p change places; those before k are done.
+            if p != k {
+                for i in (k + 1..n).filter(|&i| i != p) {
+                    work.swap(at(i, k), at(i, p));
+                }
+                work.swap(at(k, k), at(p, p));
+            }
+            row.clear();
+            row.extend((k + 1..n).map(|i| work[col_start(i) + k]));
+            for j in k + 1..n {
+                let c = row[j - k - 1] / pivot;
+                let start = col_start(j) + k + 1;
+                for (x, &r) in work[start..=col_start(j) + j].iter_mut().zip(row.iter()) {
+                    *x -= r * c;
+                }
+            }
         }
         true
     }
@@ -98,6 +111,14 @@ pub(crate) fn is_posterior(finite: &[f64], variances: &[f64]) -> bool {
             .all(|v| (-VARIANCE_SLACK..f64::INFINITY).contains(v))
 }
 
+/// Whether two posterior variances and their covariance are a covariance
+/// within [`VARIANCE_SLACK`]: the block with the slack on its diagonal has
+/// no negative eigenvalue, so no unit combination of the two has a variance
+/// below `-VARIANCE_SLACK`.
+pub(crate) fn is_block(var: [f64; 2], cov12: f64) -> bool {
+    cov12 * cov12 <= (var[0] + VARIANCE_SLACK) * (var[1] + VARIANCE_SLACK)
+}
+
 /// Where column `b` starts: the `b` columns before it hold `1 + .. + b`.
 #[inline]
 fn col_start(b: usize) -> usize {
@@ -119,6 +140,25 @@ fn col_start(b: usize) -> usize {
 /// observation's variance given the ones before it is below
 /// `-`[`VARIANCE_SLACK`]: the covariance was not positive semidefinite
 /// (ADR 0015).  A variance that rounding put below zero is taken as zero.
+///
+/// With `test`, the covariance is first tested itself
+/// ([`UpperCov::is_psd`], in `work`), and `false` returned untouched when
+/// it fails.  A caller passes `test` unless the covariance is positive
+/// semidefinite by construction.
+#[must_use]
+pub(crate) fn condition_tested(
+    cov: &mut UpperCov,
+    mu: &mut [f64],
+    targets: usize,
+    obs: &[Obs],
+    col: &mut Vec<f64>,
+    work: &mut Vec<f64>,
+    test: bool,
+) -> bool {
+    (!test || cov.is_psd(work, col)) && condition(cov, mu, targets, obs, col)
+}
+
+/// [`condition_tested`] without the test of the covariance.
 #[must_use]
 pub(crate) fn condition(
     cov: &mut UpperCov,
@@ -334,7 +374,7 @@ mod tests {
 
     #[test]
     fn is_psd_tells_a_covariance_from_an_indefinite_matrix() {
-        let mut work = vec![7.0; 3];
+        let (mut work, mut row) = (vec![7.0; 3], vec![7.0; 9]);
         let psd: [&[&[f64]]; 5] = [
             &[],
             &[&[0.0]],
@@ -344,9 +384,9 @@ mod tests {
             &[&[0.0, 0.0], &[0.0, 1.0]],
         ];
         for rows in psd {
-            assert!(upper(rows).is_psd(&mut work), "{rows:?}");
+            assert!(upper(rows).is_psd(&mut work, &mut row), "{rows:?}");
         }
-        let indefinite: [&[&[f64]]; 4] = [
+        let indefinite: [&[&[f64]]; 5] = [
             &[&[-0.1]],
             // Issue #32: an inbred MZ twin at h2 = 0.7, and the twins as two
             // relatives at h2 = 0.75, which conditioning does not notice.
@@ -356,17 +396,82 @@ mod tests {
                 &[0.75, 1.0, 1.03125],
                 &[0.75, 1.03125, 1.0],
             ],
-            // A null direction that still covaries.
+            // A null direction that still covaries, by a lot and by little.
             &[&[0.0, 0.5], &[0.5, 1.0]],
+            &[&[0.0, 3e-5], &[3e-5, 0.0]],
         ];
         for rows in indefinite {
             let cov = upper(rows);
-            let before = cov.v.clone();
-            assert!(!cov.is_psd(&mut work), "{rows:?}");
-            assert_eq!(cov.v, before, "the test reads a copy");
+            let before = bits(&cov.v);
+            assert!(!cov.is_psd(&mut work, &mut row), "{rows:?}");
+            assert_eq!(bits(&cov.v), before, "the test reads a copy");
         }
         let (done, est, var) = given_cases(indefinite[2]);
         assert!(done && is_posterior(&[est], &[var]), "{est} {var}");
+    }
+
+    fn bits(v: &[f64]) -> Vec<u64> {
+        v.iter().map(|x| x.to_bits()).collect()
+    }
+
+    /// Rank-deficient Gram matrices `B B'`, `B` 6 by 3 with entries spread
+    /// over six orders of magnitude, are accepted in every order of their
+    /// dimensions, and refused once `1e-3` is taken off their diagonal.
+    #[test]
+    fn is_psd_does_not_turn_on_small_pivots_or_the_order() {
+        let (mut work, mut row) = (Vec::new(), Vec::new());
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for trial in 0..2000 {
+            let b: Vec<[f64; 3]> = (0..6)
+                .map(|_| {
+                    let scale = 10f64.powf(-6.0 * next());
+                    [0; 3].map(|_| scale * (2.0 * next() - 1.0))
+                })
+                .collect();
+            let gram = |a: usize, c: usize| (0..3).map(|k| b[a][k] * b[c][k]).sum::<f64>();
+            for shift in 0..6 {
+                let at = |a: usize| (a + shift) % 6;
+                let mut cov = UpperCov::default();
+                cov.reset(6);
+                for a in 0..6 {
+                    for c in a..6 {
+                        cov.set(a, c, gram(at(a), at(c)));
+                    }
+                }
+                assert!(
+                    cov.is_psd(&mut work, &mut row),
+                    "trial {trial} shift {shift}"
+                );
+                for a in 0..6 {
+                    cov.set(a, a, gram(at(a), at(a)) - 1e-3);
+                }
+                assert!(
+                    !cov.is_psd(&mut work, &mut row),
+                    "trial {trial} shift {shift}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_block_is_a_covariance_within_the_slack() {
+        assert!(is_block([0.5, 0.4], 0.3));
+        assert!(is_block([1.0, 1.0], -1.0));
+        assert!(is_block([0.0, 0.0], 0.0));
+        assert!(!is_block([0.0, 0.0], 3e-9));
+        assert!(!is_block([1e-5, 1e-5], 3e-5));
+        // Issue #32's review: an eigenvalue near -1e-8 behind a determinant
+        // short by 5e-10.
+        assert!(!is_block(
+            [0.02983578815880361, 0.02275051922440344],
+            -0.02605341090182905
+        ));
     }
 
     /// An observation's variance that rounding put below zero is zero: the

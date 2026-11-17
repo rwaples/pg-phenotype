@@ -247,7 +247,9 @@ included.
 - Rust against NumPy reference cores (fitACE's, verbatim) given the same
   covariance and order: within 1e-10.
 - Against BioPsyk/PAFGRS's own `pa_fgrs` on stored fixtures: within 1e-10
-  (1.1e-15 observed).
+  (1.1e-15 observed) on every proband scored.  pg-phenotype refuses 4 of
+  one fixture's 82 probands, whose covariance is not positive
+  semidefinite; R scores them (ADR 0015).
 - Every kinship value bit-identical to pedigree-graph's `pair_kinship`.
 
 ## Correctness (Aalen-Johansen CIP)
