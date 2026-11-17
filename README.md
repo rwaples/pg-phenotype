@@ -43,7 +43,10 @@ both = pafgrs.score_bivariate(prep, (t1, t2), age=(a1, a2), cip=(c1, c2), h2=(0.
   inferred when unambiguous.
 - PA-FGRS takes a binary trait.  `age` is the onset age for a case and the
   last observed age for a control; a control without an age is unobserved
-  and counted.
+  and counted.  A proband whose covariance is not positive semidefinite,
+  which takes an inbred proband or relative, scores NaN and is counted in
+  `metadata["covariance_not_psd"]`
+  ([ADR 0015](docs/adr/0015-pafgrs-refuses-a-covariance-that-is-not-psd.md)).
 - `probands=` restricts the scored rows; relatives are drawn from the whole
   pedigree.  Output is one record per proband in input-row order.
 - `configure_threads(n)` or `PG_PHENOTYPE_THREADS` sets the thread budget
@@ -244,7 +247,9 @@ included.
 - Rust against NumPy reference cores (fitACE's, verbatim) given the same
   covariance and order: within 1e-10.
 - Against BioPsyk/PAFGRS's own `pa_fgrs` on stored fixtures: within 1e-10
-  (1.1e-15 observed).
+  (1.1e-15 observed) on every proband scored.  pg-phenotype refuses 4 of
+  one fixture's 82 probands, whose covariance is not positive
+  semidefinite; R scores them (ADR 0015).
 - Every kinship value bit-identical to pedigree-graph's `pair_kinship`.
 
 ## Correctness (Aalen-Johansen CIP)

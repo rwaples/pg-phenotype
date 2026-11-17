@@ -72,6 +72,40 @@ test_that("a proband with no informative relative gets the prior", {
   expect_identical(b$cov12, rep(0.4 * sqrt(0.3 * 0.5), 3))
 })
 
+test_that("a covariance that is not positive semidefinite scores NaN and is counted", {
+  # Issue #32: inbred MZ twins (F = 3/8), both cases, are all that is observed.
+  ped <- data.frame(
+    id = 1:9,
+    mother = c(NA, NA, 1L, 1L, 3L, 3L, 5L, 5L, 5L),
+    father = c(NA, NA, 2L, 2L, 4L, 4L, 6L, 6L, 6L),
+    twin = c(NA, NA, NA, NA, NA, NA, 8L, 7L, NA)
+  )
+  prep <- pafgrs_prepare(ped, ndegree = 1)
+  table <- pafgrs_cip(c(0, 80), c(0, 0.1))
+  twins <- trait(c(rep(NA, 6), 1, 1, NA))
+  no_age <- rep(NA_real_, 9)
+  fine <- pafgrs_score_univariate(prep, twins, no_age, table, h2 = 0.5)
+  expect_identical(attr(fine, "metadata")$covariance_not_psd, 0L)
+  expect_true(all(is.finite(fine$est) & is.finite(fine$var)))
+  # At h2 = 0.8 the twins, their parents (5, 6) and their sib (9) are refused.
+  refused <- c(rep(FALSE, 4), rep(TRUE, 5))
+  s <- pafgrs_score_univariate(prep, twins, no_age, table, h2 = 0.8)
+  expect_identical(attr(s, "metadata")$covariance_not_psd, 5L)
+  expect_identical(is.nan(s$est), refused)
+  expect_identical(is.nan(s$var), refused)
+  expect_identical(s$n_relatives, c(0L, 0L, 0L, 0L, 2L, 2L, 1L, 1L, 2L))
+  # A second trait observed elsewhere: the joint score is refused whole.
+  other <- trait(c(1, 0, 1, 0, rep(NA, 5)))
+  b <- pafgrs_score_bivariate(
+    prep, list(twins, other), list(no_age, c(60, 70, 40, 50, rep(NA, 5))),
+    list(table, table), h2 = c(0.8, 0.5), rg = 0
+  )
+  expect_identical(attr(b, "metadata")$covariance_not_psd, 5L)
+  for (column in c("est1", "est2", "var1", "var2", "cov12")) {
+    expect_identical(is.nan(b[[column]]), refused, info = column)
+  }
+})
+
 test_that("metadata carries the parameters and the versions", {
   prep <- pafgrs_prepare(small_pedigree(), ndegree = 3)
   meta <- attr(score_small(prep), "metadata")
@@ -83,6 +117,7 @@ test_that("metadata carries the parameters and the versions", {
   expect_identical(meta$pg_phenotype_version, pgphenotype_version())
   expect_identical(meta$pedigree_graph_core_rev, pg_core_rev())
   expect_identical(meta$controls_without_age, 2L)
+  expect_identical(meta$covariance_not_psd, 0L)
   b <- attr(score_small_pair(prep, h2 = c(0.4, 0.2), rg = 0.5), "metadata")
   expect_identical(b$rho_within, 0.5 * sqrt(0.4 * 0.2))
   expect_identical(b$h2, c(0.4, 0.2))

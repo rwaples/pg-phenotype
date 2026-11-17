@@ -9,6 +9,11 @@ from tests.pedigrees import random_pedigree
 from tests.scoring_fixtures import observe, proband_view, random_trait
 
 TOL = 1e-10
+# A refused proband's covariance has an eigenvalue below -INDEFINITE, clear of
+# the rounding of a positive semidefinite matrix's smallest one; a scored
+# proband's has none below -PSD, clear of the scorer's own 1e-9 slack.
+INDEFINITE = 1e-12
+PSD = 1e-6
 
 
 @pytest.mark.parametrize("seed", range(5))
@@ -22,6 +27,7 @@ def test_univariate_matches_reference(seed, ndegree):
     got = pafgrs.score_univariate(prep, trait.trait, age=trait.age, cip=trait.cip, h2=h2)
     affected, w, thr = observe(trait)
     assert got.metadata["threshold"] == pytest.approx(thr, abs=1e-15)
+    refused = 0
     for i in range(n):
         rows, kin_p, kin = proband_view(prep, i)
         valid = w[rows] > 0
@@ -37,8 +43,18 @@ def test_univariate_matches_reference(seed, ndegree):
         t2 = np.where(affected[rows], np.inf, thr)
         order = reference.canonical_univariate_order(w[rows], kin_p, kin, ped["id"][rows])
         est, var = reference.pa_fgrs_core(t1, t2, w[rows], cov, order)
+        smallest = np.linalg.eigvalsh(cov).min()
+        if np.isnan(got.est[i]):
+            # Refused (ADR 0015): the covariance is not positive
+            # semidefinite, whatever the reference made of it.
+            refused += 1
+            assert np.isnan(got.var[i]), i
+            assert smallest < -INDEFINITE, i
+            continue
+        assert smallest > -PSD, i
         assert got.est[i] == pytest.approx(est, abs=TOL), i
         assert got.var[i] == pytest.approx(var, abs=TOL), i
+    assert got.metadata["covariance_not_psd"] == refused
 
 
 @pytest.mark.parametrize("seed", range(4))
@@ -65,6 +81,7 @@ def test_bivariate_matches_reference(seed, ndegree):
     assert rho_within == (cov_g if rho is None else rho)
     observed = [observe(t) for t in traits]
     g = np.array([[h2[0], cov_g], [cov_g, h2[1]]])
+    refused = 0
     for i in range(n):
         rows, kin_p, kin = proband_view(prep, i)
         obs = [(x, t) for x in range(len(rows)) for t in (0, 1) if observed[t][1][rows[x]] > 0]
@@ -97,4 +114,14 @@ def test_bivariate_matches_reference(seed, ndegree):
         )
         want = reference.pa_fgrs_bivariate_core(lower, upper, w, cov, order)
         have = (got.est1[i], got.est2[i], got.var1[i], got.var2[i], got.cov12[i])
+        smallest = np.linalg.eigvalsh(cov).min() if m else 0.0
+        if np.isnan(got.est1[i]):
+            # Refused (ADR 0015), whole: the joint covariance is not
+            # positive semidefinite, whatever the reference made of it.
+            refused += 1
+            assert np.isnan(have).all(), i
+            assert smallest < -INDEFINITE, i
+            continue
+        assert smallest > -PSD, i
         assert have == pytest.approx(want, abs=TOL), i
+    assert got.metadata["covariance_not_psd"] == refused

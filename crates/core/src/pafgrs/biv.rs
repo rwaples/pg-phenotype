@@ -100,6 +100,10 @@ pub struct BivScores {
     pub prevalence: [f64; 2],
     pub threshold: [f64; 2],
     pub controls_without_age: [usize; 2],
+    /// Probands not scored, every estimate, variance and `cov12` NaN: the
+    /// joint Pearson-Aitken covariance was not positive semidefinite
+    /// (ADR 0015).
+    pub covariance_not_psd: usize,
     pub ndegree: u8,
 }
 
@@ -118,6 +122,10 @@ impl BivScores {
                 "controls_without_age",
                 Value::Counts(self.controls_without_age.map(|c| c as u64).to_vec()),
             ),
+            (
+                "covariance_not_psd",
+                (self.covariance_not_psd as u64).into(),
+            ),
             ("n_probands", (self.ids.len() as u64).into()),
             ("ndegree", u64::from(self.ndegree).into()),
         ]
@@ -132,6 +140,8 @@ struct One {
     cov12: f64,
     n_relatives: u32,
     n_obs: [u32; 2],
+    /// Not scored (ADR 0015): every estimate, variance and `cov12` is NaN.
+    refused: bool,
 }
 
 /// Score every proband of `prep` on two traits jointly.
@@ -176,6 +186,7 @@ pub fn score_bivariate(
         prevalence: cips.map(Cip::prevalence),
         threshold: [obs[0].threshold, obs[1].threshold],
         controls_without_age: [obs[0].controls_without_age, obs[1].controls_without_age],
+        covariance_not_psd: one.iter().filter(|o| o.refused).count(),
         ndegree: prep.ndegree(),
     })
 }
@@ -194,6 +205,8 @@ struct Scratch {
     cov: UpperCov,
     mu: Vec<f64>,
     col: Vec<f64>,
+    /// The copy of `cov` its test factors.
+    work: Vec<f64>,
 }
 
 impl Scratch {
@@ -227,6 +240,7 @@ impl Scratch {
                 cov12: cov_g,
                 n_relatives: 0,
                 n_obs,
+                refused: false,
             };
         }
         rel.dense_kinship(&self.people, &mut self.phi);
@@ -295,13 +309,41 @@ impl Scratch {
             }
             self.obs.push(obs[t].obs(key.row as usize));
         }
-        pa::condition(&mut self.cov, &mut self.mu, 2, &self.obs, &mut self.col);
+        // Only an inbred member can make the covariance indefinite, so
+        // the others skip the factorization.
+        let done = pa::condition_tested(
+            &mut self.cov,
+            &mut self.mu,
+            2,
+            &self.obs,
+            &mut self.col,
+            &mut self.work,
+            rel.any_inbred(&self.people),
+        );
+        let est = [self.mu[0], self.mu[1]];
+        let var = [self.cov.get(0, 0), self.cov.get(1, 1)];
+        let cov12 = self.cov.get(0, 1);
+        // Rounding alone: `is_posterior` bounds how far below zero.
+        let clamped = var.map(|v| v.max(0.0));
+        // The two genetic liabilities' block is a covariance too.
+        let block = pa::is_block(clamped, cov12);
+        if !(done && pa::is_posterior(&[est[0], est[1], cov12], &var) && block) {
+            return One {
+                est: [f64::NAN; 2],
+                var: [f64::NAN; 2],
+                cov12: f64::NAN,
+                n_relatives: n as u32,
+                n_obs,
+                refused: true,
+            };
+        }
         One {
-            est: [self.mu[0], self.mu[1]],
-            var: [self.cov.get(0, 0).max(0.0), self.cov.get(1, 1).max(0.0)],
-            cov12: self.cov.get(0, 1),
+            est,
+            var: clamped,
+            cov12,
             n_relatives: n as u32,
             n_obs,
+            refused: false,
         }
     }
 }
@@ -326,6 +368,7 @@ mod tests {
                 "prevalence",
                 "threshold",
                 "controls_without_age",
+                "covariance_not_psd",
                 "n_probands",
                 "ndegree"
             ]

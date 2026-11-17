@@ -162,8 +162,12 @@ print.pgphenotype_pafgrs_cip <- function(x, ...) {
 #' @return A data frame with one row per proband in pedigree input-row order
 #'   and columns `id`, `est`, `var` and `n_relatives` (relatives with
 #'   weight > 0).  A proband with no informative relative gets `est = 0`,
-#'   `var = h2`.  `attr(, "metadata")` is a list: `h2`, `prevalence`,
-#'   `threshold`, `controls_without_age`, `n_probands`, `ndegree`,
+#'   `var = h2`.  A proband whose covariance is not positive semidefinite
+#'   gets `est` and `var` `NaN` and is counted in `covariance_not_psd`: the
+#'   covariance takes no inbreeding on its diagonal, so this takes an inbred
+#'   proband or relative, such as inbred MZ twins at a high `h2`.
+#'   `attr(, "metadata")` is a list: `h2`, `prevalence`, `threshold`,
+#'   `controls_without_age`, `covariance_not_psd`, `n_probands`, `ndegree`,
 #'   `pg_phenotype_version` and `pedigree_graph_core_rev`.  A
 #'   `pgphenotype_validation_error`, in order: `trait_length_mismatch` for a
 #'   trait that is not the pedigree's length, `trait_kind_mismatch` for one
@@ -204,10 +208,14 @@ pafgrs_score_univariate <- function(prep, trait, age, cip, h2) {
 #'   and columns `id`, `est1`, `est2`, `var1`, `var2`, `cov12`,
 #'   `n_relatives` (people with weight > 0 on either trait), `n_obs1` and
 #'   `n_obs2`.  With no informative relative: `est = 0`, `var = h2`,
-#'   `cov12 = rg * sqrt(h2[1] * h2[2])`.  `attr(, "metadata")` is a list:
+#'   `cov12 = rg * sqrt(h2[1] * h2[2])`.  A proband whose joint covariance
+#'   is not positive semidefinite gets `NaN` in `est1`, `est2`, `var1`,
+#'   `var2` and `cov12` and is counted in `covariance_not_psd`, as
+#'   [pafgrs_score_univariate()] describes.  `attr(, "metadata")` is a list:
 #'   `h2`, `rg`, `rho_within` (as used), and per trait `prevalence`,
-#'   `threshold` and `controls_without_age`, then `n_probands`, `ndegree`,
-#'   `pg_phenotype_version` and `pedigree_graph_core_rev`.
+#'   `threshold` and `controls_without_age`, then `covariance_not_psd`,
+#'   `n_probands`, `ndegree`, `pg_phenotype_version` and
+#'   `pedigree_graph_core_rev`.
 #' @examples
 #' ped <- data.frame(id = 1:4, mother = c(NA, NA, 1, 1), father = c(NA, NA, 2, 2))
 #' table <- pafgrs_cip(c(0, 80), c(0, 0.1))

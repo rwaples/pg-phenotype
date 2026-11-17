@@ -130,6 +130,47 @@ def test_missingness_rules():
     assert got.n_relatives.tolist() == [2, 2, 1, 1, 2, 2]
 
 
+def test_a_covariance_that_is_not_psd_scores_nan_and_is_counted():
+    """Issue #32: inbred MZ twins (F = 3/8), both cases, are all that is observed."""
+    ped = {
+        "id": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+        "mother": [-1, -1, 1, 1, 3, 3, 5, 5, 5],
+        "father": [-1, -1, 2, 2, 4, 4, 6, 6, 6],
+        "twin": [-1, -1, -1, -1, -1, -1, 8, 7, -1],
+    }
+    nan = np.nan
+    table = pafgrs.Cip([0.0, 80.0], [0.0, 0.1])
+    twins = Case(affected=np.array([nan] * 6 + [1, 1, nan]), age=np.full(9, nan), cip=table)
+    prep = pafgrs.prepare(ped, ndegree=1)
+
+    fine = pafgrs.score_univariate(prep, twins.trait, age=twins.age, cip=twins.cip, h2=0.5)
+    assert fine.metadata["covariance_not_psd"] == 0
+    assert np.isfinite(fine.est).all()
+    assert np.isfinite(fine.var).all()
+
+    # At h2 = 0.8 no covariance holding a twin is positive semidefinite: the
+    # twins, their parents (5, 6) and their sib (9) are refused.
+    refused = [False] * 4 + [True] * 5
+    got = pafgrs.score_univariate(prep, twins.trait, age=twins.age, cip=twins.cip, h2=0.8)
+    assert got.metadata["covariance_not_psd"] == 5
+    assert np.isnan(got.est).tolist() == refused
+    assert np.isnan(got.var).tolist() == refused
+    assert got.n_relatives.tolist() == [0, 0, 0, 0, 2, 2, 1, 1, 2]
+
+    # A second trait observed elsewhere: the joint score is refused whole.
+    other = Case(
+        affected=np.array([1, 0, 1, 0] + [nan] * 5), age=np.array([60.0, 70.0, 40.0, 50.0] + [nan] * 5), cip=table
+    )
+    joint = pafgrs.score_bivariate(
+        prep, (twins.trait, other.trait), age=(twins.age, other.age), cip=(twins.cip, other.cip), h2=(0.8, 0.5), rg=0.0
+    )
+    assert joint.metadata["covariance_not_psd"] == 5
+    for column in (joint.est1, joint.est2, joint.var1, joint.var2, joint.cov12):
+        assert np.isnan(column).tolist() == refused
+    alone = pafgrs.score_univariate(prep, other.trait, age=other.age, cip=other.cip, h2=0.5)
+    np.testing.assert_allclose(joint.est2[:4], alone.est[:4], rtol=0, atol=1e-10)
+
+
 def test_no_informative_relative_gives_the_prior(case):
     ped, t1, _ = case
     n = len(ped["id"])
@@ -308,6 +349,7 @@ def test_metadata_is_read_only_in_rs_order(case):
     tail = [
         "threshold",
         "controls_without_age",
+        "covariance_not_psd",
         "n_probands",
         "ndegree",
         "pg_phenotype_version",
@@ -318,6 +360,8 @@ def test_metadata_is_read_only_in_rs_order(case):
     for key in ("h2", "prevalence", "threshold", "controls_without_age"):
         assert type(biv[key]) is tuple, key
     assert type(uni["controls_without_age"]) is int
+    assert (uni["covariance_not_psd"], biv["covariance_not_psd"]) == (0, 0)
+    assert type(biv["covariance_not_psd"]) is int
     with pytest.raises(TypeError):
         uni["h2"] = 0.5  # type: ignore[index]
 
