@@ -19,7 +19,7 @@ mod common;
 
 use std::sync::atomic::Ordering;
 
-use common::{check, pedigree, Ped};
+use common::{check, close, pedigree, Ped};
 use pedigree_graph_core::columns::GraphColumns;
 use pedigree_graph_core::graph::{self, Columns, Limits, SexEncoding};
 use pedigree_graph_core::kinship::{ExternalFounders, KinshipIndex};
@@ -85,7 +85,7 @@ fn twin_external(ped: &Ped, dice: &[u8]) -> Ped {
     let mut out = ped.clone();
     for r in 0..ped.len() {
         if let Some(low) = pair_row(ped, r) {
-            if dice[low % dice.len()] % 3 == 0 {
+            if dice[(low + 1) % dice.len()] % 3 == 0 {
                 out.father[r] = 97_000 + low as i64;
             }
         }
@@ -102,8 +102,9 @@ fn shared(ped: &Ped, dice: &[u8]) -> Ped {
     for r in 0..ped.len() {
         let die = dice[pair_row(ped, r).unwrap_or(r) % dice.len()];
         if ped.twin[r] >= 0 {
-            if ped.father[r] >= 97_000 {
-                out.father[r] = 99_000 + i64::from(die % 3);
+            // A pair's own id stays its own when the die is 3.
+            if ped.father[r] >= 97_000 && die % 4 < 3 {
+                out.father[r] = 99_000 + i64::from(die % 4);
             }
             continue;
         }
@@ -218,9 +219,9 @@ fn relatives_through_a_shared_external_id_are_the_walkers() {
     check(
         "external founders",
         CASES,
-        // About half of all cases gain one (549 of 1025 at PROPTEST_SCALE=16).
+        // 588 of 1024 cases gained one at PROPTEST_SCALE=16, ndegree 1..=5.
         0.2,
-        (pedigree(), 1i64..=3, prop::collection::vec(any::<u8>(), 64)),
+        (pedigree(), 1i64..=5, prop::collection::vec(any::<u8>(), 64)),
         |(ped, ndegree, dice), checked| {
             let ped = twin_external(&ped, &dice);
             let merged = shared(&ped, &dice);
@@ -250,7 +251,7 @@ fn unshared_external_ids_are_missing_parents() {
         "unshared external ids",
         CASES,
         1.0,
-        (pedigree(), 1i64..=3),
+        (pedigree(), 1i64..=5),
         |(ped, ndegree), checked| {
             let mut missing = ped.clone();
             for f in &mut missing.father {
@@ -282,6 +283,15 @@ fn unshared_external_ids_are_missing_parents() {
     );
 }
 
+/// `got` equals `want` within float tolerance, entry by entry.
+#[track_caller]
+fn near(got: &[f32], want: &[f64]) {
+    assert_eq!(got.len(), want.len(), "{got:?} vs {want:?}");
+    for (&g, &w) in got.iter().zip(want) {
+        assert!(close(f64::from(g), w), "{got:?} vs {want:?}");
+    }
+}
+
 /// Paternal half sibs 3 and 4 by external father 99, and 5, a child of 4
 /// by external father 98 that 6 also names: 5 and 6 are paternal half sibs.
 #[test]
@@ -305,14 +315,13 @@ fn paternal_half_sibs_by_an_external_father_are_relatives() {
     // degree.
     let (rows, kin) = prep.relatives(2);
     assert_eq!(rows, &[0, 3]);
-    assert_eq!(kin, &[0.25, 0.125]);
+    near(kin, &[0.25, 0.125]);
     // Proband 5 (row 4): grandmother 2, mother 4, half sib 6.
     let (rows, kin) = prep.relatives(4);
     assert_eq!(rows, &[1, 3, 5]);
-    assert_eq!(kin, &[0.125, 0.25, 0.125]);
+    near(kin, &[0.125, 0.25, 0.125]);
     // Grandmother 2 and mother 4 are parent and child; half sib 6 is
     // related to neither.
-    assert_eq!(prep.pair_kinship(4, 0, 1), 0.25);
-    assert_eq!(prep.pair_kinship(4, 0, 2), 0.0);
-    assert_eq!(prep.pair_kinship(4, 1, 2), 0.0);
+    let pairs = [(0, 1), (0, 2), (1, 2)].map(|(j, k)| prep.pair_kinship(4, j, k));
+    near(&pairs, &[0.25, 0.0, 0.0]);
 }

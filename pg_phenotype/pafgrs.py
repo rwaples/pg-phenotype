@@ -34,7 +34,11 @@ def prepare(pedigree: object, *, ndegree: int = 2, probands: Sequence[int] | np.
     variant against the result; scoring many traits needs only the result.
     A relative of a proband is a row whose closest relationship category is
     at most *ndegree* and whose exact kinship to the proband is at least
-    ``0.5**(ndegree + 1) - 1e-6``.
+    ``0.5**(ndegree + 1) - 1e-6``.  A parent id with no row of its own is an
+    external parent: rows that name the same one share it, so they are
+    related through it (half sibs by an unrecorded father, for example).
+    Mark a missing parent ``-1`` or NA, never another sentinel such as ``0``,
+    or every row naming it becomes a sib of the others.
 
     Args:
         pedigree: A :class:`~pg_phenotype.Pedigree`, or its columns ``id``,
