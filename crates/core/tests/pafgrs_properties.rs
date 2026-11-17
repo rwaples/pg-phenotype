@@ -126,14 +126,16 @@ impl Ests for BivScores {
     }
 }
 
+type UniBits<'a> = (&'a [i64], Vec<u64>, Vec<u64>, &'a [u32], [usize; 2]);
+
 /// A univariate result's scores and counts, bit for bit.
-fn uni_bits(s: &UniScores) -> (&[i64], Vec<u64>, Vec<u64>, &[u32], usize) {
+fn uni_bits(s: &UniScores) -> UniBits<'_> {
     (
         &s.ids,
         bits(&s.est),
         bits(&s.var),
         &s.n_relatives,
-        s.controls_without_age,
+        [s.controls_without_age, s.covariance_not_psd],
     )
 }
 
@@ -144,7 +146,7 @@ type BivBits<'a> = (
     Vec<u64>,
     &'a [u32],
     &'a [Vec<u32>; 2],
-    [usize; 2],
+    [usize; 3],
 );
 
 fn biv_bits(s: &BivScores) -> BivBits<'_> {
@@ -159,7 +161,11 @@ fn biv_bits(s: &BivScores) -> BivBits<'_> {
         bits(&s.cov12),
         &s.n_relatives,
         &s.n_obs,
-        s.controls_without_age,
+        [
+            s.controls_without_age[0],
+            s.controls_without_age[1],
+            s.covariance_not_psd,
+        ],
     )
 }
 
@@ -370,16 +376,12 @@ fn a_bivariate_score_ignores_the_probands_own_record() {
     );
 }
 
-/// Every univariate score is finite.  Fails: the PA covariance puts `h2`
-/// on the proband's diagonal and 1 on each relative's whatever their
-/// inbreeding (`uni.rs`), while its off-diagonal `2 phi h2` carries it, so
-/// with inbred MZ twins (kinship `(1 + F) / 2`) the matrix is not positive
-/// semidefinite.  After two generations of full-sib mating (`F = 3/8`) a
-/// concordant MZ case pair's own variance clamps to 0 from `h2 = 0.7`, and
-/// their parents and sib score NaN from `h2 = 0.8`.
+/// Every univariate score is finite with `var >= 0`, or `est` and `var`
+/// are both NaN and the proband is counted in `covariance_not_psd` (issue
+/// #32): the generator's inbred MZ twins give covariances that are not
+/// positive semidefinite.
 #[test]
-#[ignore = "fails: NaN scores with inbred MZ twins at high h2 (#32)"]
-fn univariate_scores_are_finite() {
+fn a_univariate_score_is_finite_or_counted_as_not_psd() {
     check(
         "uni finite",
         CASES,
@@ -389,15 +391,18 @@ fn univariate_scores_are_finite() {
             let (prep, cip) = (prep(&ped, ndegree), cip(step));
             let (status, age) = record(&dice, ped.len());
             let base = uni(&prep, &status, &age, &cip, h2);
+            let mut refused = 0;
             for (k, (e, v)) in base.est.iter().zip(&base.var).enumerate() {
                 prop_assert!(
-                    e.is_finite() && v.is_finite(),
+                    (e.is_finite() && v.is_finite() && *v >= 0.0) || (e.is_nan() && v.is_nan()),
                     "proband {}: est {} var {}",
                     base.ids[k],
                     e,
                     v
                 );
+                refused += usize::from(e.is_nan());
             }
+            prop_assert_eq!(base.covariance_not_psd, refused);
             checked.fetch_add(1, Ordering::Relaxed);
             Ok(())
         },
@@ -457,16 +462,21 @@ fn a_bivariate_score_with_rg_zero_is_two_univariate_scores() {
             let records = [record(&dice[0], ped.len()), record(&dice[1], ped.len())];
             let joint = biv(&prep, &records, &cips, params);
             let unis = [0, 1].map(|t| uni(&prep, &records[t].0, &records[t].1, &cips[t], h2[t]));
-            // Probands a trait scores NaN on alone (the finding of
-            // `univariate_scores_are_finite`) are left out: the joint
-            // score can be NaN on the other trait too.
-            let finite = |k: usize| {
-                unis.iter()
-                    .all(|u| u.est[k].is_finite() && u.var[k].is_finite())
-            };
+            // The joint covariance is the two traits' blocks, so it is not
+            // positive semidefinite exactly when one of them is not: the
+            // joint score is then NaN on both traits and counted once.
+            let refused = |k: usize| unis.iter().any(|u| u.est[k].is_nan());
+            let mut n_refused = 0;
+            for k in 0..joint.ids.len() {
+                let all_nan = (0..2).all(|t| joint.est[t][k].is_nan() && joint.var[t][k].is_nan())
+                    && joint.cov12[k].is_nan();
+                prop_assert_eq!(all_nan, refused(k), "proband {}", joint.ids[k]);
+                n_refused += usize::from(all_nan);
+            }
+            prop_assert_eq!(joint.covariance_not_psd, n_refused);
             for (t, one) in unis.iter().enumerate() {
                 prop_assert_eq!(&joint.ids, &one.ids);
-                for k in (0..one.est.len()).filter(|&k| finite(k)) {
+                for k in (0..one.est.len()).filter(|&k| !refused(k)) {
                     prop_assert!(
                         close(joint.est[t][k], one.est[k]) && close(joint.var[t][k], one.var[k]),
                         "trait {} proband {}: biv ({}, {}) vs uni ({}, {})",
@@ -638,4 +648,407 @@ fn the_cip_is_monotone_within_each_interval() {
             Ok(())
         },
     );
+}
+
+/// The issue #32 pedigree: founders 1, 2; their children 3, 4; 5, 6 the
+/// children of 3 and 4; the MZ twins 7, 8 and their sib 9 the children of
+/// 5 and 6.  The twins' `F` is 3/8, so their kinship is 11/16.
+fn sib_mated() -> Ped {
+    Ped {
+        ids: (1..=9).collect(),
+        mother: vec![-1, -1, 1, 1, 3, 3, 5, 5, 5],
+        father: vec![-1, -1, 2, 2, 4, 4, 6, 6, 6],
+        twin: vec![-1, -1, -1, -1, -1, -1, 8, 7, -1],
+    }
+}
+
+/// With only the inbred MZ twins observed, both cases, the covariance of
+/// each twin (`[[h2, 11/8 h2], [11/8 h2, 1]]`) is not positive
+/// semidefinite above `h2 = 64/121`, and that of their parents and sib
+/// (relatives' block `[[1, 11/8 h2], [11/8 h2, 1]]`) above `h2 = 8/11`.
+/// A proband is refused, scored NaN and counted, exactly there: the twins
+/// from 0.7, their parents and sib from 0.75.  At 0.75 conditioning alone
+/// would not notice (the second twin's variance given the first is still
+/// positive, and R PAFGRS's `pa_fgrs` returns 1.35655).  The scores not
+/// refused equal `pa_fgrs`'s on the same covariance, to its printed
+/// digits.
+#[test]
+fn inbred_mz_twins_are_refused_where_the_covariance_is_not_psd() {
+    let ped = sib_mated();
+    let prep = prep(&ped, 1);
+    let cip = cip(false);
+    let mut status = [NA; 9];
+    status[6] = 1.0;
+    status[7] = 1.0;
+    let near = |x: f64, want: f64| (x - want).abs() < 5e-6;
+    // h2, the est of 5, 6 and 9, the var of 7 and 8; NaN where refused.
+    for (h2, sib_est, twin_var) in [
+        (0.5, 1.11413, 0.107287),
+        (0.7, 1.32979, NA),
+        (0.75, NA, NA),
+        (0.8, NA, NA),
+        (1.0, NA, NA),
+    ] {
+        let s = uni(&prep, &status, &[NA; 9], &cip, h2);
+        for k in 0..4 {
+            assert_eq!((s.est[k], s.var[k], s.n_relatives[k]), (0.0, h2, 0), "{h2}");
+        }
+        for k in [4, 5, 8] {
+            assert_eq!(s.n_relatives[k], 2);
+            if sib_est.is_nan() {
+                assert!(
+                    s.est[k].is_nan() && s.var[k].is_nan(),
+                    "h2 {h2} proband {k}"
+                );
+            } else {
+                assert!(near(s.est[k], sib_est), "h2 {h2}: {}", s.est[k]);
+                assert!(s.var[k] > 0.0);
+            }
+        }
+        for k in [6, 7] {
+            assert_eq!(s.n_relatives[k], 1);
+            if twin_var.is_nan() {
+                assert!(
+                    s.est[k].is_nan() && s.var[k].is_nan(),
+                    "h2 {h2} proband {k}"
+                );
+            } else {
+                assert!(near(s.var[k], twin_var), "h2 {h2}: {}", s.var[k]);
+            }
+        }
+        let refused = 3 * usize::from(sib_est.is_nan()) + 2 * usize::from(twin_var.is_nan());
+        assert_eq!(s.covariance_not_psd, refused, "h2 {h2}");
+    }
+}
+
+/// A second trait observed on rows the first is not: at `rg = 0` the
+/// probands the first trait's covariance refuses score NaN on both traits
+/// and are counted, and nobody else's second-trait score is touched.
+#[test]
+fn a_refused_bivariate_proband_is_nan_on_both_traits_and_counted() {
+    let ped = sib_mated();
+    let prep = prep(&ped, 1);
+    let cips = [cip(false), cip(false)];
+    let mut first = [NA; 9];
+    first[6] = 1.0;
+    first[7] = 1.0;
+    let second = [1.0, 0.0, 1.0, 0.0, NA, NA, NA, NA, NA];
+    let age = [60.0, 70.0, 40.0, 50.0, NA, NA, NA, NA, NA];
+    let records = [
+        (first.to_vec(), vec![NA; 9]),
+        (second.to_vec(), age.to_vec()),
+    ];
+    let params = BivParams::new([0.8, 0.5], 0.0, None).expect("valid");
+    let joint = biv(&prep, &records, &cips, params);
+    let alone = uni(&prep, &second, &age, &cips[1], 0.5);
+    assert_eq!(alone.covariance_not_psd, 0);
+    assert_eq!(joint.covariance_not_psd, 5);
+    for k in 0..9 {
+        if k >= 4 {
+            assert!(joint.est[0][k].is_nan() && joint.est[1][k].is_nan(), "{k}");
+            assert!(joint.var[0][k].is_nan() && joint.var[1][k].is_nan(), "{k}");
+            assert!(joint.cov12[k].is_nan(), "{k}");
+        } else {
+            assert!(
+                close(joint.est[1][k], alone.est[k]) && close(joint.var[1][k], alone.var[k]),
+                "{k}"
+            );
+            assert_eq!((joint.est[0][k], joint.var[0][k]), (0.0, 0.8), "{k}");
+        }
+    }
+}
+
+/// Twin 8 a case on both traits and twin 7 the proband, at an `h2` above
+/// 64/121, where the joint covariance is not positive semidefinite:
+/// refused.  Conditioning it would leave each posterior variance positive
+/// and the two estimates' block with an eigenvalue near `-1e-8`, which
+/// `pa.rs` tests on its own.
+#[test]
+fn a_bivariate_block_with_a_negative_eigenvalue_is_refused() {
+    let ped = sib_mated();
+    let prep = prep(&ped, 1);
+    let cips = [cip(false), cip(false)];
+    let mut status = [NA; 9];
+    status[7] = 1.0;
+    let records = [
+        (status.to_vec(), vec![NA; 9]),
+        (status.to_vec(), vec![NA; 9]),
+    ];
+    let params = BivParams::new([0.6114444314569172; 2], 0.1, None).expect("valid");
+    let joint = biv(&prep, &records, &cips, params);
+    assert!(joint.est[0][6].is_nan() && joint.cov12[6].is_nan());
+    assert!(joint.covariance_not_psd >= 1);
+}
+
+/// Every bivariate proband has finite scores whose block is a covariance,
+/// or is NaN throughout and counted; `rg` reaches both ends, where the
+/// block is singular.
+#[test]
+fn a_bivariate_score_is_a_covariance_or_counted_as_not_psd() {
+    check(
+        "biv finite",
+        CASES / 2,
+        1.0,
+        (
+            biv_case(),
+            prop_oneof![Just(-1.0), Just(-0.5), Just(0.3), Just(1.0)],
+        ),
+        |((ped, ndegree, dice, steps, h2, _, _), rg), checked| {
+            let prep = prep(&ped, ndegree);
+            let cips = steps.map(cip);
+            let params = BivParams::new(h2, rg, None).expect("valid parameters");
+            let records = [record(&dice[0], ped.len()), record(&dice[1], ped.len())];
+            let s = biv(&prep, &records, &cips, params);
+            let mut refused = 0;
+            for k in 0..s.ids.len() {
+                let all = [
+                    s.est[0][k],
+                    s.est[1][k],
+                    s.var[0][k],
+                    s.var[1][k],
+                    s.cov12[k],
+                ];
+                if all.iter().all(|x| x.is_nan()) {
+                    refused += 1;
+                    continue;
+                }
+                let (v1, v2, c) = (s.var[0][k], s.var[1][k], s.cov12[k]);
+                prop_assert!(
+                    all.iter().all(|x| x.is_finite())
+                        && v1 >= 0.0
+                        && v2 >= 0.0
+                        && c * c <= (v1 + 1e-9) * (v2 + 1e-9),
+                    "proband {}: {:?}",
+                    s.ids[k],
+                    all
+                );
+            }
+            prop_assert_eq!(s.covariance_not_psd, refused);
+            checked.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        },
+    );
+}
+
+/// `got` against scores recorded as bits on x86_64 Linux: bit for bit
+/// there, and within `1e-12` on a platform whose `exp` may round another
+/// way.
+fn assert_recorded(got: &[f64], want: &[u64], what: &str) {
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        assert_eq!(bits(got), want, "{what}");
+    }
+    assert_eq!(got.len(), want.len(), "{what}");
+    for (k, (g, w)) in got.iter().zip(want).enumerate() {
+        let w = f64::from_bits(*w);
+        assert!((g - w).abs() <= 1e-12, "{what}[{k}]: {g} vs {w}");
+    }
+}
+
+/// On a pedigree with no inbred row every score is, bit for bit, what the
+/// scorer gave before it refused any proband (pg-phenotype `8d4bb5a`).
+#[test]
+fn scores_without_inbreeding_are_bit_for_bit_those_before_the_refusal() {
+    let ped = outbred();
+    let prep = prep(&ped, 2);
+    let cip = cip(false);
+    for (h2, est, var) in [
+        (0.5, &UNI_EST_H2_50, &UNI_VAR_H2_50),
+        (1.0, &UNI_EST_H2_100, &UNI_VAR_H2_100),
+    ] {
+        let s = uni(&prep, &OUTBRED_STATUS[0], &OUTBRED_AGE[0], &cip, h2);
+        assert_recorded(&s.est, est, &format!("est at h2 {h2}"));
+        assert_recorded(&s.var, var, &format!("var at h2 {h2}"));
+        assert_eq!(s.n_relatives, [7, 6, 2, 3, 8, 8, 8, 2, 6, 7, 8, 7, 7, 2]);
+        assert_eq!(s.covariance_not_psd, 0);
+    }
+    let records = [
+        (OUTBRED_STATUS[0].to_vec(), OUTBRED_AGE[0].to_vec()),
+        (OUTBRED_STATUS[1].to_vec(), OUTBRED_AGE[1].to_vec()),
+    ];
+    let params = BivParams::new([0.8, 0.5], -0.5, Some(-0.2)).expect("valid");
+    let b = biv(&prep, &records, &[cip, self::cip(true)], params);
+    assert_recorded(&b.est[0], &BIV_EST1, "est1");
+    assert_recorded(&b.est[1], &BIV_EST2, "est2");
+    assert_recorded(&b.var[0], &BIV_VAR1, "var1");
+    assert_recorded(&b.var[1], &BIV_VAR2, "var2");
+    assert_recorded(&b.cov12, &BIV_COV12, "cov12");
+    assert_eq!(b.covariance_not_psd, 0);
+}
+
+const UNI_EST_H2_50: [u64; 14] = [
+    0x3ff0f6ace259f991,
+    0x3fe83db1709dab8b,
+    0xbf80fc29901ea03c,
+    0x3fdb7b20d1809829,
+    0x3fe926291e49ceec,
+    0x3fed238797b27df4,
+    0x3ff6c703e8c62f62,
+    0x3fcb901305714e17,
+    0x3fe33fea07e8b8fb,
+    0x3fe6016250999541,
+    0x3fe5db8ee9959fcf,
+    0x3fde9b2ccea12d19,
+    0x3ff1eecf9d036e4b,
+    0x3fdaf31114061d43,
+];
+const UNI_VAR_H2_50: [u64; 14] = [
+    0x3fd80f63d453f6d9,
+    0x3fda3e63628945ad,
+    0x3fdfd7ff5da6db8e,
+    0x3fdc8d27d29624d8,
+    0x3fd97ded6d0220cc,
+    0x3fd5d5636fe02ace,
+    0x3fd0b24e702e0a02,
+    0x3fdf1b6f8dec9759,
+    0x3fdc4e2eb4f2eb14,
+    0x3fdbc81d1f4b8043,
+    0x3fdbbe06783c2431,
+    0x3fda702ff2e27ab1,
+    0x3fd18cff0af66b1a,
+    0x3fdc8d510db9365f,
+];
+const UNI_EST_H2_100: [u64; 14] = [
+    0x3ffb53d8da5ea85d,
+    0x3ff3ac84af69d808,
+    0xbf90e1b0c8829658,
+    0x3feb73c93a3f0cdd,
+    0x3ff29ccf75cc22ef,
+    0x3ff55c15703d52c2,
+    0x40004347bedbf784,
+    0x3fdb7b679a71968b,
+    0x3fee5d40ba33903f,
+    0x3ff116f2127821c0,
+    0x3ff0f22cf1228416,
+    0x3fe76adc25a288b6,
+    0x3ffd3496adcda8e5,
+    0x3feb887683205a01,
+];
+const UNI_VAR_H2_100: [u64; 14] = [
+    0x3fe36614f122391f,
+    0x3fe6bff5a82972a2,
+    0x3fefb04b627b9faf,
+    0x3fe9276f9118341a,
+    0x3fe5ef69db3f25d3,
+    0x3fe04a51564e5f04,
+    0x3fd19f1dc67aea4c,
+    0x3fee3a0f3b4724d6,
+    0x3fe9d57a40f35703,
+    0x3fe8f8ddce7e8bc8,
+    0x3fe8ea36d08fe328,
+    0x3fe67c1fd892fe98,
+    0x3fc8f342dd09b05c,
+    0x3fe92e9bd439c4d3,
+];
+const BIV_EST1: [u64; 14] = [
+    0x3ff517bf52660fa3,
+    0x3febba44a6ac87fe,
+    0xbfc2ce3837e75771,
+    0x3fe30e254e502dc2,
+    0x3fe338062d4d410d,
+    0x3fe638e05658fd0e,
+    0x3ff6e0c5b4a39c52,
+    0x3fbccaf0129627dc,
+    0x3fe7317d55ab1c8e,
+    0x3fe7269a48267f36,
+    0x3fec2338bccc4d0c,
+    0x3fcc95dd9f61aa60,
+    0x3ff5a803d21c0937,
+    0x3fe5c3fdb8ab4f1b,
+];
+const BIV_EST2: [u64; 14] = [
+    0x3fce0ce6109fff32,
+    0x3fda370540b9e787,
+    0x3fcc73e55100d141,
+    0xbfb1548b4411bbd4,
+    0x3fea1922195e69cc,
+    0x3fea7758e0c4a54e,
+    0x3fe2edfac49920a9,
+    0x3fd0a16417432c7c,
+    0x3fc2f9f0e32e12cd,
+    0x3fd8e2a6ede648a4,
+    0x3f9ec884da803ae0,
+    0x3fec7b0f3e726786,
+    0x3fe1880388cfc608,
+    0xbfd1602f1986e744,
+];
+const BIV_VAR1: [u64; 14] = [
+    0x3fe067c58c4a4560,
+    0x3fe2cb0d1b32b569,
+    0x3fe93ed6aa6d8c2e,
+    0x3fe50eb1543305c3,
+    0x3fe1b0395c8800f9,
+    0x3fda9bc5148cc7fa,
+    0x3fce090578a04d88,
+    0x3fe7b4f1b3809e16,
+    0x3fe53187449a549f,
+    0x3fe44620e00c5cb0,
+    0x3fe48c10d8aad01e,
+    0x3fe2419cc15b0f6d,
+    0x3fcda3b8b6428892,
+    0x3fe53afef054ef2f,
+];
+const BIV_VAR2: [u64; 14] = [
+    0x3fd944d6ecf3eecd,
+    0x3fda13bacde3f4cc,
+    0x3fdf1eda66e3dbb2,
+    0x3fddb492d4b51e41,
+    0x3fd65c5eed2f02bf,
+    0x3fcf4eea78ba0147,
+    0x3fccdefd3d964a49,
+    0x3fdb6be26e0e32fa,
+    0x3fdcfb636a160fa0,
+    0x3fda9c63be6f086f,
+    0x3fdcd24a7640b948,
+    0x3fd680149611159f,
+    0x3fd4ac4cd56e7786,
+    0x3fde6f4c1c772fac,
+];
+const BIV_COV12: [u64; 14] = [
+    0xbfc88a3924946154,
+    0xbfcc2bec9baf2b1a,
+    0xbfd393d9006e5685,
+    0xbfd052e23050ed80,
+    0xbfc77376c7d4c478,
+    0xbfb8bce6f3af4c05,
+    0xbfa3aa532fbead00,
+    0xbfd0d0da0d0d7304,
+    0xbfd05d73734f56bf,
+    0xbfcdbee1aa2cf749,
+    0xbfcfc94fc9c4a093,
+    0xbfc7e89964bae31c,
+    0xbfb3dbe6364bcb99,
+    0xbfd0bd352e6c2291,
+];
+
+const NA: f64 = f64::NAN;
+
+/// Two trait records on [`outbred`]'s rows.
+const OUTBRED_STATUS: [[f64; 14]; 2] = [
+    [
+        1.0, 0.0, NA, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, NA, 1.0, 0.0, 0.0,
+    ],
+    [
+        0.0, 1.0, 0.0, NA, 0.0, 1.0, 1.0, 0.0, 0.0, NA, 1.0, 0.0, 0.0, 1.0,
+    ],
+];
+const OUTBRED_AGE: [[f64; 14]; 2] = [
+    [
+        50.0, 70.0, NA, NA, 40.0, 35.0, 60.0, 20.0, NA, 15.0, 10.0, 25.0, 30.0, 55.0,
+    ],
+    [
+        65.0, 45.0, 80.0, NA, 30.0, 50.0, 25.0, NA, 35.0, 12.0, 18.0, NA, 40.0, 60.0,
+    ],
+];
+
+/// A pedigree with no inbred row: founders 1 to 4 and 14; 5 and the MZ
+/// twins 6, 7 are children of 1 and 2; 8 of 3 and 4; 9 of 1 and 4 (a half
+/// sib of both families); 10, 11 of 5 and 8; the MZ twins 12, 13 of 14
+/// and 6.
+fn outbred() -> Ped {
+    Ped {
+        ids: (1..=14).collect(),
+        mother: vec![-1, -1, -1, -1, 1, 1, 1, 3, 1, 5, 5, 14, 14, -1],
+        father: vec![-1, -1, -1, -1, 2, 2, 2, 4, 4, 8, 8, 6, 6, -1],
+        twin: vec![-1, -1, -1, -1, -1, 7, 6, -1, -1, -1, -1, 13, 12, -1],
+    }
 }

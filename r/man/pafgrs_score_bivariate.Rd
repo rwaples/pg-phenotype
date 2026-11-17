@@ -28,10 +28,14 @@ A data frame with one row per proband in pedigree input-row order
   and columns `id`, `est1`, `est2`, `var1`, `var2`, `cov12`,
   `n_relatives` (people with weight > 0 on either trait), `n_obs1` and
   `n_obs2`.  With no informative relative: `est = 0`, `var = h2`,
-  `cov12 = rg * sqrt(h2[1] * h2[2])`.  `attr(, "metadata")` is a list:
+  `cov12 = rg * sqrt(h2[1] * h2[2])`.  A proband whose joint covariance
+  is not positive semidefinite gets `NaN` in `est1`, `est2`, `var1`,
+  `var2` and `cov12` and is counted in `covariance_not_psd`, as
+  [pafgrs_score_univariate()] describes.  `attr(, "metadata")` is a list:
   `h2`, `rg`, `rho_within` (as used), and per trait `prevalence`,
-  `threshold` and `controls_without_age`, then `n_probands`, `ndegree`,
-  `pg_phenotype_version` and `pedigree_graph_core_rev`.
+  `threshold` and `controls_without_age`, then `covariance_not_psd`,
+  `n_probands`, `ndegree`, `pg_phenotype_version` and
+  `pedigree_graph_core_rev`.
 }
 \description{
 Scores every proband of `prep` on two genetically correlated binary

@@ -47,6 +47,7 @@ test_that("scores equal the Python package's on every fixture case", {
     expect_identical(meta$controls_without_age,
                      as.integer(strsplit(as.character(case$controls_without_age), " ")[[1L]]),
                      info = case$case)
+    expect_identical(meta$covariance_not_psd, case$covariance_not_psd, info = case$case)
     if (case$kind == "biv") expect_identical(meta$rho_within, case$rho_within_used, info = case$case)
   }
 })

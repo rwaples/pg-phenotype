@@ -186,6 +186,10 @@ def score_univariate(prep: _native.Prep, trait: Trait, *, age: object, cip: Cip,
     Returns:
         Posterior mean and variance of each proband's genetic liability.  A
         proband with no informative relative gets ``est = 0``, ``var = h2``.
+        A proband whose covariance is not positive semidefinite gets ``est``
+        and ``var`` NaN and is counted in ``metadata["covariance_not_psd"]``:
+        the covariance takes no inbreeding on its diagonal, so this takes an
+        inbred proband or relative, such as inbred MZ twins at a high *h2*.
 
     Raises:
         ParameterError: *h2* out of range (checked before any work).
@@ -228,7 +232,11 @@ def score_bivariate(
 
     Returns:
         The joint posterior per proband.  With no informative relative:
-        ``est = 0``, ``var = h2``, ``cov12 = rg * sqrt(h2_1 * h2_2)``.
+        ``est = 0``, ``var = h2``, ``cov12 = rg * sqrt(h2_1 * h2_2)``.  A
+        proband whose joint covariance is not positive semidefinite gets NaN
+        in every estimate, variance and ``cov12`` and is counted in
+        ``metadata["covariance_not_psd"]``, as :func:`score_univariate`
+        describes.
 
     Raises:
         ParameterError: A parameter out of range, or a *rho_within* that

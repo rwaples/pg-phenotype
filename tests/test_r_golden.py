@@ -17,6 +17,9 @@ GOLDEN = sorted(Path(__file__).parent.glob("golden/r_pafgrs_*"))
 CASES = [(d, case) for d in GOLDEN for case in json.loads((d / "manifest.json").read_text())["cases"]]
 
 TOL = 1e-10
+# Probands per fixture whose covariance is not positive semidefinite: the
+# pedigrees are inbred.
+REFUSED = {"seed2_ndeg1_h2_0.75.npz": 4}
 
 
 def test_golden_is_present():
@@ -33,8 +36,15 @@ def test_univariate_matches_r_pafgrs(directory, case):
     got = pafgrs.score_univariate(prep, trait, age=data["age"], cip=cip, h2=case["h2"])
     idx = data["proband_index"]
     assert len(idx) == case["n_scored"] > 50
-    np.testing.assert_allclose(got.est[idx], data["est"], rtol=0, atol=TOL)
-    np.testing.assert_allclose(got.var[idx], data["var"], rtol=0, atol=TOL)
+    # R scores every proband.  pg-phenotype refuses those whose covariance is
+    # not positive semidefinite (ADR 0015); R's scores for them are finite.
+    refused = np.isnan(got.est[idx])
+    assert refused.sum() == REFUSED.get(case["file"], 0)
+    assert got.metadata["covariance_not_psd"] == refused.sum()
+    assert np.isnan(got.var[idx][refused]).all()
+    assert np.isfinite(data["est"]).all()
+    np.testing.assert_allclose(got.est[idx][~refused], data["est"][~refused], rtol=0, atol=TOL)
+    np.testing.assert_allclose(got.var[idx][~refused], data["var"][~refused], rtol=0, atol=TOL)
     unscored = np.setdiff1d(np.arange(prep.n_probands), idx)
     assert (got.n_relatives[unscored] == 0).all()
     assert (got.est[unscored] == 0).all()
