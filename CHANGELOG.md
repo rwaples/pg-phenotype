@@ -24,7 +24,13 @@
 - Packaging: releases no longer build a macOS x86_64 wheel. Four abi3 wheels
   remain (Linux x86_64 and aarch64, macOS arm64, Windows x86_64); on an Intel
   Mac pip builds the sdist, which needs a Rust toolchain.
-- pedigree-graph-core is pinned at pedigree-graph main (`3c38c6c`), which
+- pedigree-graph-core is pinned at the pedigree-graph v0.16.0 release
+  (`07c84e7`; it was main at `3c38c6c`), and the Python test extra's
+  kinship oracle requires `pedigree-graph>=0.16,<0.17`. Since `3c38c6c`
+  the core checks a kinship kernel's depth in one order (pedigree-graph
+  #65), which pg-phenotype passes because it hands the core the structural
+  depth, and computes the cousin products' downward levels once per row
+  (pedigree-graph #66), with the same pairs. Since v0.6.1 the pin also
   adds the `relationships::query` module (pedigree-graph #52), refuses an
   id that is both a mother and a father (pedigree-graph #58), gives
   each moments table its symmetric rule (pedigree-graph #55), passes
