@@ -10,8 +10,12 @@
   relationship category to `p` is at most `ndegree` (pedigree-graph-core's
   engine, `1 <= ndegree <= 5`) **and** whose exact kinship to `p` is at
   least `0.5^(ndegree+1) - 1e-6`.  With resolved parents exact kinship is
-  at least nominal, so the threshold only removes zero-kinship pairs that
-  share an external parent id.
+  at least nominal.  An external parent id (one with no row) that two or
+  more rows name is a founder of the recurrence (pedigree-graph ADR 0009,
+  amended for pedigree-graph #67; pg-phenotype #40), so rows that share one
+  are related through it and pass the threshold like any other relative.
+  Before #40 the recurrence read such a parent as missing, and the
+  threshold removed those pairs at kinship 0.
 - **Exact kinship everywhere.**  Proband-relative and relative-relative
   kinship are the pinned float32 recurrence of pedigree-graph ADR 0009, bit
   for bit.  The old 0-outside-support lookup (fitACE `pafgrs.py:396`) is
@@ -42,6 +46,12 @@ row with a missing parent), so two rows share an ancestor exactly when they
 share a terminal.  pedigree-graph's 256-bit ancestor signatures answer the
 same question approximately and, six generations deep, almost never prove
 it.
+
+The walker, the terminals and the local recurrence all read one pedigree:
+pedigree-graph's `ExternalFounders`, the rows followed by one parentless
+founder row per shared external id.  Scratch indexed by row is sized to
+it; relatives are always graph rows, so no output holds a founder row.  A
+pedigree with no shared external id borrows its own columns unchanged.
 
 On that pedigree prep fell from 28.8 s to 8.1 s on one thread (1.95 s on
 eight), and every sampled value stayed bit-identical to pedigree-graph's

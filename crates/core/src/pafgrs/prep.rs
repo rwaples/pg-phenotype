@@ -24,7 +24,7 @@ use crate::lineage::Terminals;
 use crate::pedigree::{checked_rows, Pedigree as Validated, PedigreeArg};
 use pedigree_graph_core::error::Error as PgError;
 use pedigree_graph_core::kinship::pairwise::Walker;
-use pedigree_graph_core::kinship::{KinshipIndex, KinshipPedigree};
+use pedigree_graph_core::kinship::{ExternalFounders, KinshipIndex};
 use pedigree_graph_core::relationships::{
     reduce_pairs_in, Category, CategorySet, MaxDegree, Progress, Reducer, RowOrder, Symmetric,
 };
@@ -260,9 +260,11 @@ pub fn prepare(
     let groups = sibship_groups(&built, &probands);
 
     let depth = topology::structural_depth(built.mother_rows(), built.father_rows());
-    let kped = built.columns().kinship(&depth)?;
+    let kped = built
+        .columns()
+        .kinship(&depth, built.mother_ids(), built.father_ids())?;
     let chunks = walk_chunks(
-        kped,
+        &ExternalFounders::new(&kped)?,
         &Walk {
             probands: &probands,
             candidates: &candidates,
@@ -496,9 +498,11 @@ struct Recurrence<'a> {
 }
 
 /// Chunks of consecutive groups, each built by one worker with its walker
-/// and a scratch row-to-position map.
+/// and a scratch row-to-position map.  The walker and the local recurrence
+/// both run on `founders`' pedigree, where a shared external parent id is a
+/// founder row after the graph's; relatives are graph rows only.
 fn walk_chunks(
-    kped: KinshipPedigree<'_>,
+    founders: &ExternalFounders<'_>,
     walk: &Walk<'_>,
     groups: &[Vec<u32>],
 ) -> Result<Vec<Chunk>, Error> {
@@ -512,13 +516,19 @@ fn walk_chunks(
         }
     }
     let n_chunks = bounds.len() - 1;
-    let index = KinshipIndex::new(&kped)?;
-    let terminals = Terminals::build(kped.mother(), kped.father(), kped.twin(), kped.depth());
+    let index = KinshipIndex::new(&founders.pedigree())?;
+    let (mother, father, twin, depth) = (
+        founders.mother(),
+        founders.father(),
+        founders.twin(),
+        founders.depth(),
+    );
+    let terminals = Terminals::build(mother, father, twin, depth);
     let rec = Recurrence {
-        mother: kped.mother(),
-        father: kped.father(),
-        twin: kped.twin(),
-        depth: kped.depth(),
+        mother,
+        father,
+        twin,
+        depth,
         terminals: &terminals,
     };
     let slots: Vec<Mutex<Option<Chunk>>> = (0..n_chunks).map(|_| Mutex::new(None)).collect();
@@ -527,7 +537,7 @@ fn walk_chunks(
     let workers = rayon::current_num_threads().min(n_chunks);
     (0..workers).into_par_iter().try_for_each(|_| {
         let mut walker: Option<Walker<'_>> = None;
-        let mut pos = vec![u32::MAX; kped.len()];
+        let mut pos = vec![u32::MAX; mother.len()];
         loop {
             let c = next.fetch_add(1, Ordering::Relaxed);
             if c >= n_chunks {

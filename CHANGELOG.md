@@ -13,6 +13,16 @@
   Relative-Pair Correlation reads its pair blocks and moments through
   `query::pairs` and `query::moments` instead of the legacy `pair_blocks`
   and `relationship_moments`. Results are unchanged.
+- PA-FGRS: rows that name the same external parent id (a parent id with no
+  row) are now related through it. Prep resolves kinship on
+  pedigree-graph's `ExternalFounders` pedigree, where each external id two
+  or more rows name is a founder (pedigree-graph #67). Half sibs by an
+  external father, and their descendants, now count as relatives and
+  covary, so their scores change; before, kinship through that parent was
+  0 and the threshold dropped them. A pedigree whose external ids are each
+  named by one row gives bit-identical results (issue #40). This needs
+  pedigree-graph-core with `ExternalFounders`; the pin moves once that is
+  pushed.
 
 ## v0.6.1
 

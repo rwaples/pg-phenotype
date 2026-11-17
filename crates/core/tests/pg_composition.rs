@@ -3,7 +3,7 @@
 
 use pedigree_graph_core::columns::GraphColumns;
 use pedigree_graph_core::graph::{self, Columns, Limits, SexEncoding};
-use pedigree_graph_core::kinship::KinshipIndex;
+use pedigree_graph_core::kinship::{ExternalFounders, KinshipIndex};
 use pedigree_graph_core::relationships::{query, Category, CategorySet, Execution, Progress};
 use pedigree_graph_core::topology;
 
@@ -53,8 +53,11 @@ fn build_pairs_and_walk_compose_from_outside_the_crate() {
     assert_eq!(blocks.get(Category::Av).len(), 1);
 
     let depth = topology::structural_depth(&built.mother_rows, &built.father_rows);
-    let kped = columns.kinship(&depth).expect("kinship input");
-    let index = KinshipIndex::new(&kped).expect("index");
+    let kped = columns
+        .kinship(&depth, &built.mother_ids, &built.father_ids)
+        .expect("kinship input");
+    let founders = ExternalFounders::new(&kped).expect("founders");
+    let index = KinshipIndex::new(&founders.pedigree()).expect("index");
     let mut walker = index.walker().expect("walker");
     assert_eq!(walker.resolve(2, 3).expect("sibs"), 0.25);
     assert_eq!(walker.resolve(3, 4).expect("aunt"), 0.125);
